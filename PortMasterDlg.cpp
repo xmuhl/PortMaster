@@ -809,7 +809,10 @@ void CPortMasterDlg::UpdateTransferSpeed(size_t bytesTransferred)
 					timeText.Format(L"剩余: %.0f 秒", remainingSeconds);
 				}
 				
-				// TODO: 显示剩余时间（需要添加对应的UI控件）
+				// 显示剩余时间到状态栏 (KISS: 利用现有UI控件避免资源修改)
+				if (::IsWindow(m_ctrlTransferStatus.m_hWnd)) {
+					m_ctrlTransferStatus.SetWindowText(timeText);
+				}
 			}
 			
 			m_lastSpeedUpdateTime = currentTime;
@@ -1042,6 +1045,34 @@ void CPortMasterDlg::OnBnClickedDisconnect()
 
 void CPortMasterDlg::OnBnClickedSend()
 {
+	// 断点续传检查 (SOLID-S: 单一职责 - 续传逻辑分离)
+	if (GetTransmissionState() == TransmissionState::PAUSED && m_transmissionContext.CanResume())
+	{
+		// 当前处于暂停状态且可以续传，询问用户是否续传
+		CString resumeMsg;
+		resumeMsg.Format(L"检测到未完成的传输: %s (进度 %.1f%%)\n是否续传？\n\n点击\"是\"继续传输，点击\"否\"重新开始", 
+			PathFindFileName(m_transmissionContext.sourceFilePath),
+			m_transmissionContext.GetProgressPercentage());
+		
+		int result = MessageBox(resumeMsg, L"断点续传", MB_YESNOCANCEL | MB_ICONQUESTION);
+		
+		if (result == IDYES)
+		{
+			// 用户选择续传
+			if (ResumeTransmission())
+			{
+				return; // 续传成功，直接返回
+			}
+			// 续传失败，继续执行正常发送流程
+		}
+		else if (result == IDCANCEL)
+		{
+			return; // 用户取消操作
+		}
+		// result == IDNO 时，清除断点并继续正常发送流程
+		ClearTransmissionContext();
+	}
+	
 	// 优先检查是否有文件数据要发送
 	std::vector<uint8_t> dataToSend;
 	bool isFileTransmission = false;
@@ -2734,6 +2765,26 @@ void CPortMasterDlg::SetTransmissionState(TransmissionState newState)
 		stateNames[static_cast<int>(newState)]);
 	AppendLog(logMsg);
 	
+	// 断点续传逻辑处理 (SOLID-S: 单一职责)
+	if (oldState == TransmissionState::TRANSMITTING && newState == TransmissionState::PAUSED)
+	{
+		// 传输被暂停，保存断点信息
+		if (!m_currentFileName.IsEmpty() && !m_transmissionData.empty())
+		{
+			// 计算已传输字节数（这里简化处理，实际应根据传输进度计算）
+			size_t transmittedBytes = static_cast<size_t>(m_transmissionProgress * m_transmissionData.size() / 100.0);
+			SaveTransmissionContext(m_currentFileName, m_transmissionData.size(), transmittedBytes);
+		}
+	}
+	else if (newState == TransmissionState::IDLE || newState == TransmissionState::COMPLETED)
+	{
+		// 传输结束，清除断点信息
+		if (m_transmissionContext.isValidContext)
+		{
+			ClearTransmissionContext();
+		}
+	}
+	
 	// 设置新状态
 	m_transmissionState = newState;
 	
@@ -2753,6 +2804,172 @@ bool CPortMasterDlg::IsTransmissionActive() const
 {
 	return (m_transmissionState == TransmissionState::TRANSMITTING || 
 			m_transmissionState == TransmissionState::PAUSED);
+}
+
+// =====================================
+// 断点续传功能实现 (SOLID-S: 单一职责, KISS: 简洁的续传逻辑)
+// =====================================
+
+void CPortMasterDlg::SaveTransmissionContext(const CString& filePath, size_t totalBytes, size_t transmittedBytes)
+{
+	// 更新传输上下文信息
+	m_transmissionContext.sourceFilePath = filePath;
+	m_transmissionContext.totalBytes = totalBytes;
+	m_transmissionContext.transmittedBytes = transmittedBytes;
+	m_transmissionContext.startTimestamp = GetTickCount();
+	m_transmissionContext.lastUpdateTimestamp = GetTickCount();
+	m_transmissionContext.isValidContext = true;
+	
+	// 保存当前目标标识符（端口或网络地址）
+	CString targetInfo;
+	CString portName;
+	if (m_ctrlPortList.GetCurSel() >= 0)
+	{
+		m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), portName);
+	}
+	targetInfo.Format(L"%s:%s", 
+		m_ctrlPortType.GetCurSel() == 0 ? L"Serial" : L"Network",
+		portName.IsEmpty() ? L"Unknown" : portName);
+	m_transmissionContext.targetIdentifier = targetInfo;
+	
+	// 记录断点保存
+	CString logMsg;
+	logMsg.Format(L"保存传输断点: %s [%zu/%zu 字节 %.1f%%]", 
+		filePath, transmittedBytes, totalBytes, 
+		m_transmissionContext.GetProgressPercentage());
+	AppendLog(logMsg);
+}
+
+bool CPortMasterDlg::LoadTransmissionContext()
+{
+	// 检查是否有有效的传输上下文
+	if (!m_transmissionContext.isValidContext || !m_transmissionContext.CanResume())
+	{
+		return false;
+	}
+	
+	// 验证源文件是否仍然存在
+	if (!PathFileExists(m_transmissionContext.sourceFilePath))
+	{
+		ClearTransmissionContext();
+		AppendLog(L"断点续传失败: 源文件不存在");
+		return false;
+	}
+	
+	// 记录断点加载
+	CString logMsg;
+	logMsg.Format(L"加载传输断点: %s [从 %zu 字节继续，进度 %.1f%%]", 
+		m_transmissionContext.sourceFilePath,
+		m_transmissionContext.transmittedBytes,
+		m_transmissionContext.GetProgressPercentage());
+	AppendLog(logMsg);
+	
+	return true;
+}
+
+void CPortMasterDlg::ClearTransmissionContext()
+{
+	// 重置传输上下文
+	m_transmissionContext.Reset();
+	
+	AppendLog(L"清除传输断点信息");
+}
+
+CString CPortMasterDlg::GetTransmissionContextFilePath() const
+{
+	// 返回传输上下文文件路径，如果无效返回空字符串
+	return m_transmissionContext.isValidContext ? m_transmissionContext.sourceFilePath : CString(L"");
+}
+
+bool CPortMasterDlg::ResumeTransmission()
+{
+	// 检查是否可以续传
+	if (!LoadTransmissionContext())
+	{
+		return false;
+	}
+	
+	// 检查连接状态
+	if (!m_bConnected)
+	{
+		AppendLog(L"续传失败: 请先连接端口");
+		return false;
+	}
+	
+	// 从断点位置读取剩余文件数据 (SOLID-S: 单一职责, DRY: 避免重复读取)
+	CFile file;
+	if (!file.Open(m_transmissionContext.sourceFilePath, CFile::modeRead | CFile::typeBinary))
+	{
+		AppendLog(L"续传失败: 无法打开源文件");
+		ClearTransmissionContext();
+		return false;
+	}
+	
+	// 移动到断点位置
+	try
+	{
+		file.Seek(static_cast<LONGLONG>(m_transmissionContext.transmittedBytes), CFile::begin);
+		
+		// 读取剩余数据
+		size_t remainingBytes = m_transmissionContext.totalBytes - m_transmissionContext.transmittedBytes;
+		m_transmissionData.resize(remainingBytes);
+		
+		UINT bytesRead = file.Read(m_transmissionData.data(), static_cast<UINT>(remainingBytes));
+		if (bytesRead != remainingBytes)
+		{
+			AppendLog(L"续传失败: 文件读取不完整");
+			file.Close();
+			ClearTransmissionContext();
+			return false;
+		}
+		
+		file.Close();
+		
+		// 更新当前文件名
+		m_currentFileName = PathFindFileName(m_transmissionContext.sourceFilePath);
+		
+		// 开始续传
+		SetTransmissionState(TransmissionState::TRANSMITTING);
+		
+		// 根据传输模式选择传输方式 (YAGNI: 只实现必需功能)
+		if (m_bReliableMode && m_reliableChannel)
+		{
+			std::string fileNameStr = CT2A(m_currentFileName);
+			if (m_reliableChannel->SendFile(fileNameStr, m_transmissionData))
+			{
+				CString resumeMsg;
+				resumeMsg.Format(L"续传开始: %s [从%.1f%%继续]", 
+					m_currentFileName, m_transmissionContext.GetProgressPercentage());
+				AppendLog(resumeMsg);
+				return true;
+			}
+			else
+			{
+				SetTransmissionState(TransmissionState::FAILED);
+				AppendLog(L"续传失败: 可靠传输启动失败");
+				ClearTransmissionContext();
+				return false;
+			}
+		}
+		else
+		{
+			// 普通传输模式
+			StartDataTransmission(m_transmissionData);
+			CString resumeMsg;
+			resumeMsg.Format(L"续传开始: %s [从%.1f%%继续]", 
+				m_currentFileName, m_transmissionContext.GetProgressPercentage());
+			AppendLog(resumeMsg);
+			return true;
+		}
+	}
+	catch (CFileException* e)
+	{
+		AppendLog(L"续传失败: 文件操作异常");
+		e->Delete();
+		file.Close();
+		ClearTransmissionContext();
+		return false;
+	}
 }
 
 // =====================================

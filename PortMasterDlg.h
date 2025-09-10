@@ -37,6 +37,58 @@ enum class TransmissionState
 	FAILED           // 传输失败
 };
 
+// 传输上下文结构体 - 支持断点续传功能 (SOLID-S: 单一职责)
+struct TransmissionContext
+{
+	CString sourceFilePath;          // 源文件路径
+	CString targetIdentifier;        // 目标标识符（端口/网络地址等）
+	size_t totalBytes;               // 文件总大小（字节）
+	size_t transmittedBytes;         // 已传输字节数
+	size_t lastChunkSize;            // 最后一个数据块大小
+	DWORD startTimestamp;            // 传输开始时间戳
+	DWORD lastUpdateTimestamp;       // 最后更新时间戳
+	double averageSpeed;             // 平均传输速度 (bytes/sec)
+	bool isValidContext;             // 上下文是否有效
+	
+	// 构造函数：初始化为无效上下文
+	TransmissionContext()
+		: totalBytes(0)
+		, transmittedBytes(0)
+		, lastChunkSize(0)
+		, startTimestamp(0)
+		, lastUpdateTimestamp(0)
+		, averageSpeed(0.0)
+		, isValidContext(false)
+	{
+	}
+	
+	// 重置上下文 (KISS原则：简单清晰的状态管理)
+	void Reset()
+	{
+		sourceFilePath.Empty();
+		targetIdentifier.Empty();
+		totalBytes = 0;
+		transmittedBytes = 0;
+		lastChunkSize = 0;
+		startTimestamp = 0;
+		lastUpdateTimestamp = 0;
+		averageSpeed = 0.0;
+		isValidContext = false;
+	}
+	
+	// 计算传输进度百分比 (0-100)
+	double GetProgressPercentage() const
+	{
+		return (totalBytes > 0) ? (static_cast<double>(transmittedBytes) / totalBytes * 100.0) : 0.0;
+	}
+	
+	// 检查是否可以续传
+	bool CanResume() const
+	{
+		return isValidContext && (transmittedBytes < totalBytes) && (transmittedBytes > 0);
+	}
+};
+
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
 {
@@ -151,6 +203,7 @@ private:
 	// 传输状态变量（线程安全保护）
 	std::atomic<bool> m_bTransmitting;
 	TransmissionState m_transmissionState;  // 传输状态管理
+	TransmissionContext m_transmissionContext; // 断点续传上下文信息
 	std::vector<uint8_t> m_transmissionData;  // 发送数据缓冲区（文件拖放数据）
 	std::vector<uint8_t> m_displayedData;    // 当前显示在hex/text view中的数据（用于保存功能）
 	mutable std::mutex m_displayDataMutex;   // 显示数据互斥锁
@@ -262,6 +315,13 @@ private:
 	void SetTransmissionState(TransmissionState newState);          // 设置传输状态
 	TransmissionState GetTransmissionState() const;                 // 获取当前传输状态  
 	bool IsTransmissionActive() const;                              // 检查传输是否活跃
+	
+	// 断点续传功能方法 (SOLID-S: 单一职责, KISS: 简洁的续传逻辑)
+	void SaveTransmissionContext(const CString& filePath, size_t totalBytes, size_t transmittedBytes); // 保存传输断点
+	bool LoadTransmissionContext();                                 // 加载传输断点
+	void ClearTransmissionContext();                               // 清除传输断点
+	CString GetTransmissionContextFilePath() const;                // 获取断点文件路径
+	bool ResumeTransmission();                                      // 续传功能实现
 	bool ShouldEchoTransmittedData() const;                        // 第四阶段新增：回显策略判断
 	void DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk); // 第四阶段新增：分块数据显示
 	void HandleTransmissionError(const CString& operation, const std::string& error);
