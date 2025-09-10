@@ -227,6 +227,14 @@ private:
 	void DisplayReceivedData(const std::vector<uint8_t>& data);
 	void DisplaySendData(const std::vector<uint8_t>& data);  // 新增：显示待发送数据到输入区域
 	
+	// 数据格式化方法 (SOLID-S: 单一职责 - 数据格式转换)
+	CString FormatDataAsHex(const std::vector<uint8_t>& data);    // 格式化为十六进制字符串
+	CString FormatDataAsText(const std::vector<uint8_t>& data);   // 格式化为文本字符串
+	
+	// 统一显示管理方法 (SOLID-S: 单一职责 - 显示逻辑统一)
+	void UpdateDataDisplay();                                     // 统一的数据显示更新逻辑
+	void RefreshDataView();                                       // 刷新数据视图控件
+	
 	// 文件拖放辅助方法
 	bool LoadFileForTransmission(const CString& filePath);
 	void ShowFileLoadProgress(const CString& filename, size_t totalSize, size_t loaded);

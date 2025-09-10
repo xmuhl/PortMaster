@@ -1864,16 +1864,25 @@ void CPortMasterDlg::OnBnClickedHexDisplay()
 	logMsg.Format(L"切换到%s显示模式", m_bHexDisplay ? L"十六进制" : L"文本");
 	WriteDebugLog(CW2A(logMsg));
 	
-	// TODO: 如果需要立即更新显示内容，可以在这里调用数据刷新函数
-	// UpdateDataDisplay();
+	// 立即更新显示内容，应用新的显示模式
+	UpdateDataDisplay();
 	
 	WriteDebugLog("[DEBUG] OnBnClickedHexDisplay: 显示模式切换完成");
 }
 
 void CPortMasterDlg::OnBnClickedCopyHex()
 {
-	CString hexText;
-	m_ctrlDataView.GetWindowText(hexText);
+	// 重构：基于原始数据源，确保数据完整性 (SOLID-S: 单一职责)
+	std::lock_guard<std::mutex> lock(m_displayDataMutex); // 线程安全访问
+	
+	if (m_displayedData.empty())
+	{
+		ShowUserMessage(L"复制失败", L"没有数据可复制", MB_ICONWARNING);
+		return;
+	}
+	
+	// 使用新的格式化方法，基于原始数据源
+	CString hexText = FormatDataAsHex(m_displayedData);
 	
 	if (!hexText.IsEmpty())
 	{
@@ -1888,21 +1897,38 @@ void CPortMasterDlg::OnBnClickedCopyHex()
 				wcscpy_s((WCHAR*)GlobalLock(hMem), hexText.GetLength() + 1, hexText);
 				GlobalUnlock(hMem);
 				SetClipboardData(CF_UNICODETEXT, hMem);
-				AppendLog(L"十六进制数据已复制到剪贴板");
+				
+				// 详细的成功反馈
+				CString logMsg;
+				logMsg.Format(L"十六进制数据已复制到剪贴板 (%zu 字节)", m_displayedData.size());
+				AppendLog(logMsg);
 			}
 			CloseClipboard();
+		}
+		else
+		{
+			AppendLog(L"剪贴板访问失败");
 		}
 	}
 	else
 	{
-		ShowUserMessage(L"复制失败", L"没有十六进制数据可复制", MB_ICONWARNING);
+		AppendLog(L"数据格式化失败");
 	}
 }
 
 void CPortMasterDlg::OnBnClickedCopyText()
 {
-	CString textData;
-	m_ctrlDataView.GetWindowText(textData);
+	// 重构：基于原始数据源，确保数据完整性 (SOLID-S: 单一职责)
+	std::lock_guard<std::mutex> lock(m_displayDataMutex); // 线程安全访问
+	
+	if (m_displayedData.empty())
+	{
+		ShowUserMessage(L"复制失败", L"没有数据可复制", MB_ICONWARNING);
+		return;
+	}
+	
+	// 使用新的格式化方法，基于原始数据源
+	CString textData = FormatDataAsText(m_displayedData);
 	
 	if (!textData.IsEmpty())
 	{
@@ -1917,14 +1943,22 @@ void CPortMasterDlg::OnBnClickedCopyText()
 				wcscpy_s((WCHAR*)GlobalLock(hMem), textData.GetLength() + 1, textData);
 				GlobalUnlock(hMem);
 				SetClipboardData(CF_UNICODETEXT, hMem);
-				AppendLog(L"文本数据已复制到剪贴板");
+				
+				// 详细的成功反馈
+				CString logMsg;
+				logMsg.Format(L"文本数据已复制到剪贴板 (%zu 字节)", m_displayedData.size());
+				AppendLog(logMsg);
 			}
 			CloseClipboard();
+		}
+		else
+		{
+			AppendLog(L"剪贴板访问失败");
 		}
 	}
 	else
 	{
-		ShowUserMessage(L"复制失败", L"没有文本数据可复制", MB_ICONWARNING);
+		AppendLog(L"数据格式化失败");
 	}
 }
 
@@ -2549,6 +2583,138 @@ LRESULT CPortMasterDlg::OnUpdateFileReceived(WPARAM wParam, LPARAM lParam)
 	}
 	
 	return 0;
+}
+
+// =====================================
+// 数据格式化方法实现 (SOLID-S: 单一职责)
+// =====================================
+
+CString CPortMasterDlg::FormatDataAsHex(const std::vector<uint8_t>& data)
+{
+	if (data.empty()) {
+		return CString(L"");
+	}
+	
+	CString result;
+	result.Preallocate(static_cast<int>(data.size() * 3)); // 预分配内存优化性能
+	
+	for (size_t i = 0; i < data.size(); ++i) {
+		CString hexByte;
+		hexByte.Format(L"%02X", data[i]);
+		result += hexByte;
+		
+		// 每16个字节换行，提高可读性
+		if ((i + 1) % 16 == 0 && i != data.size() - 1) {
+			result += L"\r\n";
+		} else if (i != data.size() - 1) {
+			result += L" ";
+		}
+	}
+	
+	return result;
+}
+
+CString CPortMasterDlg::FormatDataAsText(const std::vector<uint8_t>& data)
+{
+	if (data.empty()) {
+		return CString(L"");
+	}
+	
+	// 尝试UTF-8解码，如果失败则使用字符显示
+	try {
+		// 先尝试UTF-8解码
+		std::string utf8Str(data.begin(), data.end());
+		int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
+			utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+		
+		if (wideStrLen > 0) {
+			std::vector<wchar_t> wideStr(wideStrLen + 1);
+			MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
+				utf8Str.c_str(), static_cast<int>(utf8Str.length()), 
+				wideStr.data(), wideStrLen);
+			wideStr[wideStrLen] = L'\0';
+			return CString(wideStr.data());
+		}
+	}
+	catch (...) {
+		// UTF-8解码失败，使用字符显示
+	}
+	
+	// UTF-8解码失败，使用可见字符显示
+	CString result;
+	result.Preallocate(static_cast<int>(data.size()));
+	
+	for (uint8_t byte : data) {
+		if (byte >= 32 && byte <= 126) {
+			// 可打印ASCII字符
+			result += static_cast<wchar_t>(byte);
+		} else {
+			// 不可打印字符用点号表示
+			result += L'.';
+		}
+	}
+	
+	return result;
+}
+
+// =====================================
+// 统一显示管理方法实现 (SOLID-S: 单一职责)
+// =====================================
+
+void CPortMasterDlg::UpdateDataDisplay()
+{
+	// 统一的数据显示更新逻辑，根据当前显示模式格式化数据
+	std::lock_guard<std::mutex> lock(m_displayDataMutex); // 线程安全访问
+	
+	if (m_displayedData.empty()) {
+		// 清空显示控件
+		if (IsWindow(m_ctrlDataView.GetSafeHwnd())) {
+			m_ctrlDataView.SetWindowText(L"");
+		}
+		return;
+	}
+	
+	CString formattedData;
+	
+	// 根据当前显示模式选择格式化方法
+	if (m_bHexDisplay) {
+		formattedData = FormatDataAsHex(m_displayedData);
+	} else {
+		formattedData = FormatDataAsText(m_displayedData);
+	}
+	
+	// 更新显示控件
+	RefreshDataView();
+	
+	if (IsWindow(m_ctrlDataView.GetSafeHwnd())) {
+		m_ctrlDataView.SetWindowText(formattedData);
+		
+		// 滚动到底部显示最新数据
+		int textLength = m_ctrlDataView.GetWindowTextLength();
+		m_ctrlDataView.SetSel(textLength, textLength);
+		m_ctrlDataView.LineScroll(m_ctrlDataView.GetLineCount());
+		
+		// 记录显示更新
+		CString logMsg;
+		logMsg.Format(L"数据显示已更新 (%s模式, %zu字节)", 
+			m_bHexDisplay ? L"十六进制" : L"文本", m_displayedData.size());
+		WriteDebugLog(CW2A(logMsg));
+	}
+}
+
+void CPortMasterDlg::RefreshDataView()
+{
+	// 刷新数据视图控件状态
+	if (!IsWindow(m_ctrlDataView.GetSafeHwnd())) {
+		WriteDebugLog("[WARNING] RefreshDataView: 数据视图控件无效");
+		return;
+	}
+	
+	// 强制控件重绘
+	m_ctrlDataView.Invalidate();
+	m_ctrlDataView.UpdateWindow();
+	
+	WriteDebugLog("[DEBUG] RefreshDataView: 数据视图控件已刷新");
 }
 
 // =====================================
