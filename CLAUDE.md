@@ -143,7 +143,11 @@ git pull --rebase 2>$null
 **提交变更（有文件变更时）：**
 ```powershell
 git add -A
-git commit -m "feat: <简述本次修改>"
+
+# 自动生成简练的简体中文提交信息，避免弹出编辑器
+# 格式：类型: 简述修改内容（不超过50字符）
+# 示例：feat: 添加串口通信模块, fix: 修复CRC校验错误, docs: 更新README文档
+git commit -m "类型: <根据实际修改内容自动生成的简练中文描述>"
 
 # 推送到备份仓库
 git push backup HEAD
@@ -151,6 +155,12 @@ git push backup HEAD
 # 推送到主仓库（如果存在）
 git remote | findstr origin && git push origin HEAD
 ```
+
+**提交信息规范：**
+- **格式**：`类型: 简述修改内容`
+- **类型枚举**：`feat`（新功能）、`fix`（修复）、`docs`（文档）、`refactor`（重构）、`test`（测试）、`chore`（维护）
+- **描述要求**：简体中文，不超过50字符，准确概括本次变更核心内容
+- **自动生成**：基于 `git diff --name-only` 和 `git status` 分析文件变更，智能生成描述
 
 #### 5. 存档标签生成（推荐）
 ```powershell
