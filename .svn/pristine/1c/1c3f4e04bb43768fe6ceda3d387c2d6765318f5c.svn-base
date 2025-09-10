@@ -1,0 +1,416 @@
+﻿#pragma execution_character_set("utf-8")
+#include "pch.h"
+#include "AsyncMessageManager.h"
+#include <algorithm>
+
+extern void WriteDebugLog(const char* message);
+
+const UINT AsyncMessageManager::WM_ASYNC_MESSAGE;
+
+AsyncMessageManager::AsyncMessageManager()
+    : m_running(false)
+    , m_shutdown(false)
+    , m_mainWindowHandle(nullptr)
+{
+    WriteDebugLog("[DEBUG] AsyncMessageManager: 构造函数 - 异步消息管理器初始化");
+}
+
+AsyncMessageManager::~AsyncMessageManager()
+{
+    WriteDebugLog("[DEBUG] AsyncMessageManager: 析构函数 - 开始清理");
+    Shutdown();
+    WriteDebugLog("[DEBUG] AsyncMessageManager: 析构函数完成");
+}
+
+void AsyncMessageManager::Initialize(HWND mainWindowHandle)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_running)
+    {
+        WriteDebugLog("[WARNING] AsyncMessageManager::Initialize: 已经在运行，忽略重复初始化");
+        return;
+    }
+    
+    WriteDebugLog("[DEBUG] AsyncMessageManager::Initialize: 开始初始化异步消息管理器");
+    
+    m_mainWindowHandle = mainWindowHandle;
+    m_running = true;
+    m_shutdown = false;
+    
+    // 初始化消息过滤器（默认全部启用）
+    m_messageFilters[MessageType::TRANSPORT_DATA_RECEIVED] = true;
+    m_messageFilters[MessageType::TRANSPORT_STATE_CHANGED] = true;
+    m_messageFilters[MessageType::TRANSPORT_ERROR] = true;
+    m_messageFilters[MessageType::PROTOCOL_PROGRESS_UPDATE] = true;
+    m_messageFilters[MessageType::PROTOCOL_COMPLETION] = true;
+    m_messageFilters[MessageType::PROTOCOL_FILE_RECEIVED] = true;
+    m_messageFilters[MessageType::PROTOCOL_CHUNK_RECEIVED] = true;
+    m_messageFilters[MessageType::PROTOCOL_STATE_CHANGED] = true;
+    m_messageFilters[MessageType::UI_STATUS_UPDATE] = true;
+    m_messageFilters[MessageType::UI_LOG_APPEND] = true;
+    m_messageFilters[MessageType::UI_PROGRESS_UPDATE] = true;
+    m_messageFilters[MessageType::SYSTEM_ERROR] = true;
+    m_messageFilters[MessageType::SYSTEM_SHUTDOWN] = true;
+    
+    // 设置默认限流（防止消息洪水）
+    SetRateLimit(MessageType::UI_PROGRESS_UPDATE, 10);        // 进度更新：10次/秒
+    SetRateLimit(MessageType::UI_STATUS_UPDATE, 5);          // 状态更新：5次/秒
+    SetRateLimit(MessageType::PROTOCOL_PROGRESS_UPDATE, 20); // 协议进度：20次/秒
+    
+    // 启动工作线程
+    m_workerThread = std::thread(&AsyncMessageManager::WorkerThreadFunc, this);
+    
+    WriteDebugLog("[DEBUG] AsyncMessageManager::Initialize: 异步消息管理器初始化完成");
+}
+
+void AsyncMessageManager::Shutdown()
+{
+    WriteDebugLog("[DEBUG] AsyncMessageManager::Shutdown: 开始关闭异步消息管理器");
+    
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_running)
+        {
+            WriteDebugLog("[DEBUG] AsyncMessageManager::Shutdown: 已经关闭，无需重复操作");
+            return;
+        }
+        
+        m_shutdown = true;
+        m_running = false;
+    }
+    
+    // 通知工作线程退出
+    m_cv.notify_all();
+    
+    // 等待工作线程结束
+    if (m_workerThread.joinable())
+    {
+        WriteDebugLog("[DEBUG] AsyncMessageManager::Shutdown: 等待工作线程结束");
+        m_workerThread.join();
+    }
+    
+    // 清理剩余消息
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        size_t remainingMessages = m_messageQueue.size();
+        if (remainingMessages > 0)
+        {
+            WriteDebugLog(("[DEBUG] AsyncMessageManager::Shutdown: 清理剩余消息 " + 
+                          std::to_string(remainingMessages) + " 条").c_str());
+        }
+        
+        // 清空消息队列
+        while (!m_messageQueue.empty())
+        {
+            m_messageQueue.pop();
+        }
+    }
+    
+    WriteDebugLog("[DEBUG] AsyncMessageManager::Shutdown: 异步消息管理器关闭完成");
+}
+
+bool AsyncMessageManager::IsRunning() const
+{
+    return m_running;
+}
+
+void AsyncMessageManager::PostMessage(std::shared_ptr<AsyncMessage> message)
+{
+    if (!message)
+    {
+        WriteDebugLog("[ERROR] AsyncMessageManager::PostMessage: 消息为空指针");
+        return;
+    }
+    
+    if (!m_running || m_shutdown)
+    {
+        WriteDebugLog("[WARNING] AsyncMessageManager::PostMessage: 管理器未运行，丢弃消息");
+        return;
+    }
+    
+    // 检查消息过滤器
+    if (!ShouldProcessMessage(*message))
+    {
+        return;
+    }
+    
+    // 检查限流
+    if (!CheckRateLimit(message->GetType()))
+    {
+        WriteDebugLog(("[DEBUG] AsyncMessageManager::PostMessage: 消息被限流丢弃 Type=" + 
+                      std::to_string(static_cast<int>(message->GetType()))).c_str());
+        return;
+    }
+    
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_messageQueue.push(message);
+        
+        // 更新统计信息
+        {
+            std::lock_guard<std::mutex> statsLock(m_statsMutex);
+            m_statistics.currentQueueSize = m_messageQueue.size();
+            m_statistics.messageTypeCounts[message->GetType()]++;
+        }
+    }
+    
+    m_cv.notify_one();
+}
+
+void AsyncMessageManager::PostUrgentMessage(std::shared_ptr<AsyncMessage> message)
+{
+    if (!message)
+    {
+        WriteDebugLog("[ERROR] AsyncMessageManager::PostUrgentMessage: 消息为空指针");
+        return;
+    }
+    
+    WriteDebugLog(("[DEBUG] AsyncMessageManager::PostUrgentMessage: 紧急执行消息 " + 
+                  message->GetDescription()).c_str());
+    
+    try
+    {
+        message->Execute();
+        
+        // 更新统计信息
+        {
+            std::lock_guard<std::mutex> statsLock(m_statsMutex);
+            m_statistics.totalProcessed++;
+            m_statistics.messageTypeCounts[message->GetType()]++;
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        std::string error = "紧急消息执行异常: " + std::string(ex.what());
+        WriteDebugLog(("[ERROR] AsyncMessageManager::PostUrgentMessage: " + error).c_str());
+        HandleMessageError(message, error);
+    }
+    catch (...)
+    {
+        std::string error = "紧急消息执行未知异常";
+        WriteDebugLog(("[ERROR] AsyncMessageManager::PostUrgentMessage: " + error).c_str());
+        HandleMessageError(message, error);
+    }
+}
+
+void AsyncMessageManager::SetMessageFilter(MessageType type, bool enabled)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_messageFilters[type] = enabled;
+    
+    WriteDebugLog(("[DEBUG] AsyncMessageManager::SetMessageFilter: 类型=" + 
+                  std::to_string(static_cast<int>(type)) + " 启用=" + 
+                  (enabled ? "是" : "否")).c_str());
+}
+
+void AsyncMessageManager::SetRateLimit(MessageType type, int maxMessagesPerSecond)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_rateLimiters[type].maxPerSecond = maxMessagesPerSecond;
+    
+    WriteDebugLog(("[DEBUG] AsyncMessageManager::SetRateLimit: 类型=" + 
+                  std::to_string(static_cast<int>(type)) + " 限制=" + 
+                  std::to_string(maxMessagesPerSecond) + "/秒").c_str());
+}
+
+AsyncMessageManager::Statistics AsyncMessageManager::GetStatistics() const
+{
+    std::lock_guard<std::mutex> lock(m_statsMutex);
+    return m_statistics;
+}
+
+void AsyncMessageManager::ResetStatistics()
+{
+    std::lock_guard<std::mutex> lock(m_statsMutex);
+    m_statistics = Statistics();
+    WriteDebugLog("[DEBUG] AsyncMessageManager::ResetStatistics: 统计信息已重置");
+}
+
+void AsyncMessageManager::SetErrorHandler(ErrorHandler handler)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_errorHandler = handler;
+    WriteDebugLog("[DEBUG] AsyncMessageManager::SetErrorHandler: 错误处理器已设置");
+}
+
+void AsyncMessageManager::WorkerThreadFunc()
+{
+    WriteDebugLog("[DEBUG] AsyncMessageManager::WorkerThreadFunc: 工作线程启动");
+    
+    while (m_running && !m_shutdown)
+    {
+        std::shared_ptr<AsyncMessage> message;
+        
+        // 获取下一个消息
+        {
+            std::unique_lock<std::mutex> lock(m_mutex);
+            
+            // 等待消息或关闭信号
+            m_cv.wait(lock, [this] { return !m_messageQueue.empty() || m_shutdown; });
+            
+            if (m_shutdown)
+            {
+                break;
+            }
+            
+            if (!m_messageQueue.empty())
+            {
+                message = m_messageQueue.top();
+                m_messageQueue.pop();
+                
+                // 更新队列大小统计
+                {
+                    std::lock_guard<std::mutex> statsLock(m_statsMutex);
+                    m_statistics.currentQueueSize = m_messageQueue.size();
+                }
+            }
+        }
+        
+        // 处理消息
+        if (message)
+        {
+            ProcessMessage(message);
+        }
+    }
+    
+    WriteDebugLog("[DEBUG] AsyncMessageManager::WorkerThreadFunc: 工作线程退出");
+}
+
+void AsyncMessageManager::ProcessMessage(std::shared_ptr<AsyncMessage> message)
+{
+    if (!message)
+        return;
+    
+    try
+    {
+        WriteDebugLog(("[DEBUG] AsyncMessageManager::ProcessMessage: 处理消息 " + 
+                      message->GetDescription()).c_str());
+        
+        message->Execute();
+        
+        // 更新统计信息
+        {
+            std::lock_guard<std::mutex> lock(m_statsMutex);
+            m_statistics.totalProcessed++;
+        }
+    }
+    catch (const std::exception& ex)
+    {
+        std::string error = "消息处理异常: " + std::string(ex.what());
+        WriteDebugLog(("[ERROR] AsyncMessageManager::ProcessMessage: " + error).c_str());
+        HandleMessageError(message, error);
+    }
+    catch (...)
+    {
+        std::string error = "消息处理未知异常";
+        WriteDebugLog(("[ERROR] AsyncMessageManager::ProcessMessage: " + error).c_str());
+        HandleMessageError(message, error);
+    }
+}
+
+bool AsyncMessageManager::ShouldProcessMessage(const AsyncMessage& message)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_messageFilters.find(message.GetType());
+    if (it != m_messageFilters.end())
+    {
+        return it->second;
+    }
+    
+    // 默认处理未知类型的消息
+    return true;
+}
+
+void AsyncMessageManager::HandleMessageError(std::shared_ptr<AsyncMessage> message, const std::string& error)
+{
+    if (!message)
+        return;
+    
+    // 更新错误统计
+    {
+        std::lock_guard<std::mutex> lock(m_statsMutex);
+        m_statistics.failedMessages++;
+    }
+    
+    // 尝试重试
+    if (message->CanRetry())
+    {
+        message->IncrementRetryCount();
+        
+        WriteDebugLog(("[DEBUG] AsyncMessageManager::HandleMessageError: 重试消息 " + 
+                      message->GetDescription() + " 次数=" + 
+                      std::to_string(message->GetRetryCount())).c_str());
+        
+        // 将消息重新加入队列
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_messageQueue.push(message);
+            
+            {
+                std::lock_guard<std::mutex> statsLock(m_statsMutex);
+                m_statistics.retriedMessages++;
+                m_statistics.currentQueueSize = m_messageQueue.size();
+            }
+        }
+        
+        m_cv.notify_one();
+    }
+    else
+    {
+        WriteDebugLog(("[ERROR] AsyncMessageManager::HandleMessageError: 消息处理失败且无法重试 " + 
+                      message->GetDescription()).c_str());
+    }
+    
+    // 调用错误处理器
+    if (m_errorHandler)
+    {
+        try
+        {
+            m_errorHandler(error, message->GetType());
+        }
+        catch (...)
+        {
+            WriteDebugLog("[ERROR] AsyncMessageManager::HandleMessageError: 错误处理器本身抛出异常");
+        }
+    }
+}
+
+bool AsyncMessageManager::CheckRateLimit(MessageType type)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    auto it = m_rateLimiters.find(type);
+    if (it == m_rateLimiters.end())
+    {
+        // 无限制
+        return true;
+    }
+    
+    RateLimiter& limiter = it->second;
+    if (limiter.maxPerSecond <= 0)
+    {
+        // 无限制
+        return true;
+    }
+    
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - limiter.lastReset);
+    
+    if (elapsed >= std::chrono::seconds(1))
+    {
+        // 重置计数器
+        limiter.lastReset = now;
+        limiter.currentCount = 0;
+    }
+    
+    if (limiter.currentCount >= limiter.maxPerSecond)
+    {
+        // 超出限制
+        return false;
+    }
+    
+    limiter.currentCount++;
+    return true;
+}

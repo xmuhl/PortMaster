@@ -1,0 +1,82 @@
+﻿#pragma once
+
+#include <vector>
+#include <cstdint>
+#include <string>
+
+// 甯х被鍨嬪畾涔?enum FrameType
+{
+    FRAME_START = 0x01,   // 寮€濮嬪抚
+    FRAME_DATA = 0x02,    // 鏁版嵁甯?    FRAME_END = 0x03,     // 缁撴潫甯?    FRAME_ACK = 0x10,     // 纭甯?    FRAME_NAK = 0x11      // 鍚﹀畾纭甯?};
+
+// 甯х粨鏋?struct Frame
+{
+    FrameType type;                // 甯х被鍨?    uint16_t sequence;             // 搴忓垪鍙?    std::vector<uint8_t> payload;  // 璐熻浇鏁版嵁
+    uint32_t crc;                  // CRC鏍￠獙
+    
+    Frame() : type(FRAME_DATA), sequence(0), crc(0) {}
+    Frame(FrameType t, uint16_t seq) : type(t), sequence(seq), crc(0) {}
+    Frame(FrameType t, uint16_t seq, const std::vector<uint8_t>& data) 
+        : type(t), sequence(seq), payload(data), crc(0) {}
+};
+
+// START甯у厓鏁版嵁缁撴瀯
+struct StartMetadata
+{
+    uint8_t version;           // 鐗堟湰鍙?    uint8_t flags;             // 鏍囧織浣?    std::string filename;      // 鏂囦欢鍚嶏紙UTF-8锛?    uint64_t fileSize;         // 鏂囦欢澶у皬
+    uint64_t modifyTime;       // 淇敼鏃堕棿锛堝彲閫夛級
+    
+    StartMetadata() 
+        : version(1), flags(0), fileSize(0), modifyTime(0) {}
+    
+    std::vector<uint8_t> Serialize() const;
+    bool Deserialize(const std::vector<uint8_t>& data);
+};
+
+// 甯х紪瑙ｇ爜鍣?class FrameCodec
+{
+public:
+    static const uint16_t FRAME_HEADER = 0xAA55;  // 鍖呭ご
+    static const uint16_t FRAME_FOOTER = 0x55AA;  // 鍖呭熬
+    static const size_t DEFAULT_MAX_PAYLOAD = 1024; // 榛樿鏈€澶ц礋杞?    static const size_t MIN_FRAME_SIZE = 13;      // 鏈€灏忓抚澶у皬锛堝ご+绫诲瀷+搴忓彿+闀垮害+CRC+灏撅級
+
+    FrameCodec(size_t maxPayloadSize = DEFAULT_MAX_PAYLOAD);
+
+    // 缂栫爜甯т负瀛楄妭娴?    std::vector<uint8_t> EncodeFrame(const Frame& frame);
+    
+    // 浠庡瓧鑺傛祦瑙ｇ爜甯?    enum class DecodeResult
+    {
+        Success,        // 鎴愬姛瑙ｇ爜
+        Incomplete,     // 鏁版嵁涓嶅畬鏁达紝闇€瑕佹洿澶氭暟鎹?        InvalidFrame,   // 甯ф牸寮忔棤鏁?        CrcError,       // CRC鏍￠獙閿欒
+        PayloadTooLarge // 璐熻浇杩囧ぇ
+    };
+    
+    DecodeResult DecodeFrame(const std::vector<uint8_t>& buffer, size_t& consumedBytes, Frame& frame);
+    
+    // 鍒涘缓鐗瑰畾绫诲瀷鐨勫抚
+    static Frame CreateStartFrame(uint16_t sequence, const StartMetadata& metadata);
+    static Frame CreateDataFrame(uint16_t sequence, const std::vector<uint8_t>& data);
+    static Frame CreateEndFrame(uint16_t sequence);
+    static Frame CreateAckFrame(uint16_t sequence);
+    static Frame CreateNakFrame(uint16_t sequence);
+    
+    // 楠岃瘉甯х殑鏈夋晥鎬?    bool ValidateFrame(const Frame& frame) const;
+    
+    // 鑾峰彇/璁剧疆鏈€澶ц礋杞藉ぇ灏?    size_t GetMaxPayloadSize() const { return m_maxPayloadSize; }
+    void SetMaxPayloadSize(size_t size) { m_maxPayloadSize = size; }
+    
+    // 鍚屾鏌ユ壘锛氬湪鏁版嵁娴佷腑鏌ユ壘甯уご
+    static size_t FindFrameHeader(const std::vector<uint8_t>& buffer, size_t startPos = 0);
+
+private:
+    size_t m_maxPayloadSize;
+    
+    // 璁＄畻甯х殑CRC锛堜笉鍖呮嫭甯уご鍜屽抚灏撅級
+    uint32_t CalculateFrameCrc(FrameType type, uint16_t sequence, 
+                               const std::vector<uint8_t>& payload) const;
+    
+    // 灏忕搴忚浆鎹㈣緟鍔╁嚱鏁?    static void WriteUint16LE(std::vector<uint8_t>& buffer, uint16_t value);
+    static void WriteUint32LE(std::vector<uint8_t>& buffer, uint32_t value);
+    static uint16_t ReadUint16LE(const uint8_t* data);
+    static uint32_t ReadUint32LE(const uint8_t* data);
+};

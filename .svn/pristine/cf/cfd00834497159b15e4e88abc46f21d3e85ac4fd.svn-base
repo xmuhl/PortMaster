@@ -1,0 +1,31 @@
+﻿#pragma once
+
+#include "afxdialogex.h"
+
+// CSplashDialog 瀵硅瘽妗?
+class CSplashDialog : public CDialogEx
+{
+	DECLARE_DYNAMIC(CSplashDialog)
+
+public:
+	CSplashDialog(CWnd* pParent = nullptr);   // 鏍囧噯鏋勯€犲嚱鏁?	virtual ~CSplashDialog();
+
+// 瀵硅瘽妗嗘暟鎹?#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_SPLASH_DIALOG };
+#endif
+
+protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 鏀寔
+
+	DECLARE_MESSAGE_MAP()
+
+public:
+	virtual BOOL OnInitDialog();
+	afx_msg void OnPaint();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+
+private:
+	CBitmap m_splashBitmap;
+	UINT_PTR m_nTimer;
+	static const UINT SPLASH_TIMER_ID = 1001;
+	static const UINT SPLASH_DURATION = 2500; // 2.5绉?};

@@ -1,0 +1,389 @@
+﻿#pragma execution_character_set("utf-8")
+#include "pch.h"
+#include "LptSpoolerTransport.h"
+#include <winspool.h>
+#include <vector>
+
+#pragma comment(lib, "winspool.lib")
+
+LptSpoolerTransport::LptSpoolerTransport()
+    : m_hPrinter(NULL)
+    , m_jobId(0)
+{
+    m_state = TRANSPORT_CLOSED;
+}
+
+LptSpoolerTransport::~LptSpoolerTransport()
+{
+    Close();
+}
+
+bool LptSpoolerTransport::Open(const TransportConfig& config)
+{
+    if (m_state == TRANSPORT_OPEN)
+    {
+        SetLastError("打印机已经打开");
+        return false;
+    }
+    
+    m_config = config;
+    NotifyStateChanged(TRANSPORT_OPENING, "正在打开打印机...");
+    
+    // 默认使用LPT1:，实际使用时应该通过SetPrinterName设置
+    if (m_printerName.empty())
+    {
+        m_printerName = "LPT1:";
+    }
+    
+    // 打开打印机
+    PRINTER_DEFAULTSA printerDefaults = {0};
+    printerDefaults.pDatatype = "RAW";  // 使用RAW数据类型进行直接打印
+    printerDefaults.DesiredAccess = PRINTER_ACCESS_USE;
+    
+    if (!OpenPrinterA(const_cast<char*>(m_printerName.c_str()), &m_hPrinter, &printerDefaults))
+    {
+        DWORD winError = ::GetLastError();
+        SetLastError("打开打印机失败: " + GetPrinterErrorString(winError));
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 启动RAW打印作业
+    if (!StartRawPrintJob())
+    {
+        ClosePrinter(m_hPrinter);
+        m_hPrinter = NULL;
+        NotifyStateChanged(TRANSPORT_ERROR, "启动打印作业失败");
+        return false;
+    }
+    
+    NotifyStateChanged(TRANSPORT_OPEN, "打印机 " + m_printerName + " 已打开");
+    return true;
+}
+
+void LptSpoolerTransport::Close()
+{
+    if (m_state == TRANSPORT_CLOSED)
+        return;
+    
+    NotifyStateChanged(TRANSPORT_CLOSING, "正在关闭打印机...");
+    
+    // 结束打印作业
+    if (m_jobId != 0)
+    {
+        EndPrintJob();
+        m_jobId = 0;
+    }
+    
+    // 关闭打印机句柄
+    if (m_hPrinter != NULL)
+    {
+        ClosePrinter(m_hPrinter);
+        m_hPrinter = NULL;
+    }
+    
+    NotifyStateChanged(TRANSPORT_CLOSED, "打印机已关闭");
+}
+
+bool LptSpoolerTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState LptSpoolerTransport::GetState() const
+{
+    return m_state;
+}
+
+bool LptSpoolerTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig LptSpoolerTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t LptSpoolerTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t LptSpoolerTransport::Write(const uint8_t* data, size_t length)
+{
+    if (m_state != TRANSPORT_OPEN || m_hPrinter == NULL || m_jobId == 0)
+    {
+        SetLastError("打印机未打开或打印作业未启动");
+        return 0;
+    }
+    
+    if (data == nullptr || length == 0)
+        return 0;
+    
+    // 写入数据到打印作业
+    DWORD bytesWritten = 0;
+    if (!WritePrinter(m_hPrinter, const_cast<uint8_t*>(data), (DWORD)length, &bytesWritten))
+    {
+        DWORD winError = ::GetLastError();
+        SetLastError("写入打印机失败: " + GetPrinterErrorString(winError));
+        return 0;
+    }
+    
+    return bytesWritten;
+}
+
+size_t LptSpoolerTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    // LPT閫氬父涓嶆敮鎸佽鍙栵紝杩斿洖鎵撳嵃鏈虹姸鎬佷俊鎭?    data.clear();
+    return 0;
+}
+
+size_t LptSpoolerTransport::Available() const
+{
+    return 0;
+}
+
+std::string LptSpoolerTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string LptSpoolerTransport::GetPortName() const
+{
+    return m_printerName;
+}
+
+std::string LptSpoolerTransport::GetTransportType() const
+{
+    return "LPT";
+}
+
+void LptSpoolerTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void LptSpoolerTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool LptSpoolerTransport::Flush()
+{
+    return true;
+}
+
+bool LptSpoolerTransport::ClearBuffers()
+{
+    return true;
+}
+
+std::vector<std::string> LptSpoolerTransport::EnumeratePrinters()
+{
+    std::vector<std::string> printers;
+    
+    // 获取本地打印机信息
+    DWORD bytesNeeded = 0;
+    DWORD numPrinters = 0;
+    
+    // 第一次调用获取需要的缓冲区大小
+    EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, NULL, 0, &bytesNeeded, &numPrinters);
+    
+    if (bytesNeeded > 0)
+    {
+        std::vector<BYTE> buffer(bytesNeeded);
+        PRINTER_INFO_2A* printerInfo = reinterpret_cast<PRINTER_INFO_2A*>(buffer.data());
+        
+        // 第二次调用获取打印机信息
+        if (EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer.data(), bytesNeeded, &bytesNeeded, &numPrinters))
+        {
+            for (DWORD i = 0; i < numPrinters; i++)
+            {
+                if (printerInfo[i].pPrinterName)
+                {
+                    printers.push_back(printerInfo[i].pPrinterName);
+                }
+            }
+        }
+    }
+    
+    // 如果没有找到打印机，添加默认的LPT端口
+    if (printers.empty())
+    {
+        printers.push_back("LPT1:");
+        printers.push_back("LPT2:");
+        printers.push_back("LPT3:");
+    }
+    
+    return printers;
+}
+
+void LptSpoolerTransport::SetPrinterName(const std::string& printerName)
+{
+    if (m_state == TRANSPORT_OPEN)
+    {
+        SetLastError("无法在连接打开时更改打印机名称");
+        return;
+    }
+    m_printerName = printerName;
+}
+
+bool LptSpoolerTransport::GetPrinterStatus(std::string& status)
+{
+    if (m_hPrinter == NULL)
+    {
+        status = "未连接";
+        return false;
+    }
+    
+    // 获取打印机状态信息
+    PRINTER_INFO_2A* printerInfo = nullptr;
+    DWORD bytesNeeded = 0;
+    
+    // 第一次调用获取所需缓冲区大小
+    GetPrinterA(m_hPrinter, 2, NULL, 0, &bytesNeeded);
+    if (bytesNeeded == 0)
+    {
+        status = "无法获取状态";
+        return false;
+    }
+    
+    // 分配缓冲区并获取打印机信息
+    std::vector<BYTE> buffer(bytesNeeded);
+    printerInfo = reinterpret_cast<PRINTER_INFO_2A*>(buffer.data());
+    
+    if (!GetPrinterA(m_hPrinter, 2, buffer.data(), bytesNeeded, &bytesNeeded))
+    {
+        status = "状态查询失败";
+        return false;
+    }
+    
+    // 解析打印机状态
+    DWORD printerStatus = printerInfo->Status;
+    if (printerStatus == 0)
+    {
+        status = "就绪";
+    }
+    else
+    {
+        std::string statusText = "状态: ";
+        if (printerStatus & PRINTER_STATUS_BUSY) statusText += "忙碌 ";
+        if (printerStatus & PRINTER_STATUS_ERROR) statusText += "错误 ";
+        if (printerStatus & PRINTER_STATUS_PAPER_JAM) statusText += "卡纸 ";
+        if (printerStatus & PRINTER_STATUS_PAPER_OUT) statusText += "缺纸 ";
+        if (printerStatus & PRINTER_STATUS_OFFLINE) statusText += "离线 ";
+        if (printerStatus & PRINTER_STATUS_PAUSED) statusText += "暂停 ";
+        status = statusText;
+    }
+    
+    return true;
+}
+
+bool LptSpoolerTransport::StartRawPrintJob()
+{
+    if (m_hPrinter == NULL)
+    {
+        SetLastError("打印机未打开");
+        return false;
+    }
+    
+    // 设置打印作业信息
+    DOC_INFO_1A docInfo = {0};
+    docInfo.pDocName = "PortMaster RAW Data";
+    docInfo.pOutputFile = NULL;
+    docInfo.pDatatype = "RAW";  // 使用RAW数据类型
+    
+    // 开始打印作业
+    m_jobId = StartDocPrinterA(m_hPrinter, 1, (LPBYTE)&docInfo);
+    if (m_jobId == 0)
+    {
+        DWORD winError = ::GetLastError();
+        SetLastError("启动打印作业失败: " + GetPrinterErrorString(winError));
+        return false;
+    }
+    
+    // 开始打印页面
+    if (!StartPagePrinter(m_hPrinter))
+    {
+        DWORD winError = ::GetLastError();
+        EndDocPrinter(m_hPrinter);
+        m_jobId = 0;
+        SetLastError("启动打印页面失败: " + GetPrinterErrorString(winError));
+        return false;
+    }
+    
+    return true;
+}
+bool LptSpoolerTransport::EndPrintJob()
+{
+    if (m_hPrinter == NULL || m_jobId == 0)
+    {
+        return true;  // 已经结束或未开始
+    }
+    
+    // 结束打印页面
+    bool success = true;
+    if (!EndPagePrinter(m_hPrinter))
+    {
+        DWORD winError = ::GetLastError();
+        SetLastError("结束打印页面失败: " + GetPrinterErrorString(winError));
+        success = false;
+    }
+    
+    // 结束打印作业
+    if (!EndDocPrinter(m_hPrinter))
+    {
+        DWORD winError = ::GetLastError();
+        SetLastError("结束打印作业失败: " + GetPrinterErrorString(winError));
+        success = false;
+    }
+    
+    m_jobId = 0;
+    return success;
+}
+
+void LptSpoolerTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+        m_dataCallback(data);
+}
+
+void LptSpoolerTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+        m_stateCallback(state, message);
+}
+
+void LptSpoolerTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}
+
+std::string LptSpoolerTransport::GetPrinterErrorString(DWORD error) const
+{
+    // 实现打印机错误信息转换
+    LPSTR buffer = nullptr;
+    size_t size = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
+    
+    if (size == 0) {
+        return "Unknown printer error (code: " + std::to_string(error) + ")";
+    }
+    
+    std::string result(buffer, size);
+    LocalFree(buffer);
+    
+    // 移除末尾的换行符
+    if (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+        result.pop_back();
+        if (!result.empty() && result.back() == '\r') {
+            result.pop_back();
+        }
+    }
+    
+    return result + " (code: " + std::to_string(error) + ")";
+}

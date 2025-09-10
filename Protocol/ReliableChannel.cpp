@@ -1,0 +1,1023 @@
+﻿#include "pch.h"
+#include "ReliableChannel.h"
+#include <fstream>
+#include <sstream>
+#include <filesystem>
+
+ReliableChannel::ReliableChannel(std::shared_ptr<ITransport> transport)
+    : m_transport(transport)
+    , m_frameCodec()
+    , m_state(RELIABLE_IDLE)
+    , m_active(false)
+    , m_receivingEnabled(true)
+    , m_sendOffset(0)
+    , m_sendSequence(1)
+    , m_retryCount(0)
+    , m_expectedSequence(1)
+    , m_stopThread(false)
+{
+    // 设置传输层回调
+    if (m_transport)
+    {
+        m_transport->SetDataReceivedCallback([this](const std::vector<uint8_t>& data) {
+            OnDataReceived(data);
+        });
+    }
+}
+
+ReliableChannel::~ReliableChannel()
+{
+    Stop();
+}
+
+bool ReliableChannel::Start()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_active)
+        return true;
+    
+    if (!m_transport)
+    {
+        SetError("传输层未初始化");
+        return false;
+    }
+    
+    // 检查传输层是否已打开 (SOLID-S: 单一职责 - 避免重复打开)
+    if (!m_transport->IsOpen())
+    {
+        SetError("传输层未打开，请先建立连接");
+        return false;
+    }
+    
+    // 重置状态
+    m_state = RELIABLE_IDLE;
+    m_active = true;
+    m_stopThread = false;
+    m_lastAckedSequence = 0;
+    
+    // 启动协议处理线程
+    m_protocolThread = std::thread(&ReliableChannel::ProtocolThreadFunc, this);
+    
+    return true;
+}
+
+void ReliableChannel::Stop()
+{
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_active)
+            return;
+        
+        m_active = false;
+        m_stopThread = true;
+    }
+    
+    // 唤醒协议线程
+    m_protocolCV.notify_all();
+    
+    // 等待协议线程结束
+    if (m_protocolThread.joinable())
+    {
+        m_protocolThread.join();
+    }
+    
+    // 关闭传输层
+    if (m_transport)
+    {
+        m_transport->Close();
+    }
+    
+    // 重置状态
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_state = RELIABLE_IDLE;
+}
+
+bool ReliableChannel::IsActive() const
+{
+    return m_active;
+}
+
+bool ReliableChannel::SendData(const std::vector<uint8_t>& data)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (!m_active || m_state != RELIABLE_IDLE)
+    {
+        SetError("通道未就绪或正在传输中");
+        return false;
+    }
+    
+    // 设置发送数据
+    m_sendData = data;
+    m_sendFilename = "[数据传输]"; // 标识为数据传输而非文件传输
+    m_sendOffset = 0;
+    m_sendSequence = 1;
+    m_retryCount = 0;
+    
+    // 初始化滑动窗口状态
+    {
+        std::lock_guard<std::mutex> windowLock(m_sendWindowMutex);
+        m_sendWindow.clear();
+        m_sendBase = 1;      // 发送窗口基序号
+        m_nextSequence = 1;  // 下一个发送序号
+    }
+    
+    // 初始化统计信息
+    m_stats = TransferStats();
+    m_stats.totalBytes = data.size();
+    m_stats.totalFrames = (data.size() + m_frameCodec.GetMaxPayloadSize() - 1) / m_frameCodec.GetMaxPayloadSize() + 2; // +2 for START and END
+    
+    // 开始发送
+    SetState(RELIABLE_STARTING);
+    m_protocolCV.notify_one();
+    
+    return true;
+}
+
+bool ReliableChannel::SendFile(const std::string& filePath)
+{
+    try
+    {
+        // 读取文件
+        std::ifstream file(filePath, std::ios::binary | std::ios::ate);
+        if (!file.is_open())
+        {
+            SetError("无法打开文件: " + filePath);
+            return false;
+        }
+        
+        auto fileSize = file.tellg();
+        file.seekg(0, std::ios::beg);
+        
+        std::vector<uint8_t> fileData(static_cast<size_t>(fileSize));
+        if (!file.read(reinterpret_cast<char*>(fileData.data()), fileSize))
+        {
+            SetError("文件读取失败");
+            return false;
+        }
+        
+        // 提取文件名
+        std::string filename = std::filesystem::path(filePath).filename().string();
+        
+        return SendFile(filename, fileData);
+    }
+    catch (const std::exception& e)
+    {
+        SetError("文件操作异常: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool ReliableChannel::SendFile(const std::string& filename, const std::vector<uint8_t>& fileData)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (!m_active || m_state != RELIABLE_IDLE)
+    {
+        SetError("通道未就绪或正在传输中");
+        return false;
+    }
+    
+    // 设置发送数据
+    m_sendData = fileData;
+    m_sendFilename = filename;
+    m_sendOffset = 0;
+    m_sendSequence = 1;
+    m_retryCount = 0;
+    
+    // 初始化滑动窗口状态
+    {
+        std::lock_guard<std::mutex> windowLock(m_sendWindowMutex);
+        m_sendWindow.clear();
+        m_sendBase = 1;      // 发送窗口基序号
+        m_nextSequence = 1;  // 下一个发送序号
+    }
+    
+    // 初始化统计信息
+    m_stats = TransferStats();
+    m_stats.totalBytes = fileData.size();
+    m_stats.totalFrames = (fileData.size() + m_frameCodec.GetMaxPayloadSize() - 1) / m_frameCodec.GetMaxPayloadSize() + 2; // +2 for START and END
+    
+    // 开始发送
+    SetState(RELIABLE_STARTING);
+    m_protocolCV.notify_one();
+    
+    return true;
+}
+
+void ReliableChannel::EnableReceiving(bool enable)
+{
+    m_receivingEnabled = enable;
+}
+
+bool ReliableChannel::IsReceivingEnabled() const
+{
+    return m_receivingEnabled;
+}
+
+ReliableState ReliableChannel::GetState() const
+{
+    return m_state;
+}
+
+TransferStats ReliableChannel::GetStats() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_stats;
+}
+
+std::string ReliableChannel::GetLastError() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lastError;
+}
+
+void ReliableChannel::ProtocolThreadFunc()
+{
+    while (!m_stopThread)
+    {
+        try
+        {
+            // 处理接收到的数据
+            ProcessReceivedData();
+            
+            // 处理发送状态机
+            if (m_state == RELIABLE_STARTING || m_state == RELIABLE_SENDING || m_state == RELIABLE_ENDING)
+            {
+                HandleSending();
+            }
+            
+            // 处理接收状态机
+            if (m_state == RELIABLE_READY || m_state == RELIABLE_RECEIVING)
+            {
+                HandleReceiving();
+            }
+            
+            // 检查滑动窗口超时并重传
+            if (m_state == RELIABLE_STARTING || m_state == RELIABLE_SENDING || m_state == RELIABLE_ENDING)
+            {
+                CheckWindowTimeouts();
+            }
+            
+            // 等待下一次处理
+            std::unique_lock<std::mutex> lock(m_mutex);
+            m_protocolCV.wait_for(lock, std::chrono::milliseconds(10));
+        }
+        catch (const std::exception& e)
+        {
+            SetError("协议线程异常: " + std::string(e.what()));
+            SetState(RELIABLE_FAILED);
+        }
+    }
+}
+
+void ReliableChannel::OnDataReceived(const std::vector<uint8_t>& data)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 将接收到的数据添加到缓冲区
+    m_receiveBuffer.insert(m_receiveBuffer.end(), data.begin(), data.end());
+    
+    // 唤醒协议线程处理数据
+    m_protocolCV.notify_one();
+}
+
+void ReliableChannel::ReconfigureTransportCallback()
+{
+    // 重新设置传输层回调，确保数据能够正确路由到ReliableChannel
+    if (m_transport)
+    {
+        m_transport->SetDataReceivedCallback([this](const std::vector<uint8_t>& data) {
+            OnDataReceived(data);
+        });
+    }
+}
+
+void ReliableChannel::ProcessReceivedData()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    while (m_receiveBuffer.size() >= FrameCodec::MIN_FRAME_SIZE)
+    {
+        Frame frame;
+        size_t consumedBytes;
+        
+        auto result = m_frameCodec.DecodeFrame(m_receiveBuffer, consumedBytes, frame);
+        
+        if (result == FrameCodec::DecodeResult::Success)
+        {
+            // 移除已处理的数据
+            m_receiveBuffer.erase(m_receiveBuffer.begin(), m_receiveBuffer.begin() + consumedBytes);
+            
+            // 处理接收到的帧
+            ProcessReceivedFrame(frame);
+        }
+        else if (result == FrameCodec::DecodeResult::Incomplete)
+        {
+            // 数据不完整，等待更多数据
+            break;
+        }
+        else
+        {
+            // 帧无效，移除部分数据并继续
+            if (consumedBytes > 0)
+            {
+                m_receiveBuffer.erase(m_receiveBuffer.begin(), m_receiveBuffer.begin() + consumedBytes);
+                m_stats.crcErrors++;
+            }
+            else
+            {
+                // 如果没有消费任何数据，移除第一个字节避免死循环
+                m_receiveBuffer.erase(m_receiveBuffer.begin());
+            }
+        }
+    }
+}
+
+void ReliableChannel::ProcessReceivedFrame(const Frame& frame)
+{
+    switch (frame.type)
+    {
+    case FRAME_START:
+        if (m_receivingEnabled && (m_state == RELIABLE_IDLE || 
+            m_state == RELIABLE_STARTING || m_state == RELIABLE_SENDING || m_state == RELIABLE_ENDING))
+        {
+            // 解析START帧元数据
+            if (m_receiveMetadata.Deserialize(frame.payload))
+            {
+                m_receivedFilename = m_receiveMetadata.filename;
+                m_receivedData.clear();
+                m_receivedData.reserve(static_cast<size_t>(m_receiveMetadata.fileSize));
+                m_expectedSequence = 2; // 下一个期望的DATA帧序号
+                
+                // 窗口大小协商：接收端与发送端协商合适的窗口大小
+                if (m_receiveMetadata.window_size > 0 && m_receiveMetadata.window_size <= 255)
+                {
+                    // 窗口协商：取发送端提议和接收端配置的较小值
+                    uint8_t negotiatedWindowSize = std::min(m_receiveMetadata.window_size, m_windowSize);
+                    
+                    // 确保窗口大小至少为1
+                    if (negotiatedWindowSize == 0) {
+                        negotiatedWindowSize = 1;
+                    }
+                    
+                    // 更新接收端窗口大小（注意：这不影响发送端的窗口大小）
+                    m_windowSize = negotiatedWindowSize;
+                    
+                    // 记录协商结果（用于调试）
+                    // TODO: 可以通过日志或回调通知应用层协商结果
+                }
+                
+                // 重置接收窗口状态
+                {
+                    std::lock_guard<std::mutex> lock(m_receiveWindowMutex);
+                    m_receiveWindow.clear();
+                    m_receiveBase = 2; // START帧序号为1，DATA帧从2开始
+                }
+                
+                // 在本地回环模式下，不覆盖发送状态，只在真正空闲时设置接收状态
+                if (m_state == RELIABLE_IDLE)
+                {
+                    // 初始化接收统计
+                    m_stats = TransferStats();
+                    m_stats.totalBytes = static_cast<size_t>(m_receiveMetadata.fileSize);
+                    SetState(RELIABLE_RECEIVING);
+                }
+                
+                SendAck(frame.sequence);
+            }
+            else
+            {
+                SendNak(frame.sequence);
+            }
+        }
+        break;
+        
+    case FRAME_DATA:
+        if (m_state == RELIABLE_RECEIVING || 
+            (m_receivingEnabled && m_expectedSequence > 1)) // 本地回环：已开始接收过程
+        {
+            // 使用滑动窗口处理DATA帧
+            HandleWindowDataFrame(frame);
+        }
+        break;
+        
+    case FRAME_END:
+        if (m_state == RELIABLE_RECEIVING || 
+            (m_receivingEnabled && m_expectedSequence > 1)) // 本地回环：已开始接收过程
+        {
+            // 使用滑动窗口处理END帧
+            HandleWindowEndFrame(frame);
+        }
+        break;
+        
+    case FRAME_ACK:
+        if (m_state == RELIABLE_STARTING || m_state == RELIABLE_SENDING || m_state == RELIABLE_ENDING)
+        {
+            // 使用滑动窗口处理ACK（累积确认）
+            HandleWindowAck(frame.sequence);
+            m_protocolCV.notify_one();
+        }
+        break;
+        
+    case FRAME_NAK:
+        if (m_state == RELIABLE_STARTING || m_state == RELIABLE_SENDING || m_state == RELIABLE_ENDING)
+        {
+            // 使用滑动窗口处理NAK（快速重传）
+            HandleWindowNak(frame.sequence);
+            m_protocolCV.notify_one();
+        }
+        break;
+    }
+}
+
+void ReliableChannel::HandleSending()
+{
+    switch (m_state)
+    {
+    case RELIABLE_STARTING:
+        SendStartFrame();
+        break;
+    case RELIABLE_SENDING:
+        SendDataFrame();
+        break;
+    case RELIABLE_ENDING:
+        SendEndFrame();
+        break;
+    default:
+        break;
+    }
+}
+
+void ReliableChannel::SendStartFrame()
+{
+    // 创建START帧元数据（包含窗口大小协商）
+    StartMetadata metadata;
+    metadata.version = 1;
+    metadata.flags = 0;
+    metadata.window_size = m_windowSize;  // 发送端提议的窗口大小
+    metadata.filename = m_sendFilename;
+    metadata.fileSize = m_sendData.size();
+    metadata.modifyTime = 0; // 可以设置为当前时间
+    
+    Frame startFrame = FrameCodec::CreateStartFrame(m_sendSequence, metadata);
+    
+    // 使用滑动窗口发送START帧
+    if (SendFrameInWindow(startFrame))
+    {
+        m_stats.sentFrames++;
+        m_nextSequence++;  // 更新下一个序号
+        SetState(RELIABLE_SENDING);
+        m_retryCount = 0;
+    }
+    else
+    {
+        SetError("START帧发送失败");
+        SetState(RELIABLE_FAILED);
+        NotifyCompletion(false, "传输失败");
+    }
+}
+
+void ReliableChannel::SendDataFrame()
+{
+    size_t maxPayload = m_frameCodec.GetMaxPayloadSize();
+    
+    // 滑动窗口批量发送：尽可能填满发送窗口
+    while (CanSendNewFrame() && m_sendOffset < m_sendData.size())
+    {
+        size_t remainingBytes = m_sendData.size() - m_sendOffset;
+        size_t chunkSize = (maxPayload < remainingBytes) ? maxPayload : remainingBytes;
+        
+        // 创建DATA帧
+        std::vector<uint8_t> chunk(m_sendData.begin() + m_sendOffset, 
+                                  m_sendData.begin() + m_sendOffset + chunkSize);
+        
+        Frame dataFrame = FrameCodec::CreateDataFrame(m_nextSequence, chunk);
+        
+        // 发送到窗口中
+        if (SendFrameInWindow(dataFrame))
+        {
+            m_sendOffset += chunkSize;
+            m_nextSequence++;
+            m_stats.sentFrames++;
+            
+            UpdateProgress();
+        }
+        else
+        {
+            SetError("DATA帧窗口发送失败");
+            SetState(RELIABLE_FAILED);
+            NotifyCompletion(false, "传输失败");
+            return;
+        }
+    }
+    
+    // 检查是否所有数据已发送
+    if (m_sendOffset >= m_sendData.size())
+    {
+        // 所有数据已发送，进入结束阶段
+        SetState(RELIABLE_ENDING);
+    }
+    
+    // 检查窗口超时
+    CheckWindowTimeouts();
+}
+
+void ReliableChannel::SendEndFrame()
+{
+    // 检查发送窗口是否有空间
+    if (!CanSendNewFrame())
+    {
+        // 窗口已满，等待ACK释放空间
+        CheckWindowTimeouts();
+        return;
+    }
+    
+    Frame endFrame = FrameCodec::CreateEndFrame(m_nextSequence);
+    
+    // 使用滑动窗口发送END帧
+    if (SendFrameInWindow(endFrame))
+    {
+        m_stats.sentFrames++;
+        m_nextSequence++;
+        
+        // 检查是否所有帧都已确认
+        std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+        if (m_sendWindow.empty())
+        {
+            // 所有帧已确认，传输完成
+            SetState(RELIABLE_DONE);
+            NotifyCompletion(true, "传输完成");
+            
+            // 重置到空闲状态
+            SetState(RELIABLE_IDLE);
+        }
+    }
+    else
+    {
+        SetError("END帧发送失败");
+        SetState(RELIABLE_FAILED);
+        NotifyCompletion(false, "传输失败");
+    }
+    
+    // 检查窗口超时
+    CheckWindowTimeouts();
+}
+
+bool ReliableChannel::WaitForAck(uint16_t sequence)
+{
+    std::unique_lock<std::mutex> lock(m_mutex);
+    
+    // 使用条件变量等待，确保及时响应ACK
+    bool ackReceived = m_protocolCV.wait_for(lock, 
+        std::chrono::milliseconds(m_ackTimeoutMs),
+        [this, sequence] { 
+            return m_lastAckedSequence == sequence || !m_active; 
+        });
+    
+    if (!ackReceived && m_active)
+    {
+        m_stats.timeouts++;
+        return false; // 超时
+    }
+    
+    return m_lastAckedSequence == sequence; // 成功收到ACK或通道已关闭
+}
+
+void ReliableChannel::HandleReceiving()
+{
+    // 接收状态机主要在ProcessReceivedFrame中处理
+    // 这里可以添加接收超时检查等逻辑
+}
+
+void ReliableChannel::SendAck(uint16_t sequence)
+{
+    Frame ackFrame = FrameCodec::CreateAckFrame(sequence);
+    SendFrame(ackFrame);
+}
+
+void ReliableChannel::SendNak(uint16_t sequence)
+{
+    Frame nakFrame = FrameCodec::CreateNakFrame(sequence);
+    SendFrame(nakFrame);
+}
+
+void ReliableChannel::CompleteReceive()
+{
+    // 验证接收到的数据大小
+    if (m_receivedData.size() != static_cast<size_t>(m_receiveMetadata.fileSize))
+    {
+        AbortReceive("接收数据大小不匹配");
+        return;
+    }
+    
+    // 保存文件
+    if (SaveReceivedFile())
+    {
+        SetState(RELIABLE_DONE);
+        
+        // 通知文件接收完成
+        if (m_fileReceivedCallback)
+        {
+            m_fileReceivedCallback(m_receivedFilename, m_receivedData);
+        }
+        
+        NotifyCompletion(true, "文件接收完成: " + m_receivedFilename);
+    }
+    else
+    {
+        AbortReceive("文件保存失败");
+    }
+    
+    // 重置到空闲状态
+    SetState(RELIABLE_IDLE);
+}
+
+void ReliableChannel::AbortReceive(const std::string& reason)
+{
+    SetError(reason);
+    SetState(RELIABLE_FAILED);
+    NotifyCompletion(false, "接收失败: " + reason);
+    
+    // 清理状态
+    m_receivedData.clear();
+    m_receivedFilename.clear();
+    
+    // 重置到空闲状态
+    SetState(RELIABLE_IDLE);
+}
+
+void ReliableChannel::SetState(ReliableState state)
+{
+    m_state = state;
+}
+
+void ReliableChannel::SetError(const std::string& error)
+{
+    m_lastError = error;
+}
+
+void ReliableChannel::UpdateProgress()
+{
+    if (m_progressCallback)
+    {
+        m_progressCallback(m_stats);
+    }
+}
+
+void ReliableChannel::NotifyCompletion(bool success, const std::string& message)
+{
+    if (m_completionCallback)
+    {
+        m_completionCallback(success, message);
+    }
+}
+
+std::string ReliableChannel::GenerateUniqueFilename(const std::string& originalName)
+{
+    std::string directory = m_receiveDirectory.empty() ? "." : m_receiveDirectory;
+    std::string basePath = directory + "/" + originalName;
+    
+    // 如果文件不存在，直接使用原名
+    if (!std::filesystem::exists(basePath))
+    {
+        return basePath;
+    }
+    
+    // 生成唯一文件名
+    std::string name = std::filesystem::path(originalName).stem().string();
+    std::string ext = std::filesystem::path(originalName).extension().string();
+    
+    for (int i = 1; i < 1000; ++i)
+    {
+        std::string newName = name + "(" + std::to_string(i) + ")" + ext;
+        std::string newPath = directory + "/" + newName;
+        
+        if (!std::filesystem::exists(newPath))
+        {
+            return newPath;
+        }
+    }
+    
+    // 如果仍然冲突，使用时间戳
+    auto now = std::chrono::system_clock::now();
+    auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    return directory + "/" + name + "_" + std::to_string(timestamp) + ext;
+}
+
+bool ReliableChannel::SaveReceivedFile()
+{
+    try
+    {
+        std::string filePath = GenerateUniqueFilename(m_receivedFilename);
+        
+        // 确保目录存在
+        std::filesystem::path parentDir = std::filesystem::path(filePath).parent_path();
+        if (!parentDir.empty() && !std::filesystem::exists(parentDir))
+        {
+            std::filesystem::create_directories(parentDir);
+        }
+        
+        // 写入文件
+        std::ofstream file(filePath, std::ios::binary);
+        if (!file.is_open())
+        {
+            SetError("无法创建文件: " + filePath);
+            return false;
+        }
+        
+        file.write(reinterpret_cast<const char*>(m_receivedData.data()), m_receivedData.size());
+        file.close();
+        
+        if (file.fail())
+        {
+            SetError("文件写入失败: " + filePath);
+            return false;
+        }
+        
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        SetError("文件保存异常: " + std::string(e.what()));
+        return false;
+    }
+}
+
+bool ReliableChannel::SendFrame(const Frame& frame)
+{
+    if (!m_transport || !m_transport->IsOpen())
+    {
+        return false;
+    }
+    
+    try
+    {
+        std::vector<uint8_t> frameData = m_frameCodec.EncodeFrame(frame);
+        size_t bytesWritten = m_transport->Write(frameData.data(), frameData.size());
+        return bytesWritten == frameData.size();
+    }
+    catch (const std::exception& e)
+    {
+        SetError("帧发送异常: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// ========== 滑动窗口发送端管理 ==========
+
+bool ReliableChannel::CanSendNewFrame() const
+{
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(m_sendWindowMutex));
+    return m_sendWindow.size() < m_windowSize;
+}
+
+bool ReliableChannel::SendFrameInWindow(const Frame& frame)
+{
+    {
+        std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+        if (m_sendWindow.size() >= m_windowSize) {
+            return false; // 窗口已满
+        }
+        
+        // 添加到发送窗口
+        m_sendWindow.emplace(frame.sequence, SendWindowEntry(frame.sequence, frame));
+    }
+    
+    // 发送帧
+    bool success = SendFrame(frame);
+    
+    if (!success) {
+        std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+        m_sendWindow.erase(frame.sequence);
+    }
+    
+    return success;
+}
+
+void ReliableChannel::HandleWindowAck(uint16_t sequence)
+{
+    std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+    
+    // 累积ACK：确认所有 <= sequence 的帧
+    auto it = m_sendWindow.begin();
+    while (it != m_sendWindow.end()) {
+        if (it->first <= sequence) {
+            it = m_sendWindow.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    
+    // 更新发送基序号
+    if (sequence >= m_sendBase) {
+        m_sendBase = sequence + 1;
+    }
+    
+    m_lastAckedSequence = sequence;
+}
+
+void ReliableChannel::HandleWindowNak(uint16_t sequence)
+{
+    std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+    
+    // 快速重传：立即重传指定序号的帧
+    auto it = m_sendWindow.find(sequence);
+    if (it != m_sendWindow.end()) {
+        // 重置发送时间以触发立即重传
+        it->second.sendTime = std::chrono::steady_clock::now() - std::chrono::milliseconds(m_ackTimeoutMs + 100);
+        it->second.retryCount++; // 增加重试计数
+        
+        m_stats.retransmissions++;
+    }
+}
+
+void ReliableChannel::CheckWindowTimeouts()
+{
+    auto now = std::chrono::steady_clock::now();
+    std::vector<uint16_t> timeoutFrames;
+    
+    {
+        std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+        
+        for (auto& entry : m_sendWindow) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - entry.second.sendTime);
+            if (elapsed.count() > m_ackTimeoutMs) {
+                if (entry.second.retryCount < m_maxRetries) {
+                    timeoutFrames.push_back(entry.first);
+                    entry.second.sendTime = now;
+                    entry.second.retryCount++;
+                    m_stats.retransmissions++;
+                } else {
+                    // 超过最大重试次数，标记为失败
+                    SetError("帧序号 " + std::to_string(entry.first) + " 重传超时");
+                    SetState(RELIABLE_FAILED);
+                    return;
+                }
+            }
+        }
+    }
+    
+    // 重传超时的帧
+    for (uint16_t seq : timeoutFrames) {
+        std::lock_guard<std::mutex> lock(m_sendWindowMutex);
+        auto it = m_sendWindow.find(seq);
+        if (it != m_sendWindow.end()) {
+            SendFrame(it->second.frame);
+        }
+    }
+}
+
+void ReliableChannel::AdvanceWindow()
+{
+    // 窗口自动滑动由HandleWindowAck处理
+    // 这里可以添加额外的窗口优化逻辑
+}
+
+// ========== 滑动窗口接收端管理 ==========
+
+void ReliableChannel::HandleWindowDataFrame(const Frame& frame)
+{
+    std::lock_guard<std::mutex> lock(m_receiveWindowMutex);
+    
+    // 检查是否在接收窗口内
+    if (!IsFrameInWindow(frame.sequence)) {
+        // 超出窗口，发送NAK
+        SendNak(frame.sequence);
+        return;
+    }
+    
+    // 检查是否重复帧
+    if (m_receiveWindow.find(frame.sequence) != m_receiveWindow.end()) {
+        // 重复帧，重新发送ACK
+        SendAck(frame.sequence);
+        return;
+    }
+    
+    // 缓存乱序帧
+    m_receiveWindow.emplace(frame.sequence, ReceiveWindowEntry(frame.sequence, frame.payload, true));
+    
+    // 发送ACK
+    SendAck(frame.sequence);
+    
+    // 尝试按序提交
+    DeliverOrderedFrames();
+}
+
+void ReliableChannel::HandleWindowEndFrame(const Frame& frame)
+{
+    std::lock_guard<std::mutex> lock(m_receiveWindowMutex);
+    
+    // 缓存END帧
+    if (m_receiveWindow.find(frame.sequence) == m_receiveWindow.end()) {
+        m_receiveWindow.emplace(frame.sequence, ReceiveWindowEntry(frame.sequence, std::vector<uint8_t>(), false));
+    }
+    
+    // 发送ACK
+    SendAck(frame.sequence);
+    
+    // 尝试按序提交
+    DeliverOrderedFrames();
+}
+
+void ReliableChannel::DeliverOrderedFrames()
+{
+    // 注意：调用此方法时必须已持有m_receiveWindowMutex锁
+    
+    // SOLID-S: 单一职责，分离回调数据收集和执行 (修复死锁风险)
+    struct CallbackData {
+        bool shouldCallback = false;
+        std::string filename;
+        std::vector<uint8_t> data;
+        bool shouldUpdateProgress = false;
+        TransferStats stats;
+    };
+    CallbackData callbackData;
+    
+    while (true) {
+        auto it = m_receiveWindow.find(m_receiveBase);
+        if (it == m_receiveWindow.end()) {
+            break; // 期望的序号帧不存在
+        }
+        
+        const auto& entry = it->second;
+        
+        if (entry.isData) {
+            // DATA帧：追加到接收数据
+            m_receivedData.insert(m_receivedData.end(), entry.data.begin(), entry.data.end());
+            m_stats.transferredBytes += entry.data.size();
+        } else {
+            // END帧：完成接收
+            SetState(RELIABLE_DONE);
+            
+            // 准备回调数据，但不在锁内执行回调 (修复死锁风险)
+            if (m_fileReceivedCallback && !m_receivedFilename.empty()) {
+                callbackData.shouldCallback = true;
+                callbackData.filename = m_receivedFilename;
+                callbackData.data = m_receivedData;  // 复制数据避免竞态
+            }
+            
+            // 保存文件
+            SaveReceivedFile();
+        }
+        
+        // 移除已处理的帧
+        m_receiveWindow.erase(it);
+        m_receiveBase++;
+        
+        // 准备进度更新数据，但不在锁内执行回调 (修复死锁风险)
+        if (m_progressCallback) {
+            callbackData.shouldUpdateProgress = true;
+            callbackData.stats = m_stats;  // 复制统计数据避免竞态
+        }
+        
+        if (!entry.isData) {
+            // 遇到END帧，停止处理
+            break;
+        }
+    }
+    
+    // SOLID-D: 在锁外执行回调，避免死锁风险 (修复死锁风险)
+    if (callbackData.shouldCallback && m_fileReceivedCallback) {
+        // 注意：此时已不持有任何锁，安全调用回调
+        try {
+            m_fileReceivedCallback(callbackData.filename, callbackData.data);
+        }
+        catch (const std::exception& e) {
+            m_lastError = "文件接收回调异常: " + std::string(e.what());
+        }
+        catch (...) {
+            m_lastError = "文件接收回调发生未知异常";
+        }
+    }
+    
+    // SOLID-D: 在锁外执行进度更新回调，避免死锁风险 (修复死锁风险)
+    if (callbackData.shouldUpdateProgress && m_progressCallback) {
+        // 注意：此时已不持有任何锁，安全调用回调
+        try {
+            m_progressCallback(callbackData.stats);
+        }
+        catch (const std::exception& e) {
+            m_lastError = "进度更新回调异常: " + std::string(e.what());
+        }
+        catch (...) {
+            m_lastError = "进度更新回调发生未知异常";
+        }
+    }
+}
+
+bool ReliableChannel::IsFrameInWindow(uint16_t sequence) const
+{
+    // 接收窗口范围检查：[receiveBase, receiveBase + windowSize)
+    // 处理序号回环的情况
+    uint16_t windowEnd = m_receiveBase + m_windowSize - 1;
+    
+    if (m_receiveBase <= windowEnd) {
+        // 窗口没有跨越序号回环点
+        return sequence >= m_receiveBase && sequence <= windowEnd;
+    } else {
+        // 窗口跨越了序号回环点（序号从65535回到0）
+        return sequence >= m_receiveBase || sequence <= windowEnd;
+    }
+}

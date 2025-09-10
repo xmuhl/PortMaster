@@ -1,0 +1,512 @@
+﻿#include "pch.h"
+#include "UdpTransport.h"
+#include <chrono>
+
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
+bool UdpTransport::s_wsaInitialized = false;
+int UdpTransport::s_wsaRefCount = 0;
+
+UdpTransport::UdpTransport()
+    : m_socket(INVALID_SOCKET)
+    , m_hasRemoteAddr(false)
+    , m_stopRead(false)
+{
+    m_state = TRANSPORT_CLOSED;
+    ZeroMemory(&m_localAddr, sizeof(m_localAddr));
+    ZeroMemory(&m_remoteAddr, sizeof(m_remoteAddr));
+}
+
+UdpTransport::~UdpTransport()
+{
+    Close();
+}
+
+bool UdpTransport::Open(const TransportConfig& config)
+{
+    if (m_state != TRANSPORT_CLOSED)
+    {
+        SetLastError("UDP连接已打开或正在操作中");
+        return false;
+    }
+    
+    m_config = config;
+    
+    NotifyStateChanged(TRANSPORT_OPENING, "正在初始化UDP传输");
+    
+    // 初始化Winsock
+    if (!InitializeWinsock())
+    {
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 创建UDP套接字
+    if (!CreateSocket())
+    {
+        CleanupWinsock();
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 绑定本地端口
+    struct sockaddr_in localAddr;
+    ZeroMemory(&localAddr, sizeof(localAddr));
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_addr.s_addr = INADDR_ANY;
+    localAddr.sin_port = htons(config.port);
+    
+    if (bind(m_socket, (struct sockaddr*)&localAddr, sizeof(localAddr)) == SOCKET_ERROR)
+    {
+        SetLastError("绑定UDP端口失败: " + GetSocketErrorString(WSAGetLastError()));
+        closesocket(m_socket);
+        m_socket = INVALID_SOCKET;
+        CleanupWinsock();
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    m_localAddr = localAddr;
+    
+    // 启动读取线程
+    m_stopRead = false;
+    m_readThread = std::thread(&UdpTransport::ReadThreadFunc, this);
+    
+    NotifyStateChanged(TRANSPORT_OPEN, "UDP传输已启动，端口: " + std::to_string(config.port));
+    return true;
+}
+
+void UdpTransport::Close()
+{
+    if (m_state == TRANSPORT_CLOSED)
+        return;
+    
+    NotifyStateChanged(TRANSPORT_CLOSING, "正在关闭UDP传输");
+    
+    // 停止读取线程
+    m_stopRead = true;
+    
+    // 关闭套接字以中断阻塞的读取操作
+    if (m_socket != INVALID_SOCKET)
+    {
+        closesocket(m_socket);
+        m_socket = INVALID_SOCKET;
+    }
+    
+    // 等待读取线程结束
+    if (m_readThread.joinable())
+    {
+        m_readThread.join();
+    }
+    
+    // 清理Winsock
+    CleanupWinsock();
+    
+    m_hasRemoteAddr = false;
+    ZeroMemory(&m_localAddr, sizeof(m_localAddr));
+    ZeroMemory(&m_remoteAddr, sizeof(m_remoteAddr));
+    
+    NotifyStateChanged(TRANSPORT_CLOSED, "UDP传输已关闭");
+}
+
+bool UdpTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState UdpTransport::GetState() const
+{
+    return m_state;
+}
+
+bool UdpTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig UdpTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t UdpTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t UdpTransport::Write(const uint8_t* data, size_t length)
+{
+    if (m_state != TRANSPORT_OPEN || m_socket == INVALID_SOCKET)
+    {
+        SetLastError("UDP连接未打开");
+        return 0;
+    }
+    
+    if (!data || length == 0)
+    {
+        return 0;
+    }
+    
+    if (!m_hasRemoteAddr)
+    {
+        SetLastError("未设置远程终点地址");
+        return 0;
+    }
+    
+    int result = sendto(m_socket, (const char*)data, static_cast<int>(length), 0,
+                       (struct sockaddr*)&m_remoteAddr, sizeof(m_remoteAddr));
+    
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK)
+        {
+            // 非阻塞模式下缓冲区满，返回0
+            return 0;
+        }
+        SetLastError("UDP发送失败: " + GetSocketErrorString(error));
+        return 0;
+    }
+    
+    return static_cast<size_t>(result);
+}
+
+size_t UdpTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    data.clear();
+    
+    if (m_state != TRANSPORT_OPEN || m_socket == INVALID_SOCKET)
+    {
+        SetLastError("UDP连接未打开");
+        return 0;
+    }
+    
+    std::vector<uint8_t> buffer(maxLength);
+    struct sockaddr_in fromAddr;
+    int fromAddrLen = sizeof(fromAddr);
+    
+    int result = recvfrom(m_socket, (char*)buffer.data(), static_cast<int>(maxLength), 0,
+                         (struct sockaddr*)&fromAddr, &fromAddrLen);
+    
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        if (error == WSAEWOULDBLOCK)
+        {
+            // 非阻塞模式下没有数据，返回0
+            return 0;
+        }
+        SetLastError("UDP接收失败: " + GetSocketErrorString(error));
+        return 0;
+    }
+    
+    if (result > 0)
+    {
+        data.assign(buffer.begin(), buffer.begin() + result);
+        
+        // 更新远程地址（UDP是无连接的，可能从多个源接收数据）
+        if (!m_hasRemoteAddr)
+        {
+            m_remoteAddr = fromAddr;
+            m_hasRemoteAddr = true;
+        }
+    }
+    
+    return static_cast<size_t>(result);
+}
+
+size_t UdpTransport::Available() const
+{
+    if (m_state != TRANSPORT_OPEN || m_socket == INVALID_SOCKET)
+        return 0;
+    
+    u_long bytesAvailable = 0;
+    if (ioctlsocket(m_socket, FIONREAD, &bytesAvailable) == SOCKET_ERROR)
+        return 0;
+    
+    return static_cast<size_t>(bytesAvailable);
+}
+
+std::string UdpTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string UdpTransport::GetPortName() const
+{
+    return "UDP:" + std::to_string(m_config.port);
+}
+
+std::string UdpTransport::GetTransportType() const
+{
+    return "UDP";
+}
+
+void UdpTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void UdpTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool UdpTransport::Flush()
+{
+    return true;
+}
+
+bool UdpTransport::ClearBuffers()
+{
+    return true;
+}
+
+bool UdpTransport::SetRemoteEndpoint(const std::string& address, int port)
+{
+    struct sockaddr_in addr;
+    ZeroMemory(&addr, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    
+    // 尝试转换IP地址
+    if (inet_pton(AF_INET, address.c_str(), &addr.sin_addr) == 1)
+    {
+        m_remoteAddr = addr;
+        m_hasRemoteAddr = true;
+        return true;
+    }
+    
+    // 尝试域名解析
+    struct hostent* hostEntry = gethostbyname(address.c_str());
+    if (hostEntry != nullptr && hostEntry->h_addrtype == AF_INET)
+    {
+        addr.sin_addr.s_addr = *((unsigned long*)hostEntry->h_addr);
+        m_remoteAddr = addr;
+        m_hasRemoteAddr = true;
+        return true;
+    }
+    
+    SetLastError("无法解析地址: " + address);
+    return false;
+}
+
+std::string UdpTransport::GetRemoteEndpoint() const
+{
+    if (!m_hasRemoteAddr)
+    {
+        return "未设置";
+    }
+    
+    char addressStr[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &m_remoteAddr.sin_addr, addressStr, INET_ADDRSTRLEN) != nullptr)
+    {
+        return std::string(addressStr) + ":" + std::to_string(ntohs(m_remoteAddr.sin_port));
+    }
+    
+    return "未知地址";
+}
+
+std::string UdpTransport::GetLocalEndpoint() const
+{
+    char addressStr[INET_ADDRSTRLEN];
+    if (inet_ntop(AF_INET, &m_localAddr.sin_addr, addressStr, INET_ADDRSTRLEN) != nullptr)
+    {
+        return std::string(addressStr) + ":" + std::to_string(ntohs(m_localAddr.sin_port));
+    }
+    
+    return "0.0.0.0:" + std::to_string(m_config.port);
+}
+
+bool UdpTransport::InitializeWinsock()
+{
+    if (!s_wsaInitialized)
+    {
+        WSADATA wsaData;
+        int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+        if (result != 0)
+        {
+            SetLastError("WSAStartup失败，错误代码: " + std::to_string(result));
+            return false;
+        }
+        s_wsaInitialized = true;
+    }
+    s_wsaRefCount++;
+    return true;
+}
+
+void UdpTransport::CleanupWinsock()
+{
+    if (s_wsaInitialized && s_wsaRefCount > 0)
+    {
+        s_wsaRefCount--;
+        if (s_wsaRefCount == 0)
+        {
+            WSACleanup();
+            s_wsaInitialized = false;
+        }
+    }
+}
+
+bool UdpTransport::CreateSocket()
+{
+    m_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (m_socket == INVALID_SOCKET)
+    {
+        SetLastError("创建UDP套接字失败: " + GetSocketErrorString(WSAGetLastError()));
+        return false;
+    }
+    
+    // 设置套接字选项
+    BOOL reuseAddr = TRUE;
+    if (setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&reuseAddr, sizeof(reuseAddr)) == SOCKET_ERROR)
+    {
+        SetLastError("设置套接字选项失败: " + GetSocketErrorString(WSAGetLastError()));
+        closesocket(m_socket);
+        m_socket = INVALID_SOCKET;
+        return false;
+    }
+    
+    return true;
+}
+
+std::string UdpTransport::GetSocketErrorString(int error) const
+{
+    switch (error)
+    {
+    case WSAEACCES: return "权限被拒绝";
+    case WSAEADDRINUSE: return "地址已被使用";
+    case WSAEADDRNOTAVAIL: return "地址不可用";
+    case WSAEAFNOSUPPORT: return "地址族不支持";
+    case WSAEALREADY: return "操作已在进行中";
+    case WSAEBADF: return "无效的文件描述符";
+    case WSAECONNABORTED: return "软件导致连接中止";
+    case WSAECONNREFUSED: return "连接被拒绝";
+    case WSAECONNRESET: return "连接被重置";
+    case WSAEDESTADDRREQ: return "需要目标地址";
+    case WSAEFAULT: return "错误的地址";
+    case WSAEHOSTDOWN: return "主机已关闭";
+    case WSAEHOSTUNREACH: return "主机不可达";
+    case WSAEINPROGRESS: return "操作正在进行";
+    case WSAEINTR: return "被中断的函数调用";
+    case WSAEINVAL: return "无效的参数";
+    case WSAEISCONN: return "套接字已连接";
+    case WSAEMFILE: return "打开的文件太多";
+    case WSAEMSGSIZE: return "消息太长";
+    case WSAENETDOWN: return "网络已关闭";
+    case WSAENETRESET: return "网络丢弃连接";
+    case WSAENETUNREACH: return "网络不可达";
+    case WSAENOBUFS: return "没有缓冲区空间";
+    case WSAENOPROTOOPT: return "错误的协议选项";
+    case WSAENOTCONN: return "套接字未连接";
+    case WSAENOTSOCK: return "在非套接字上进行操作";
+    case WSAEOPNOTSUPP: return "操作不支持";
+    case WSAEPFNOSUPPORT: return "协议族不支持";
+    case WSAEPROCLIM: return "进程太多";
+    case WSAEPROTONOSUPPORT: return "协议不支持";
+    case WSAEPROTOTYPE: return "套接字的协议类型错误";
+    case WSAESHUTDOWN: return "套接字已关闭";
+    case WSAESOCKTNOSUPPORT: return "套接字类型不支持";
+    case WSAETIMEDOUT: return "连接超时";
+    // WSAETYPE is not defined, skip this case
+    case WSAEWOULDBLOCK: return "资源临时不可用";
+    case WSAHOST_NOT_FOUND: return "主机未找到";
+    case WSANO_DATA: return "无有效名称";
+    case WSANO_RECOVERY: return "不可恢复的错误";
+    case WSASYSNOTREADY: return "网络子系统不可用";
+    case WSATRY_AGAIN: return "非权威主机未找到";
+    case WSAVERNOTSUPPORTED: return "Winsock.dll版本超出范围";
+    case WSANOTINITIALISED: return "未执行成功的WSAStartup";
+    default:
+        return "未知错误 (" + std::to_string(error) + ")";
+    }
+}
+
+void UdpTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}
+
+void UdpTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+    {
+        m_stateCallback(state, message);
+    }
+}
+
+void UdpTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+    {
+        // SOLID-D: 依赖抽象接口，添加异常边界保护 (修复回调异常保护缺失)
+        try {
+            m_dataCallback(data);
+        }
+        catch (const std::exception& e) {
+            SetLastError("回调异常: " + std::string(e.what()));
+        }
+        catch (...) {
+            SetLastError("回调发生未知异常");
+        }
+    }
+}
+
+void UdpTransport::ReadThreadFunc()
+{
+    std::vector<uint8_t> buffer(4096);
+    
+    while (!m_stopRead && m_socket != INVALID_SOCKET)
+    {
+        sockaddr_in senderAddr = {};
+        int addrLen = sizeof(senderAddr);
+        
+        int bytesReceived = recvfrom(m_socket, (char*)buffer.data(), static_cast<int>(buffer.size()), 0,
+                                    (sockaddr*)&senderAddr, &addrLen);
+        
+        if (bytesReceived > 0)
+        {
+            // 数据接收成功
+            std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesReceived);
+            
+            // 更新远程地址信息（如果还未设置）
+            if (!m_hasRemoteAddr)
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (!m_hasRemoteAddr) // 双检查锁定
+                {
+                    m_remoteAddr = senderAddr;
+                    m_hasRemoteAddr = true;
+                }
+            }
+            
+            NotifyDataReceived(data);
+        }
+        else if (bytesReceived == 0)
+        {
+            // UDP通常不会返回0，继续
+            continue;
+        }
+        else
+        {
+            int error = WSAGetLastError();
+            if (error == WSAETIMEDOUT)
+            {
+                // 超时是正常的，继续
+                continue;
+            }
+            else if (!m_stopRead)
+            {
+                // 其他错误
+                SetLastError("UDP接收错误: " + GetSocketErrorString(error));
+                NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+                break;
+            }
+        }
+        
+        // 短暂延时以避免CPU占用过高
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+}

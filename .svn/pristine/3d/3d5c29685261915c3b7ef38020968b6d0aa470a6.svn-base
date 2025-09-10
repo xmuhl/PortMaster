@@ -1,0 +1,125 @@
+﻿#include "pch.h"
+#include "PortMaster.h"
+#include "SplashDialog.h"
+#include "afxdialogex.h"
+
+// CSplashDialog 瀵硅瘽妗?
+IMPLEMENT_DYNAMIC(CSplashDialog, CDialogEx)
+
+CSplashDialog::CSplashDialog(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_SPLASH_DIALOG, pParent)
+	, m_nTimer(0)
+{
+}
+
+CSplashDialog::~CSplashDialog()
+{
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+}
+
+void CSplashDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+}
+
+BEGIN_MESSAGE_MAP(CSplashDialog, CDialogEx)
+	ON_WM_PAINT()
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+// CSplashDialog 娑堟伅澶勭悊绋嬪簭
+
+BOOL CSplashDialog::OnInitDialog()
+{
+	CDialogEx::OnInitDialog();
+
+	// 鍔犺浇鍚姩鐢婚潰浣嶅浘
+	HBITMAP hBitmap = (HBITMAP)LoadImage(
+		AfxGetInstanceHandle(),
+		MAKEINTRESOURCE(IDB_SPLASH),
+		IMAGE_BITMAP,
+		0, 0,
+		LR_DEFAULTSIZE
+	);
+
+	if (hBitmap != NULL)
+	{
+		m_splashBitmap.Attach(hBitmap);
+
+		// 鑾峰彇浣嶅浘灏哄骞惰皟鏁村璇濇澶у皬
+		BITMAP bmpInfo;
+		m_splashBitmap.GetBitmap(&bmpInfo);
+		
+		SetWindowPos(NULL, 0, 0, bmpInfo.bmWidth, bmpInfo.bmHeight, 
+			SWP_NOMOVE | SWP_NOZORDER);
+	}
+
+	// 灞呬腑鏄剧ず
+	CenterWindow();
+
+	// 璁剧疆瀹氭椂鍣ㄨ嚜鍔ㄥ叧闂?	m_nTimer = SetTimer(SPLASH_TIMER_ID, SPLASH_DURATION, NULL);
+
+	return TRUE;
+}
+
+void CSplashDialog::OnPaint()
+{
+	CPaintDC dc(this);
+
+	if (m_splashBitmap.GetSafeHandle() != NULL)
+	{
+		// 鍒涘缓鍏煎DC
+		CDC memDC;
+		memDC.CreateCompatibleDC(&dc);
+		CBitmap* pOldBitmap = memDC.SelectObject(&m_splashBitmap);
+
+		// 鑾峰彇浣嶅浘灏哄
+		BITMAP bmpInfo;
+		m_splashBitmap.GetBitmap(&bmpInfo);
+
+		// 鑾峰彇瀹㈡埛鍖哄昂瀵?		CRect clientRect;
+		GetClientRect(&clientRect);
+
+		// 缁樺埗浣嶅浘
+		dc.BitBlt(0, 0, clientRect.Width(), clientRect.Height(), 
+			&memDC, 0, 0, SRCCOPY);
+
+		// 鎭㈠鍘熷浣嶅浘
+		memDC.SelectObject(pOldBitmap);
+	}
+	else
+	{
+		// 濡傛灉娌℃湁浣嶅浘锛屾樉绀烘枃鏈?		CRect clientRect;
+		GetClientRect(&clientRect);
+		
+		// 璁剧疆鑳屾櫙鑹?		dc.FillSolidRect(&clientRect, RGB(70, 130, 180)); // 閽㈣摑鑹?		
+		// 缁樺埗鏂囨湰
+		dc.SetTextColor(RGB(255, 255, 255));
+		dc.SetBkMode(TRANSPARENT);
+		
+		CFont font;
+		font.CreatePointFont(240, L"寰蒋闆呴粦");
+		CFont* pOldFont = dc.SelectObject(&font);
+		
+		dc.DrawText(L"PortMaster\n绔彛澶у笀", &clientRect, 
+			DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		
+		dc.SelectObject(pOldFont);
+	}
+}
+
+void CSplashDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == SPLASH_TIMER_ID)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+		EndDialog(IDOK);
+	}
+	
+	CDialogEx::OnTimer(nIDEvent);
+}

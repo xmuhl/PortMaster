@@ -1,0 +1,656 @@
+﻿#include "pch.h"
+#include "framework.h"
+#include "PortMaster.h"
+#include "PortMasterDlg.h"
+#include "PortConfigDialog.h"
+#include "TestWizardDialog.h"
+#include "afxdialogex.h"
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+// 鐢ㄤ簬搴旂敤绋嬪簭"鍏充簬"鑿滃崟椤圭殑 CAboutDlg 瀵硅瘽妗?
+class CAboutDlg : public CDialogEx
+{
+public:
+	CAboutDlg();
+
+// 瀵硅瘽妗嗘暟鎹?#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_ABOUTBOX };
+#endif
+
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 鏀寔
+
+// 瀹炵幇
+protected:
+	DECLARE_MESSAGE_MAP()
+};
+
+CAboutDlg::CAboutDlg() : CDialogEx(IDD_ABOUTBOX)
+{
+}
+
+void CAboutDlg::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+}
+
+BEGIN_MESSAGE_MAP(CAboutDlg, CDialogEx)
+END_MESSAGE_MAP()
+
+// CPortMasterDlg 瀵硅瘽妗?
+CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent)
+	, m_bConnected(false)
+	, m_bReliableMode(false)
+{
+	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
+}
+
+void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_PORT_TYPE, m_ctrlPortType);
+	DDX_Control(pDX, IDC_PORT_LIST, m_ctrlPortList);
+	DDX_Control(pDX, IDC_CONNECT_BUTTON, m_ctrlConnectBtn);
+	DDX_Control(pDX, IDC_DISCONNECT_BUTTON, m_ctrlDisconnectBtn);
+	DDX_Control(pDX, IDC_CONFIG_BUTTON, m_ctrlConfigBtn);
+	DDX_Control(pDX, IDC_TEST_BUTTON, m_ctrlTestBtn);
+	DDX_Control(pDX, IDC_SEND_BUTTON, m_ctrlSendBtn);
+	DDX_Control(pDX, IDC_CLEAR_BUTTON, m_ctrlClearBtn);
+	DDX_Control(pDX, IDC_RELIABLE_MODE, m_ctrlReliableMode);
+	DDX_Control(pDX, IDC_INPUT_HEX, m_ctrlInputHex);
+	DDX_Control(pDX, IDC_INPUT_TEXT, m_ctrlInputText);
+	DDX_Control(pDX, IDC_HEX_VIEW, m_ctrlHexView);
+	DDX_Control(pDX, IDC_TEXT_VIEW, m_ctrlTextView);
+	DDX_Control(pDX, IDC_LOG, m_ctrlLog);
+	DDX_Control(pDX, IDC_PROGRESS, m_ctrlProgress);
+	DDX_Control(pDX, IDC_STATUS, m_ctrlStatus);
+	DDX_Control(pDX, IDC_FILE_DROP_ZONE, m_ctrlFileDropZone);
+}
+
+BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
+	ON_WM_SYSCOMMAND()
+	ON_WM_PAINT()
+	ON_WM_QUERYDRAGICON()
+	ON_BN_CLICKED(IDC_CONNECT_BUTTON, &CPortMasterDlg::OnBnClickedConnect)
+	ON_BN_CLICKED(IDC_DISCONNECT_BUTTON, &CPortMasterDlg::OnBnClickedDisconnect)
+	ON_BN_CLICKED(IDC_SEND_BUTTON, &CPortMasterDlg::OnBnClickedSend)
+	ON_BN_CLICKED(IDC_CLEAR_BUTTON, &CPortMasterDlg::OnBnClickedClear)
+	ON_BN_CLICKED(IDC_CONFIG_BUTTON, &CPortMasterDlg::OnBnClickedConfig)
+	ON_BN_CLICKED(IDC_TEST_BUTTON, &CPortMasterDlg::OnBnClickedTest)
+	ON_CBN_SELCHANGE(IDC_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangePortType)
+	ON_BN_CLICKED(IDC_RELIABLE_MODE, &CPortMasterDlg::OnBnClickedReliableMode)
+	ON_WM_DROPFILES()
+	ON_WM_SIZE()
+END_MESSAGE_MAP()
+
+// CPortMasterDlg 娑堟伅澶勭悊绋嬪簭
+
+BOOL CPortMasterDlg::OnInitDialog()
+{
+	CDialogEx::OnInitDialog();
+
+	// 灏?鍏充簬..."鑿滃崟椤规坊鍔犲埌绯荤粺鑿滃崟涓€?
+	// IDM_ABOUTBOX 蹇呴』鍦ㄧ郴缁熷懡浠よ寖鍥村唴銆?	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
+	ASSERT(IDM_ABOUTBOX < 0xF000);
+
+	CMenu* pSysMenu = GetSystemMenu(FALSE);
+	if (pSysMenu != nullptr)
+	{
+		BOOL bNameValid;
+		CString strAboutMenu;
+		bNameValid = strAboutMenu.LoadString(IDS_ABOUTBOX);
+		ASSERT(bNameValid);
+		if (!strAboutMenu.IsEmpty())
+		{
+			pSysMenu->AppendMenu(MF_SEPARATOR);
+			pSysMenu->AppendMenu(MF_STRING, IDM_ABOUTBOX, strAboutMenu);
+		}
+	}
+
+	// 璁剧疆姝ゅ璇濇鐨勫浘鏍囥€? 褰撳簲鐢ㄧ▼搴忎富绐楀彛涓嶆槸瀵硅瘽妗嗘椂锛屾鏋跺皢鑷姩
+	//  鎵ц姝ゆ搷浣?	SetIcon(m_hIcon, TRUE);			// 璁剧疆澶у浘鏍?	SetIcon(m_hIcon, FALSE);		// 璁剧疆灏忓浘鏍?
+	// 鍒濆鍖栨帶浠?	InitializeControls();
+
+	// 鍚敤鎷栨斁
+	DragAcceptFiles(TRUE);
+
+	return TRUE;  // 闄ら潪灏嗙劍鐐硅缃埌鎺т欢锛屽惁鍒欒繑鍥?TRUE
+}
+
+void CPortMasterDlg::OnSysCommand(UINT nID, LPARAM lParam)
+{
+	if ((nID & 0xFFF0) == IDM_ABOUTBOX)
+	{
+		CAboutDlg dlgAbout;
+		dlgAbout.DoModal();
+	}
+	else
+	{
+		CDialogEx::OnSysCommand(nID, lParam);
+	}
+}
+
+// 濡傛灉鍚戝璇濇娣诲姞鏈€灏忓寲鎸夐挳锛屽垯闇€瑕佷笅闈㈢殑浠ｇ爜
+//  鏉ョ粯鍒惰鍥炬爣銆? 瀵逛簬浣跨敤鏂囨。/瑙嗗浘妯″瀷鐨?MFC 搴旂敤绋嬪簭锛?//  杩欏皢鐢辨鏋惰嚜鍔ㄥ畬鎴愩€?
+void CPortMasterDlg::OnPaint()
+{
+	if (IsIconic())
+	{
+		CPaintDC dc(this); // 鐢ㄤ簬缁樺埗鐨勮澶囦笂涓嬫枃
+
+		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.GetSafeHdc()), 0);
+
+		// 浣垮浘鏍囧湪宸ヤ綔鍖虹煩褰腑灞呬腑
+		int cxIcon = GetSystemMetrics(SM_CXICON);
+		int cyIcon = GetSystemMetrics(SM_CYICON);
+		CRect rect;
+		GetClientRect(&rect);
+		int x = (rect.Width() - cxIcon + 1) / 2;
+		int y = (rect.Height() - cyIcon + 1) / 2;
+
+		// 缁樺埗鍥炬爣
+		dc.DrawIcon(x, y, m_hIcon);
+	}
+	else
+	{
+		CDialogEx::OnPaint();
+	}
+}
+
+//褰撶敤鎴锋嫋鍔ㄦ渶灏忓寲绐楀彛鏃剁郴缁熻皟鐢ㄦ鍑芥暟鍙栧緱鍏夋爣
+//鏄剧ず銆?HCURSOR CPortMasterDlg::OnQueryDragIcon()
+{
+	return static_cast<HCURSOR>(m_hIcon);
+}
+
+void CPortMasterDlg::InitializeControls()
+{
+	// 鍒濆鍖栫鍙ｇ被鍨嬩笅鎷夋
+	m_ctrlPortType.AddString(L"涓插彛 (COM)");
+	m_ctrlPortType.AddString(L"骞跺彛 (LPT)");
+	m_ctrlPortType.AddString(L"USB鎵撳嵃鏈?);
+	m_ctrlPortType.AddString(L"TCP瀹㈡埛绔?);
+	m_ctrlPortType.AddString(L"TCP鏈嶅姟绔?);
+	m_ctrlPortType.AddString(L"UDP");
+	m_ctrlPortType.AddString(L"鏈湴鍥炵幆");
+	m_ctrlPortType.SetCurSel(0);
+
+	// 鏇存柊绔彛鍒楄〃
+	UpdatePortList();
+	
+	// 鏇存柊鎸夐挳鐘舵€?	UpdateButtonStates();
+
+	// 璁剧疆鏂囦欢鎷栨斁鍖哄煙鎻愮ず鏂囨湰
+	m_ctrlFileDropZone.SetWindowText(L"鎷栨嫿鏂囦欢鍒版澶勮繘琛屼紶杈?);
+
+	// 鍒濆鍖栫姸鎬佹爮
+	m_ctrlStatus.SetWindowText(L"鐘舵€? 灏辩华");
+
+	// 娣诲姞鍒濆鍖栨棩蹇?	AppendLog(L"PortMaster 鍒濆鍖栧畬鎴?);
+}
+
+void CPortMasterDlg::UpdatePortList()
+{
+	m_ctrlPortList.ResetContent();
+	
+	int portType = m_ctrlPortType.GetCurSel();
+	switch (portType)
+	{
+	case 0: // 涓插彛
+		// 鏋氫妇涓插彛 - 绠€鍗曠ず渚?		for (int i = 1; i <= 16; i++)
+		{
+			CString portName;
+			portName.Format(L"COM%d", i);
+			m_ctrlPortList.AddString(portName);
+		}
+		break;
+	case 1: // 骞跺彛
+		m_ctrlPortList.AddString(L"LPT1");
+		m_ctrlPortList.AddString(L"LPT2");
+		break;
+	case 2: // USB鎵撳嵃鏈?		m_ctrlPortList.AddString(L"USB鎵撳嵃鏈?");
+		break;
+	case 3: // TCP瀹㈡埛绔?		m_ctrlPortList.AddString(L"127.0.0.1:8080");
+		break;
+	case 4: // TCP鏈嶅姟绔?		m_ctrlPortList.AddString(L"鐩戝惉绔彛:8080");
+		break;
+	case 5: // UDP
+		m_ctrlPortList.AddString(L"UDP:8080");
+		break;
+	case 6: // 鏈湴鍥炵幆
+		m_ctrlPortList.AddString(L"鏈湴鍥炵幆");
+		break;
+	}
+	
+	if (m_ctrlPortList.GetCount() > 0)
+		m_ctrlPortList.SetCurSel(0);
+}
+
+void CPortMasterDlg::UpdateButtonStates()
+{
+	m_ctrlConnectBtn.EnableWindow(!m_bConnected);
+	m_ctrlDisconnectBtn.EnableWindow(m_bConnected);
+	m_ctrlSendBtn.EnableWindow(m_bConnected);
+	
+	CString statusText;
+	statusText.Format(L"鐘舵€? %s", m_bConnected ? L"宸茶繛鎺? : L"鏂紑");
+	if (m_bReliableMode && m_bConnected)
+		statusText += L" (鍙潬妯″紡)";
+	m_ctrlStatus.SetWindowText(statusText);
+}
+
+void CPortMasterDlg::AppendLog(const CString& message)
+{
+	CString timeStamp;
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	timeStamp.Format(L"[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
+	
+	CString log;
+	m_ctrlLog.GetWindowText(log);
+	log += timeStamp + message + L"\r\n";
+	m_ctrlLog.SetWindowText(log);
+	
+	// 婊氬姩鍒板簳閮?	m_ctrlLog.LineScroll(m_ctrlLog.GetLineCount());
+}
+
+void CPortMasterDlg::AppendHexData(const BYTE* data, size_t length, bool incoming)
+{
+	CString hexStr;
+	CString prefix = incoming ? L"<< " : L">> ";
+	
+	for (size_t i = 0; i < length; i++)
+	{
+		CString temp;
+		temp.Format(L"%02X ", data[i]);
+		hexStr += temp;
+	}
+	
+	CString currentHex;
+	m_ctrlHexView.GetWindowText(currentHex);
+	currentHex += prefix + hexStr + L"\r\n";
+	m_ctrlHexView.SetWindowText(currentHex);
+	
+	// 婊氬姩鍒板簳閮?	m_ctrlHexView.LineScroll(m_ctrlHexView.GetLineCount());
+}
+
+void CPortMasterDlg::AppendTextData(const CString& text, bool incoming)
+{
+	CString prefix = incoming ? L"<< " : L">> ";
+	
+	CString currentText;
+	m_ctrlTextView.GetWindowText(currentText);
+	currentText += prefix + text + L"\r\n";
+	m_ctrlTextView.SetWindowText(currentText);
+	
+	// 婊氬姩鍒板簳閮?	m_ctrlTextView.LineScroll(m_ctrlTextView.GetLineCount());
+}
+
+// 鎸夐挳浜嬩欢澶勭悊
+void CPortMasterDlg::OnBnClickedConnect()
+{
+	m_bConnected = true;
+	UpdateButtonStates();
+	AppendLog(L"杩炴帴鎴愬姛");
+}
+
+void CPortMasterDlg::OnBnClickedDisconnect()
+{
+	m_bConnected = false;
+	UpdateButtonStates();
+	AppendLog(L"宸叉柇寮€杩炴帴");
+}
+
+void CPortMasterDlg::OnBnClickedSend()
+{
+	std::vector<uint8_t> dataToSend = GetInputData();
+	
+	if (dataToSend.empty())
+	{
+		AppendLog(L"娌℃湁鏁版嵁鍙彂閫?);
+		return;
+	}
+	
+	// 鏄剧ず鍙戦€佺殑鏁版嵁
+	DisplayReceivedData(dataToSend);
+	
+	// 鍦ㄥ崄鍏繘鍒惰鍥句腑鏄剧ず鍙戦€佺殑鏁版嵁
+	AppendHexData(dataToSend.data(), dataToSend.size(), false);
+	
+	CString logMsg;
+	logMsg.Format(L"鍙戦€佹暟鎹?(%zu瀛楄妭)", dataToSend.size());
+	AppendLog(logMsg);
+	
+	// TODO: 瀹為檯鍙戦€佹暟鎹埌浼犺緭灞?}
+
+void CPortMasterDlg::OnBnClickedClear()
+{
+	m_ctrlHexView.SetWindowText(L"");
+	m_ctrlTextView.SetWindowText(L"");
+	m_ctrlInputHex.SetWindowText(L"");
+	m_ctrlInputText.SetWindowText(L"");
+	AppendLog(L"鏁版嵁瑙嗗浘宸叉竻绌?);
+}
+
+void CPortMasterDlg::OnBnClickedConfig()
+{
+	// 鑾峰彇褰撳墠閫夋嫨鐨勪紶杈撶被鍨?	int portTypeIndex = m_ctrlPortType.GetCurSel();
+	std::string transportType;
+	switch (portTypeIndex)
+	{
+	case 0: transportType = "Serial"; break;
+	case 1: transportType = "LPT"; break;
+	case 2: transportType = "USB"; break;
+	case 3: transportType = "TCP_Client"; break;
+	case 4: transportType = "TCP_Server"; break;
+	case 5: transportType = "UDP"; break;
+	case 6: transportType = "Loopback"; break;
+	default: transportType = "Serial"; break;
+	}
+	
+	// 鍒涘缓榛樿閰嶇疆
+	TransportConfig config;
+	
+	// 鏄剧ず閰嶇疆瀵硅瘽妗?	CPortConfigDialog dlg(transportType, config, this);
+	if (dlg.DoModal() == IDOK)
+	{
+		// 淇濆瓨閰嶇疆
+		TransportConfig newConfig = dlg.GetConfig();
+		std::string newTransportType = dlg.GetTransportType();
+		
+		// TODO: 淇濆瓨鍒伴厤缃鐞嗗櫒
+		AppendLog(L"绔彛閰嶇疆宸叉洿鏂?);
+	}
+	else
+	{
+		AppendLog(L"鍙栨秷绔彛閰嶇疆");
+	}
+}
+
+void CPortMasterDlg::OnBnClickedTest()
+{
+	AppendLog(L"鍚姩鍐呯疆娴嬭瘯鍚戝");
+	
+	CTestWizardDialog testDlg(this);
+	if (testDlg.DoModal() == IDOK)
+	{
+		AppendLog(L"娴嬭瘯鍚戝瀹屾垚");
+	}
+	else
+	{
+		AppendLog(L"娴嬭瘯鍚戝宸插彇娑?);
+	}
+}
+
+void CPortMasterDlg::OnCbnSelchangePortType()
+{
+	UpdatePortList();
+	AppendLog(L"鍒囨崲绔彛绫诲瀷");
+}
+
+void CPortMasterDlg::OnBnClickedReliableMode()
+{
+	m_bReliableMode = (m_ctrlReliableMode.GetCheck() == BST_CHECKED);
+	UpdateButtonStates();
+	AppendLog(m_bReliableMode ? L"鍚敤鍙潬浼犺緭妯″紡" : L"绂佺敤鍙潬浼犺緭妯″紡");
+}
+
+void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
+{
+	UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, NULL, 0);
+	
+	for (UINT i = 0; i < fileCount; i++)
+	{
+		TCHAR filePath[MAX_PATH];
+		DragQueryFile(hDropInfo, i, filePath, MAX_PATH);
+		
+		CString logMsg;
+		logMsg.Format(L"鎷栨斁鏂囦欢: %s", filePath);
+		AppendLog(logMsg);
+		
+		// 妫€鏌ユ槸鍚︿负鐩綍
+		DWORD attributes = GetFileAttributes(filePath);
+		if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY))
+		{
+			AppendLog(L"涓嶆敮鎸佹枃浠跺す鎷栨斁锛岃鎷栨斁鍗曚釜鏂囦欢");
+			continue;
+		}
+		
+		// 璇诲彇鏂囦欢鍐呭
+		if (LoadFileForTransmission(filePath))
+		{
+			AppendLog(L"鏂囦欢鍔犺浇鎴愬姛锛屽噯澶囦紶杈?);
+		}
+		else
+		{
+			AppendLog(L"鏂囦欢鍔犺浇澶辫触");
+		}
+	}
+	
+	DragFinish(hDropInfo);
+	CDialogEx::OnDropFiles(hDropInfo);
+}
+
+void CPortMasterDlg::OnSize(UINT nType, int cx, int cy)
+{
+	CDialogEx::OnSize(nType, cx, cy);
+
+	// TODO: 娣诲姞绐楀彛澶у皬璋冩暣澶勭悊
+}
+
+// 鍗佸叚杩涘埗/鏂囨湰瑙嗗浘杈呭姪鏂规硶瀹炵幇
+void CPortMasterDlg::ProcessHexInput()
+{
+	CString hexInput;
+	m_ctrlInputHex.GetWindowText(hexInput);
+	
+	if (ValidateHexInput(hexInput))
+	{
+		// 娓呯┖鏂囨湰杈撳叆妗嗭紝閬垮厤鍐茬獊
+		m_ctrlInputText.SetWindowText(L"");
+	}
+	else if (!hexInput.IsEmpty())
+	{
+		AppendLog(L"鍗佸叚杩涘埗杈撳叆鏍煎紡閿欒");
+	}
+}
+
+void CPortMasterDlg::ProcessTextInput()
+{
+	CString textInput;
+	m_ctrlInputText.GetWindowText(textInput);
+	
+	if (!textInput.IsEmpty())
+	{
+		// 娓呯┖鍗佸叚杩涘埗杈撳叆妗嗭紝閬垮厤鍐茬獊
+		m_ctrlInputHex.SetWindowText(L"");
+		
+		// 灏嗘枃鏈浆鎹负鍗佸叚杩涘埗鏄剧ず锛堝彲閫夛級
+		std::string inputStr = CT2A(textInput, CP_UTF8);
+		std::vector<uint8_t> data = DataFormatter::TextToBytes(inputStr);
+		std::string hexStr = DataFormatter::BytesToHex(data);
+		
+		// 鍙互閫夋嫨鍦ㄥ崄鍏繘鍒舵涓樉绀哄搴旂殑鍗佸叚杩涘埗鍊?		// m_ctrlInputHex.SetWindowText(CA2W(hexStr.c_str()));
+	}
+}
+
+bool CPortMasterDlg::ValidateHexInput(const CString& hexText)
+{
+	if (hexText.IsEmpty())
+		return true;
+	
+	std::string hexStr = CT2A(hexText);
+	return DataFormatter::IsValidHex(hexStr);
+}
+
+std::vector<uint8_t> CPortMasterDlg::GetInputData()
+{
+	CString hexInput, textInput;
+	m_ctrlInputHex.GetWindowText(hexInput);
+	m_ctrlInputText.GetWindowText(textInput);
+	
+	if (!hexInput.IsEmpty())
+	{
+		if (ValidateHexInput(hexInput))
+		{
+			std::string hexStr = CT2A(hexInput);
+			return DataFormatter::HexToBytes(hexStr);
+		}
+		else
+		{
+			AppendLog(L"鍗佸叚杩涘埗鏍煎紡閿欒");
+			return std::vector<uint8_t>();
+		}
+	}
+	else if (!textInput.IsEmpty())
+	{
+		std::string textStr = CT2A(textInput, CP_UTF8);
+		return DataFormatter::TextToBytes(textStr);
+	}
+	
+	return std::vector<uint8_t>();
+}
+
+void CPortMasterDlg::DisplayReceivedData(const std::vector<uint8_t>& data)
+{
+	if (data.empty())
+		return;
+	
+	// 鏇存柊鍗佸叚杩涘埗瑙嗗浘
+	std::string hexDump = DataFormatter::FormatHexDump(data);
+	CString currentHex;
+	m_ctrlHexView.GetWindowText(currentHex);
+	currentHex += CA2W(hexDump.c_str());
+	m_ctrlHexView.SetWindowText(currentHex);
+	
+	// 鏇存柊鏂囨湰瑙嗗浘
+	std::string textData = DataFormatter::BytesToText(data);
+	CString currentText;
+	m_ctrlTextView.GetWindowText(currentText);
+	currentText += CA2W(textData.c_str());
+	currentText += L"\r\n";
+	m_ctrlTextView.SetWindowText(currentText);
+	
+	// 婊氬姩鍒板簳閮?	m_ctrlHexView.LineScroll(m_ctrlHexView.GetLineCount());
+	m_ctrlTextView.LineScroll(m_ctrlTextView.GetLineCount());
+}
+
+bool CPortMasterDlg::LoadFileForTransmission(const CString& filePath)
+{
+	try
+	{
+		HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, 
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		
+		if (hFile == INVALID_HANDLE_VALUE)
+		{
+			CString errorMsg;
+			errorMsg.Format(L"鏃犳硶鎵撳紑鏂囦欢: %s (閿欒浠ｇ爜: %d)", filePath, GetLastError());
+			AppendLog(errorMsg);
+			return false;
+		}
+		
+		LARGE_INTEGER fileSize;
+		if (!GetFileSizeEx(hFile, &fileSize))
+		{
+			CloseHandle(hFile);
+			AppendLog(L"鏃犳硶鑾峰彇鏂囦欢澶у皬");
+			return false;
+		}
+		
+		// 妫€鏌ユ枃浠跺ぇ灏忛檺鍒讹紙渚嬪鏈€澶?0MB锛?		const LONGLONG MAX_FILE_SIZE = 10 * 1024 * 1024;
+		if (fileSize.QuadPart > MAX_FILE_SIZE)
+		{
+			CloseHandle(hFile);
+			CString sizeMsg;
+			sizeMsg.Format(L"鏂囦欢杩囧ぇ (%.2f MB), 鏈€澶ф敮鎸?0MB", 
+				fileSize.QuadPart / (1024.0 * 1024.0));
+			AppendLog(sizeMsg);
+			return false;
+		}
+		
+		// 鍒嗛厤缂撳啿鍖?		std::vector<uint8_t> fileBuffer(static_cast<size_t>(fileSize.QuadPart));
+		
+		DWORD bytesRead = 0;
+		DWORD totalBytesRead = 0;
+		const DWORD CHUNK_SIZE = 64 * 1024; // 64KB chunks
+		
+		// 鑾峰彇鏂囦欢鍚嶏紙涓嶅惈璺緞锛?		CString fileName = filePath;
+		int lastSlash = fileName.ReverseFind('\\');
+		if (lastSlash != -1)
+			fileName = fileName.Mid(lastSlash + 1);
+		
+		// 璇诲彇鏂囦欢鏁版嵁
+		while (totalBytesRead < fileSize.QuadPart)
+		{
+			DWORD chunkSize = min(CHUNK_SIZE, 
+				static_cast<DWORD>(fileSize.QuadPart - totalBytesRead));
+			
+			if (!ReadFile(hFile, fileBuffer.data() + totalBytesRead, 
+				chunkSize, &bytesRead, NULL))
+			{
+				CloseHandle(hFile);
+				AppendLog(L"鏂囦欢璇诲彇閿欒");
+				return false;
+			}
+			
+			totalBytesRead += bytesRead;
+			
+			// 鏇存柊杩涘害鏄剧ず
+			ShowFileTransmissionProgress(fileName, fileSize.QuadPart, totalBytesRead);
+			
+			// 澶勭悊娑堟伅浠ヤ繚鎸乁I鍝嶅簲鎬?			MSG msg;
+			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+		}
+		
+		CloseHandle(hFile);
+		
+		// 瀹屾垚杩涘害鏄剧ず
+		ShowFileTransmissionProgress(fileName, fileSize.QuadPart, fileSize.QuadPart);
+		
+		// 鏄剧ず鏂囦欢鍐呭鍦ㄦ暟鎹鍥句腑
+		DisplayReceivedData(fileBuffer);
+		
+		CString successMsg;
+		successMsg.Format(L"鏂囦欢鍔犺浇瀹屾垚: %s (%zu 瀛楄妭)", fileName, fileBuffer.size());
+		AppendLog(successMsg);
+		
+		return true;
+	}
+	catch (...)
+	{
+		AppendLog(L"鏂囦欢鍔犺浇鏃跺彂鐢熷紓甯?);
+		return false;
+	}
+}
+
+void CPortMasterDlg::ShowFileTransmissionProgress(const CString& filename, size_t totalSize, size_t transmitted)
+{
+	// 鏇存柊杩涘害鏉?	if (totalSize > 0)
+	{
+		int progress = static_cast<int>((transmitted * 100) / totalSize);
+		m_ctrlProgress.SetPos(progress);
+	}
+	
+	// 鏇存柊鐘舵€佹枃鏈?	CString statusText;
+	if (transmitted >= totalSize)
+	{
+		statusText.Format(L"鐘舵€? 鏂囦欢浼犺緭瀹屾垚 - %s", filename);
+		m_ctrlProgress.SetPos(0); // 閲嶇疆杩涘害鏉?	}
+	else
+	{
+		double progressPercent = totalSize > 0 ? (transmitted * 100.0) / totalSize : 0.0;
+		statusText.Format(L"鐘舵€? 姝ｅ湪浼犺緭 %s (%.1f%%, %zu/%zu 瀛楄妭)", 
+			filename, progressPercent, transmitted, totalSize);
+	}
+	
+	m_ctrlStatus.SetWindowText(statusText);
+}

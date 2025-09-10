@@ -1,0 +1,118 @@
+﻿#pragma execution_character_set("utf-8")
+#pragma once
+
+#include "../Transport/ITransport.h"
+#include <string>
+#include <vector>
+#include <map>
+#include <memory>
+#include <functional>
+#include <thread>
+#include <atomic>
+
+// 设备信息结构
+struct DeviceInfo
+{
+    std::string deviceName;      // 设备名称 (如 COM1, USB001)
+    std::string displayName;     // 显示名称 (如 "串口 COM1")
+    std::string transportType;   // 传输类型 (Serial, TCP, UDP, LPT, USB)
+    std::string description;     // 设备描述
+    bool isAvailable;           // 是否可用
+    std::map<std::string, std::string> properties; // 额外属性
+    
+    DeviceInfo() : isAvailable(false) {}
+    
+    DeviceInfo(const std::string& name, const std::string& type)
+        : deviceName(name), transportType(type), isAvailable(true)
+    {
+        displayName = type + " " + name;
+    }
+};
+
+// 统一设备管理器
+class DeviceManager
+{
+public:
+    DeviceManager();
+    ~DeviceManager();
+    
+    // 设备枚举
+    std::vector<DeviceInfo> EnumerateAllDevices();
+    std::vector<DeviceInfo> EnumerateDevicesByType(const std::string& transportType);
+    
+    // 具体设备类型枚举
+    std::vector<DeviceInfo> EnumerateSerialPorts();
+    std::vector<DeviceInfo> EnumerateTcpDevices();
+    std::vector<DeviceInfo> EnumerateUdpDevices();
+    std::vector<DeviceInfo> EnumerateLptPrinters();
+    std::vector<DeviceInfo> EnumerateUsbPrinters();
+    std::vector<DeviceInfo> EnumerateVirtualDevices();
+    
+    // 设备验证和测试
+    bool IsDeviceAvailable(const std::string& deviceName, const std::string& transportType);
+    bool TestDeviceConnection(const DeviceInfo& device);
+    
+    // 设备历史和收藏
+    void AddToHistory(const DeviceInfo& device);
+    void AddToFavorites(const DeviceInfo& device);
+    void RemoveFromFavorites(const std::string& deviceName, const std::string& transportType);
+    std::vector<DeviceInfo> GetHistoryDevices();
+    std::vector<DeviceInfo> GetFavoriteDevices();
+    
+    // 设备配置管理
+    bool SaveDeviceConfig(const DeviceInfo& device, const TransportConfig& config);
+    TransportConfig LoadDeviceConfig(const DeviceInfo& device);
+    
+    // 热插拔检测
+    void StartDeviceMonitoring();
+    void StopDeviceMonitoring();
+    bool IsMonitoring() const { return m_monitoring; }
+    
+    // 设备变更回调
+    typedef std::function<void(const DeviceInfo&, bool)> DeviceChangedCallback; // 设备, 是否连接
+    void SetDeviceChangedCallback(DeviceChangedCallback callback);
+    
+    // 自定义设备支持
+    void RegisterCustomDevice(const DeviceInfo& device);
+    void UnregisterCustomDevice(const std::string& deviceName, const std::string& transportType);
+    
+    // 批量操作
+    std::vector<DeviceInfo> FilterDevices(const std::vector<DeviceInfo>& devices, 
+                                         const std::string& filter) const;
+    void SortDevices(std::vector<DeviceInfo>& devices, const std::string& sortBy = "name") const;
+    
+    // 统计信息
+    size_t GetTotalDeviceCount() const;
+    std::map<std::string, size_t> GetDeviceCountByType() const;
+
+private:
+    bool m_monitoring;
+    DeviceChangedCallback m_deviceCallback;
+    std::vector<DeviceInfo> m_customDevices;
+    std::vector<DeviceInfo> m_historyDevices;
+    std::vector<DeviceInfo> m_favoriteDevices;
+    
+    // 设备监控线程
+    void DeviceMonitoringThread();
+    std::thread m_monitorThread;
+    std::atomic<bool> m_stopMonitoring;
+    
+    // 辅助方法
+    DeviceInfo CreateTcpDevice(const std::string& address, int port, bool isServer = false);
+    DeviceInfo CreateUdpDevice(const std::string& address, int port);
+    DeviceInfo CreateVirtualDevice(const std::string& name, const std::string& type);
+    
+    // Windows特定的设备检测
+    bool IsSerialPortAvailable(const std::string& portName);
+    std::string GetDeviceDescription(const std::string& deviceName, const std::string& transportType);
+    
+    // 配置持久化
+    void LoadDeviceHistory();
+    void SaveDeviceHistory();
+    void LoadFavoriteDevices();
+    void SaveFavoriteDevices();
+    
+    // 设备去重和合并
+    void DeduplicateDevices(std::vector<DeviceInfo>& devices) const;
+    void MergeDeviceProperties(DeviceInfo& target, const DeviceInfo& source) const;
+};

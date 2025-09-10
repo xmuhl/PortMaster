@@ -1,0 +1,82 @@
+﻿#pragma once
+
+#include "afxdialogex.h"
+#include <mutex> // ⭐ 新增：线程同步支持
+
+// ⭐ 新增：自定义消息定义
+#define WM_SPLASH_INIT_COMPLETE (WM_USER + 1000) // 初始化完成消息
+
+// CSplashDialog 对话框
+class CSplashDialog : public CDialogEx
+{
+	DECLARE_DYNAMIC(CSplashDialog)
+
+public:
+	CSplashDialog(CWnd* pParent = nullptr);   // 标准构造函数
+	virtual ~CSplashDialog();
+
+// 对话框数据
+#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_SPLASH_DIALOG };
+#endif
+
+protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
+
+	DECLARE_MESSAGE_MAP()
+
+public:
+	virtual BOOL OnInitDialog();
+	afx_msg void OnPaint();
+	// 移除OnTimer - 不再使用固定时长定时器
+	
+	// 新增：外部控制的关闭方法
+	void CloseSplash();
+	afx_msg LRESULT OnInitializationComplete(WPARAM wParam, LPARAM lParam); // ⭐ 新增：接收初始化完成消息
+	afx_msg BOOL OnEraseBkgnd(CDC* pDC); // ⭐ 新增：文本模式背景绘制
+
+	// ⭐ 新增：公共方法用于外部通知初始化完成
+	void NotifyInitializationComplete();
+	void SetInitializationProgress(const CString& message);
+
+private:
+	CBitmap m_splashBitmap;
+<<<<<<< .mine
+	UINT_PTR m_nTimer;
+	UINT_PTR m_nProgressTimer; // ⭐ 新增：进度更新定时器
+	static const UINT SPLASH_TIMER_ID = 1001;
+	static const UINT PROGRESS_TIMER_ID = 1002; // ⭐ 新增：进度定时器ID
+	static const UINT MAX_DISPLAY_TIME = 5000; // ⭐ 修改：最大显示时间5秒（防止死锁）
+	static const UINT MIN_DISPLAY_TIME = 1000; // ⭐ 新增：最小显示时间1秒
+	
+	// ⭐ 新增：状态管理变量
+	bool m_bInitializationComplete;  // 初始化是否完成
+	DWORD m_dwStartTime;             // 启动时间
+	CString m_strProgressMessage;    // 当前进度消息
+	bool m_bTextModeEnabled;         // 是否启用文本模式（PNG加载失败时）
+	
+	// ⭐ 新增：线程安全保护
+	mutable std::mutex m_stateMutex;          // 状态变量保护锁
+	mutable std::mutex m_progressMutex;       // 进度消息保护锁
+	
+	// ⭐ 新增：PNG资源处理方法
+	bool ValidatePNGResource(UINT resourceId);
+	bool LoadPNGResource();
+	void EnableTextMode();
+	
+	// ⭐ 新增：辅助方法
+	void DrawProgressInfo(CDC& dc, const CRect& clientRect);
+	
+	// ⭐ 新增：线程安全辅助方法
+	bool GetInitializationCompleteState() const;
+	void SetInitializationCompleteState(bool bComplete);
+	CString GetProgressMessage() const;
+	void SetProgressMessage(const CString& message);
+||||||| .r19984
+	UINT_PTR m_nTimer;
+	static const UINT SPLASH_TIMER_ID = 1001;
+	static const UINT SPLASH_DURATION = 2500; // 2.5秒
+=======
+	// 移除定时器相关变量 - 严禁使用固定时长的等待
+>>>>>>> .r19995
+};

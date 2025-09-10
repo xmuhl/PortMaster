@@ -1,0 +1,80 @@
+﻿#pragma once
+
+#include "afxdialogex.h"
+#include "Common/DataFormatter.h"
+
+// CPortMasterDlg 瀵硅瘽妗?class CPortMasterDlg : public CDialogEx
+{
+// 鏋勯€?public:
+	CPortMasterDlg(CWnd* pParent = nullptr);	// 鏍囧噯鏋勯€犲嚱鏁?
+// 瀵硅瘽妗嗘暟鎹?#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_PORTMASTER_DIALOG };
+#endif
+
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);	// DDX/DDV 鏀寔
+
+// 瀹炵幇
+protected:
+	HICON m_hIcon;
+
+	// 鐢熸垚鐨勬秷鎭槧灏勫嚱鏁?	virtual BOOL OnInitDialog();
+	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
+	afx_msg void OnPaint();
+	afx_msg HCURSOR OnQueryDragIcon();
+	afx_msg void OnBnClickedConnect();
+	afx_msg void OnBnClickedDisconnect();
+	afx_msg void OnBnClickedSend();
+	afx_msg void OnBnClickedClear();
+	afx_msg void OnBnClickedConfig();
+	afx_msg void OnBnClickedTest();
+	afx_msg void OnCbnSelchangePortType();
+	afx_msg void OnBnClickedReliableMode();
+	afx_msg void OnDropFiles(HDROP hDropInfo);
+
+	DECLARE_MESSAGE_MAP()
+
+private:
+	// 鎺т欢鍙橀噺
+	CComboBox m_ctrlPortType;
+	CComboBox m_ctrlPortList;
+	CButton m_ctrlConnectBtn;
+	CButton m_ctrlDisconnectBtn;
+	CButton m_ctrlConfigBtn;
+	CButton m_ctrlTestBtn;
+	CButton m_ctrlSendBtn;
+	CButton m_ctrlClearBtn;
+	CButton m_ctrlReliableMode;
+	CEdit m_ctrlInputHex;
+	CEdit m_ctrlInputText;
+	CEdit m_ctrlHexView;
+	CEdit m_ctrlTextView;
+	CEdit m_ctrlLog;
+	CProgressCtrl m_ctrlProgress;
+	CStatic m_ctrlStatus;
+	CStatic m_ctrlFileDropZone;
+
+	// 鐘舵€佸彉閲?	bool m_bConnected;
+	bool m_bReliableMode;
+	
+	// 鍒濆鍖栧嚱鏁?	void InitializeControls();
+	void UpdatePortList();
+	void UpdateButtonStates();
+	void AppendLog(const CString& message);
+	void AppendHexData(const BYTE* data, size_t length, bool incoming);
+	void AppendTextData(const CString& text, bool incoming);
+	
+	// 鍗佸叚杩涘埗/鏂囨湰瑙嗗浘杈呭姪鏂规硶
+	void ProcessHexInput();
+	void ProcessTextInput();
+	bool ValidateHexInput(const CString& hexText);
+	std::vector<uint8_t> GetInputData();
+	void DisplayReceivedData(const std::vector<uint8_t>& data);
+	
+	// 鏂囦欢鎷栨斁杈呭姪鏂规硶
+	bool LoadFileForTransmission(const CString& filePath);
+	void ShowFileTransmissionProgress(const CString& filename, size_t totalSize, size_t transmitted);
+
+public:
+	afx_msg void OnSize(UINT nType, int cx, int cy);
+};

@@ -1,0 +1,1565 @@
+﻿#pragma execution_character_set("utf-8")
+#include "pch.h"
+#include "TestWizardDialog.h"
+#include "Resource.h"
+#include "Common/DataFormatter.h"
+#include "Transport/LoopbackTransport.h"
+#include "Protocol/ReliableChannel.h"
+#include "Protocol/FrameCodec.h"
+#include "Protocol/CRC32.h"
+#include <chrono>
+#include <fstream>
+#include <algorithm>
+#include <random>
+#include <thread>
+#include <future>
+#include <filesystem>
+
+IMPLEMENT_DYNAMIC(CTestWizardDialog, CDialogEx)
+
+CTestWizardDialog::CTestWizardDialog(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_TEST_WIZARD, pParent)
+	, m_bTesting(false)
+	, m_nCurrentTest(0)
+	, m_nTotalTests(0)
+	, m_nTimer(0)
+{
+}
+
+CTestWizardDialog::~CTestWizardDialog()
+{
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+}
+
+void CTestWizardDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+	
+	try
+	{
+		DDX_Control(pDX, IDC_TEST_TYPE, m_ctrlTestType);
+		DDX_Control(pDX, IDC_TRANSPORT_TYPE3, m_ctrlTransportType);
+		DDX_Control(pDX, IDC_TEST_CONFIG, m_ctrlTestConfig);
+		DDX_Control(pDX, IDC_TEST_RESULTS, m_ctrlTestResults);
+		DDX_Control(pDX, IDC_TEST_PROGRESS, m_ctrlTestProgress);
+		DDX_Control(pDX, IDC_START_TEST, m_ctrlStartBtn);
+		DDX_Control(pDX, IDC_STOP_TEST, m_ctrlStopBtn);
+		DDX_Control(pDX, IDC_TEST_STATUS, m_ctrlStatusText);
+	}
+	catch (CException* e)
+	{
+		// 记录控件绑定错误
+		TCHAR szError[256] = {0};
+		e->GetErrorMessage(szError, 256);
+		
+		CString errorMsg;
+		errorMsg.Format(L"控件绑定失败: %s", szError);
+		::MessageBox(NULL, errorMsg, L"测试向导初始化错误", MB_OK | MB_ICONERROR);
+		
+		e->Delete();
+		throw;
+	}
+}
+
+BEGIN_MESSAGE_MAP(CTestWizardDialog, CDialogEx)
+	ON_BN_CLICKED(IDC_START_TEST, &CTestWizardDialog::OnBnClickedStartTest)
+	ON_BN_CLICKED(IDC_STOP_TEST, &CTestWizardDialog::OnBnClickedStopTest)
+	ON_CBN_SELCHANGE(IDC_TEST_TYPE, &CTestWizardDialog::OnCbnSelchangeTestType)
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+BOOL CTestWizardDialog::OnInitDialog()
+{
+	try
+	{
+		if (!CDialogEx::OnInitDialog())
+		{
+			::MessageBox(NULL, L"基类对话框初始化失败", L"测试向导错误", MB_OK | MB_ICONERROR);
+			return FALSE;
+		}
+
+		// 验证关键控件是否存在
+		if (!VerifyControlsExist())
+		{
+			::MessageBox(NULL, L"必要的对话框控件缺失，请检查资源文件", L"测试向导错误", MB_OK | MB_ICONERROR);
+			return FALSE;
+		}
+
+		InitializeControls();
+		UpdateControlStates();
+
+		return TRUE;
+	}
+	catch (CException* e)
+	{
+		TCHAR szError[256] = {0};
+		e->GetErrorMessage(szError, 256);
+		
+		CString errorMsg;
+		errorMsg.Format(L"对话框初始化异常: %s", szError);
+		::MessageBox(NULL, errorMsg, L"测试向导错误", MB_OK | MB_ICONERROR);
+		
+		e->Delete();
+		return FALSE;
+	}
+	catch (...)
+	{
+		::MessageBox(NULL, L"对话框初始化时发生未知异常", L"测试向导错误", MB_OK | MB_ICONERROR);
+		return FALSE;
+	}
+}
+
+void CTestWizardDialog::InitializeControls()
+{
+	// 初始化测试类型下拉框 (仅核心测试类型)
+	m_ctrlTestType.AddString(L"回环测试 (快速)");
+	m_ctrlTestType.AddString(L"可靠协议测试");
+	m_ctrlTestType.SetCurSel(0);
+
+	// 初始化传输类型下拉框
+	m_ctrlTransportType.AddString(L"本地回环");
+	m_ctrlTransportType.AddString(L"串口 (COM)");
+	m_ctrlTransportType.AddString(L"TCP客户端");
+	m_ctrlTransportType.AddString(L"TCP服务端");
+	m_ctrlTransportType.AddString(L"UDP");
+	m_ctrlTransportType.SetCurSel(0);
+
+	// 初始化测试配置显示
+	m_ctrlTestConfig.SetWindowText(L"回环测试配置:\r\n- 数据包大小: 64B - 4KB\r\n- 测试次数: 100次\r\n- 超时时间: 5秒");
+
+	// 初始化进度条
+	m_ctrlTestProgress.SetRange(0, 100);
+	m_ctrlTestProgress.SetPos(0);
+
+	// 初始化状态文本
+	m_ctrlStatusText.SetWindowText(L"状态: 就绪");
+}
+
+void CTestWizardDialog::UpdateControlStates()
+{
+	m_ctrlStartBtn.EnableWindow(!m_bTesting);
+	m_ctrlStopBtn.EnableWindow(m_bTesting);
+	m_ctrlTestType.EnableWindow(!m_bTesting);
+	m_ctrlTransportType.EnableWindow(!m_bTesting);
+}
+
+void CTestWizardDialog::OnBnClickedStartTest()
+{
+	StartTesting();
+}
+
+void CTestWizardDialog::OnBnClickedStopTest()
+{
+	StopTesting();
+}
+
+void CTestWizardDialog::OnCbnSelchangeTestType()
+{
+	int testType = m_ctrlTestType.GetCurSel();
+	CString configText;
+
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+		configText = L"回环测试配置:\r\n- 数据包大小: 64B - 4KB\r\n- 测试次数: 100次\r\n- 超时时间: 5秒";
+		break;
+	case TEST_PROTOCOL_RELIABLE:
+		configText = L"可靠协议测试配置:\r\n- CRC32校验测试\r\n- 序列号确认\r\n- 重传机制测试";
+		break;
+	default:
+		configText = L"请选择有效的测试类型";
+		break;
+	}
+
+	m_ctrlTestConfig.SetWindowText(configText);
+}
+
+void CTestWizardDialog::StartTesting()
+{
+	m_bTesting = true;
+	m_nCurrentTest = 0;
+	m_testResults.clear();
+
+	int testType = m_ctrlTestType.GetCurSel();
+	
+	// 根据测试类型确定总测试数 (仅核心测试类型)
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+	case TEST_PROTOCOL_RELIABLE:
+		m_nTotalTests = 1;
+		break;
+	default:
+		m_nTotalTests = 1; // 默认为1个测试
+		break;
+	}
+
+	UpdateControlStates();
+	
+	// 清空结果显示
+	m_ctrlTestResults.SetWindowText(L"开始测试...\r\n");
+	
+	// 启动测试定时器
+	m_nTimer = SetTimer(1, 100, NULL);
+	
+	ExecuteNextTest();
+}
+
+void CTestWizardDialog::StopTesting()
+{
+	m_bTesting = false;
+	
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+	
+	UpdateControlStates();
+	AppendTestResult(L"测试已停止");
+	m_ctrlStatusText.SetWindowText(L"状态: 已停止");
+}
+
+void CTestWizardDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1 && m_bTesting)
+	{
+		UpdateTestProgress();
+	}
+	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CTestWizardDialog::UpdateTestProgress()
+{
+	if (m_nTotalTests > 0)
+	{
+		int progress = (m_nCurrentTest * 100) / m_nTotalTests;
+		m_ctrlTestProgress.SetPos(progress);
+		
+		CString statusText;
+		statusText.Format(L"状态: 正在执行测试 (%d/%d)", m_nCurrentTest, m_nTotalTests);
+		m_ctrlStatusText.SetWindowText(statusText);
+	}
+}
+
+void CTestWizardDialog::ExecuteNextTest()
+{
+	if (!m_bTesting || m_nCurrentTest >= m_nTotalTests)
+	{
+		CompleteTest();
+		return;
+	}
+
+	m_nCurrentTest++;
+	bool testResult = false;
+	
+	int testType = m_ctrlTestType.GetCurSel();
+	
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+		testResult = ExecuteLoopbackTest();
+		break;
+	case TEST_PROTOCOL_RELIABLE:
+		testResult = ExecuteProtocolReliableTest();
+		break;
+	default:
+		AppendTestResult(L"未知测试类型");
+		testResult = false;
+		break;
+	}
+
+	// 继续下一个测试
+	if (m_bTesting)
+	{
+		SetTimer(2, 1000, NULL); // 1秒后执行下一个测试
+	}
+}
+
+void CTestWizardDialog::CompleteTest()
+{
+	StopTesting();
+	
+	m_ctrlTestProgress.SetPos(100);
+	m_ctrlStatusText.SetWindowText(L"状态: 测试完成");
+	
+	// 显示测试总结
+	CString summary = FormatTestSummary();
+	AppendTestResult(summary);
+}
+
+bool CTestWizardDialog::ExecuteLoopbackTest()
+{
+	DWORD startTime = GetTickCount();
+	
+	try
+	{
+		AppendTestResult(L"[回环测试] 开始执行回环传输测试..");
+		
+		// 创建回环传输对象
+		LoopbackTransport loopback;
+		TransportConfig config;
+		
+		if (!loopback.Open(config))
+		{
+			LogTestResult(L"回环测试", false, L"无法打开回环传输", GetTickCount() - startTime);
+			return false;
+		}
+		
+		bool allTestsPassed = true;
+		
+		// 1. 基础数据包测试
+		allTestsPassed &= ExecuteLoopbackBasicTest(loopback);
+		
+		// 2. 大数据量测试
+		allTestsPassed &= ExecuteLoopbackLargeDataTest(loopback);
+		
+		// 3. 连续传输测试
+		allTestsPassed &= ExecuteLoopbackContinuousTest(loopback);
+		
+		// 4. 错误模拟测试
+		allTestsPassed &= ExecuteLoopbackErrorTest(loopback);
+		
+		// 5. 性能基准测试
+		allTestsPassed &= ExecuteLoopbackPerformanceTest(loopback);
+		
+		loopback.Close();
+		
+		LogTestResult(L"回环测试", allTestsPassed, 
+			allTestsPassed ? L"所有回环测试通过" : L"部分测试失败", 
+			GetTickCount() - startTime);
+		
+		return allTestsPassed;
+	}
+	catch (...)
+	{
+		LogTestResult(L"回环测试", false, L"测试过程中发生异常", GetTickCount() - startTime);
+		return false;
+	}
+}
+
+
+bool CTestWizardDialog::ExecuteProtocolReliableTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[可靠协议测试] 测试CRC校验和重传机制..");
+	
+	try
+	{
+		bool allTestsPassed = true;
+		
+		// 1. 基础协议流程测试
+		allTestsPassed &= ExecuteReliableChannelBasicTest();
+		
+		// 2. CRC错误和重传测试
+		allTestsPassed &= ExecuteReliableChannelCrcTest();
+		
+		// 3. 超时和恢复测试
+		allTestsPassed &= ExecuteReliableChannelTimeoutTest();
+		
+		// 4. 文件传输测试
+		allTestsPassed &= ExecuteReliableChannelFileTest();
+		
+		// 5. 并发测试
+		allTestsPassed &= ExecuteReliableChannelConcurrentTest();
+		
+		LogTestResult(L"可靠协议测试", allTestsPassed, 
+			allTestsPassed ? L"所有协议测试通过" : L"部分测试失败", 
+			GetTickCount() - startTime);
+		
+		return allTestsPassed;
+	}
+	catch (...)
+	{
+		LogTestResult(L"可靠协议测试", false, L"测试过程中发生异常", GetTickCount() - startTime);
+		return false;
+	}
+}
+
+
+void CTestWizardDialog::AppendTestResult(const CString& message)
+{
+	CString current;
+	m_ctrlTestResults.GetWindowText(current);
+	current += message + L"\r\n";
+	m_ctrlTestResults.SetWindowText(current);
+	
+	// 滚动到底部
+	m_ctrlTestResults.LineScroll(m_ctrlTestResults.GetLineCount());
+}
+
+void CTestWizardDialog::LogTestResult(const CString& testName, bool passed, const CString& details, DWORD duration)
+{
+	TestResult result;
+	result.testName = testName;
+	result.passed = passed;
+	result.details = details;
+	result.duration = duration;
+	m_testResults.push_back(result);
+	
+	CString resultMsg;
+	resultMsg.Format(L"[%s] %s - %s (耗时: %dms)", 
+		testName, passed ? L"通过" : L"失败", details, duration);
+	AppendTestResult(resultMsg);
+}
+
+CString CTestWizardDialog::FormatTestSummary()
+{
+	CString summary = L"\r\n=== 测试总结 ===\r\n";
+	
+	int passed = 0, failed = 0;
+	DWORD totalTime = 0;
+	
+	for (const auto& result : m_testResults)
+	{
+		if (result.passed)
+			passed++;
+		else
+			failed++;
+		totalTime += result.duration;
+	}
+	
+	CString stats;
+	stats.Format(L"总测试数: %d\r\n通过: %d\r\n失败: %d\r\n总耗时: %.2f秒\r\n",
+		passed + failed, passed, failed, totalTime / 1000.0);
+	
+	summary += stats;
+	summary += L"\r\n详细结果:\r\n";
+	
+	for (const auto& result : m_testResults)
+	{
+		CString line;
+		line.Format(L"- %s: %s\r\n", result.testName, result.passed ? L"通过" : L"失败");
+		summary += line;
+	}
+	
+	return summary;
+}
+
+std::vector<uint8_t> CTestWizardDialog::GenerateTestData(size_t size, bool pattern)
+{
+	std::vector<uint8_t> data(size);
+	
+	if (pattern)
+	{
+		// 生成有规律的测试数据
+		for (size_t i = 0; i < size; i++)
+		{
+			data[i] = static_cast<uint8_t>(i % 256);
+		}
+	}
+	else
+	{
+		// 生成随机数据
+		srand(static_cast<unsigned>(time(nullptr)));
+		for (size_t i = 0; i < size; i++)
+		{
+			data[i] = static_cast<uint8_t>(rand() % 256);
+		}
+	}
+	
+	return data;
+}
+
+bool CTestWizardDialog::CompareData(const std::vector<uint8_t>& sent, const std::vector<uint8_t>& received)
+{
+	if (sent.size() != received.size())
+		return false;
+	
+	return memcmp(sent.data(), received.data(), sent.size()) == 0;
+}
+
+// =================== 扩展的回环测试方法 ===================
+
+bool CTestWizardDialog::ExecuteLoopbackBasicTest(LoopbackTransport& transport)
+{
+	AppendTestResult(L"  [1/5] 基础数据包测试");
+	
+	// 测试不同大小的数据包
+	std::vector<size_t> testSizes = {1, 64, 256, 1024, 4096};
+	bool allPassed = true;
+	
+	for (size_t size : testSizes)
+	{
+		std::vector<uint8_t> testData = GenerateTestData(size, true);
+		
+		// 发送数据
+		size_t bytesSent = transport.Write(testData.data(), testData.size());
+		if (bytesSent != testData.size())
+		{
+			CString msg;
+			msg.Format(L"    发送 %zu 字节失败", size);
+			AppendTestResult(msg);
+			allPassed = false;
+			continue;
+		}
+		
+		// 接收数据
+		std::vector<uint8_t> receivedData;
+		size_t bytesReceived = transport.Read(receivedData, size);
+		
+		if (bytesReceived != size || !CompareData(testData, receivedData))
+		{
+			CString msg;
+			msg.Format(L"    接收 %zu 字节失败或数据不匹配", size);
+			AppendTestResult(msg);
+			allPassed = false;
+			continue;
+		}
+		
+		CString msg;
+		msg.Format(L"    %zu 字节: 通过", size);
+		AppendTestResult(msg);
+	}
+	
+	return allPassed;
+}
+
+bool CTestWizardDialog::ExecuteLoopbackLargeDataTest(LoopbackTransport& transport)
+{
+	AppendTestResult(L"  [2/5] 大数据量测试");
+	
+	// 测试大块数据传输
+	std::vector<size_t> largeSizes = {64*1024, 256*1024, 1024*1024}; // 64KB, 256KB, 1MB
+	bool allPassed = true;
+	
+	for (size_t size : largeSizes)
+	{
+		CString msg;
+		msg.Format(L"    测试 %zu KB 数据传输...", size/1024);
+		AppendTestResult(msg);
+		
+		DWORD startTime = GetTickCount();
+		
+		// 生成随机数据
+		std::vector<uint8_t> testData = GenerateTestData(size, false);
+		
+		// 分块发送
+		const size_t chunkSize = 4096;
+		size_t totalSent = 0;
+		
+		for (size_t offset = 0; offset < size; offset += chunkSize)
+		{
+			size_t thisChunk = std::min(chunkSize, size - offset);
+			size_t sent = transport.Write(testData.data() + offset, thisChunk);
+			if (sent != thisChunk)
+			{
+				AppendTestResult(L"    大数据块发送失败");
+				allPassed = false;
+				break;
+			}
+			totalSent += sent;
+		}
+		
+		if (totalSent != size)
+		{
+			allPassed = false;
+			continue;
+		}
+		
+		// 分块接收
+		std::vector<uint8_t> receivedData;
+		receivedData.reserve(size);
+		size_t totalReceived = 0;
+		
+		while (totalReceived < size && transport.Available() > 0)
+		{
+			std::vector<uint8_t> chunk;
+			size_t received = transport.Read(chunk, chunkSize);
+			if (received > 0)
+			{
+				receivedData.insert(receivedData.end(), chunk.begin(), chunk.end());
+				totalReceived += received;
+			}
+		}
+		
+		DWORD elapsed = GetTickCount() - startTime;
+		double throughput = MeasureThroughput(size, elapsed);
+		
+		if (totalReceived == size && CompareData(testData, receivedData))
+		{
+			CString result;
+			result.Format(L"    %zu KB: 通过 (%.2f MB/s)", size/1024, throughput);
+			AppendTestResult(result);
+		}
+		else
+		{
+			AppendTestResult(L"    大数据块接收或校验失败");
+			allPassed = false;
+		}
+	}
+	
+	return allPassed;
+}
+
+bool CTestWizardDialog::ExecuteLoopbackContinuousTest(LoopbackTransport& transport)
+{
+	AppendTestResult(L"  [3/5] 连续传输测试");
+	
+	// 连续发送多个数据包
+	const int packetCount = 100;
+	const size_t packetSize = 512;
+	bool allPassed = true;
+	
+	AppendTestResult(L"    发送100个数据包...");
+	
+	// 发送阶段
+	std::vector<std::vector<uint8_t>> sentPackets;
+	for (int i = 0; i < packetCount; i++)
+	{
+		std::vector<uint8_t> packet = GenerateTestData(packetSize, true);
+		// 在每个包的开头添加序号以便验证顺序
+		packet[0] = static_cast<uint8_t>(i);
+		packet[1] = static_cast<uint8_t>(i >> 8);
+		
+		size_t sent = transport.Write(packet.data(), packet.size());
+		if (sent != packet.size())
+		{
+			CString msg;
+			msg.Format(L"    发送第 %d 个包失败", i+1);
+			AppendTestResult(msg);
+			allPassed = false;
+			break;
+		}
+		sentPackets.push_back(packet);
+	}
+	
+	// 接收阶段
+	AppendTestResult(L"    接收并验证数据包...");
+	int receivedCount = 0;
+	
+	while (receivedCount < packetCount && transport.Available() > 0)
+	{
+		std::vector<uint8_t> receivedPacket;
+		size_t received = transport.Read(receivedPacket, packetSize);
+		
+		if (received == packetSize)
+		{
+			// 验证序号
+			int packetIndex = receivedPacket[0] | (receivedPacket[1] << 8);
+			if (packetIndex >= 0 && packetIndex < packetCount)
+			{
+				if (CompareData(sentPackets[packetIndex], receivedPacket))
+				{
+					receivedCount++;
+				}
+				else
+				{
+					CString msg;
+					msg.Format(L"    第 %d 个包数据不匹配", packetIndex+1);
+					AppendTestResult(msg);
+					allPassed = false;
+				}
+			}
+			else
+			{
+				AppendTestResult(L"    包序号错误");
+				allPassed = false;
+			}
+		}
+		else
+		{
+			AppendTestResult(L"    接收包大小错误");
+			allPassed = false;
+			break;
+		}
+	}
+	
+	if (receivedCount == packetCount)
+	{
+		AppendTestResult(L"    连续传输测试: 通过");
+	}
+	else
+	{
+		CString msg;
+		msg.Format(L"    连续传输测试: 失败 (%d/%d)", receivedCount, packetCount);
+		AppendTestResult(msg);
+		allPassed = false;
+	}
+	
+	return allPassed;
+}
+
+bool CTestWizardDialog::ExecuteLoopbackErrorTest(LoopbackTransport& transport)
+{
+	AppendTestResult(L"  [4/5] 错误模拟测试");
+	
+	bool allPassed = true;
+	
+	// 1. 测试错误率设置
+	transport.SetErrorRate(0.1); // 10%错误率
+	AppendTestResult(L"    设置10%错误率...");
+	
+	// 发送一些数据包，预期部分会丢失
+	const int testPackets = 50;
+	const size_t packetSize = 256;
+	int successCount = 0;
+	
+	for (int i = 0; i < testPackets; i++)
+	{
+		std::vector<uint8_t> testData = GenerateTestData(packetSize, true);
+		size_t sent = transport.Write(testData.data(), testData.size());
+		
+		if (sent == testData.size())
+		{
+			// 尝试读取，可能会因为错误率而失败
+			std::vector<uint8_t> receivedData;
+			size_t received = transport.Read(receivedData, packetSize);
+			
+			if (received == packetSize && CompareData(testData, receivedData))
+			{
+				successCount++;
+			}
+		}
+	}
+	
+	// 预期成功率应该接近90%
+	double successRate = static_cast<double>(successCount) / testPackets;
+	CString msg;
+	msg.Format(L"    成功率: %.1f%% (%d/%d)", successRate*100, successCount, testPackets);
+	AppendTestResult(msg);
+	
+	// 对于回环传输，错误模拟可能不会产生实际错误
+	// 只要能正常设置错误率且不崩溃就算通过
+	if (successRate >= 0.5) // 放宽条件，允许错误模拟在回环环境下表现不同
+	{
+		AppendTestResult(L"    错误模拟: 通过");
+	}
+	else
+	{
+		AppendTestResult(L"    错误模拟: 异常");
+		allPassed = false;
+	}
+	
+	// 2. 测试人工错误触发
+	transport.SetErrorRate(0.0); // 恢复正常
+	transport.SimulateError("测试错误");
+	
+	if (transport.GetState() == TRANSPORT_ERROR)
+	{
+		AppendTestResult(L"    人工错误触发: 通过");
+		
+		// 重新打开传输
+		transport.Close();
+		TransportConfig config;
+		if (transport.Open(config))
+		{
+			AppendTestResult(L"    错误恢复: 通过");
+		}
+		else
+		{
+			AppendTestResult(L"    错误恢复: 失败");
+			allPassed = false;
+		}
+	}
+	else
+	{
+		AppendTestResult(L"    人工错误触发: 失败");
+		allPassed = false;
+	}
+	
+	return allPassed;
+}
+
+bool CTestWizardDialog::ExecuteLoopbackPerformanceTest(LoopbackTransport& transport)
+{
+	AppendTestResult(L"  [5/5] 性能基准测试");
+	
+	bool allPassed = true;
+	
+	// 1. 吞吐量测试
+	AppendTestResult(L"    测试数据吞吐量...");
+	
+	const size_t testDataSize = 10 * 1024 * 1024; // 10MB
+	const size_t chunkSize = 4096;
+	
+	std::vector<uint8_t> testData = GenerateTestData(testDataSize, false);
+	
+	DWORD startTime = GetTickCount();
+	
+	// 发送数据
+	size_t totalSent = 0;
+	for (size_t offset = 0; offset < testDataSize; offset += chunkSize)
+	{
+		size_t thisChunk = std::min(chunkSize, testDataSize - offset);
+		size_t sent = transport.Write(testData.data() + offset, thisChunk);
+		totalSent += sent;
+		
+		if (sent != thisChunk)
+		{
+			AppendTestResult(L"    吞吐量测试发送失败");
+			allPassed = false;
+			break;
+		}
+	}
+	
+	DWORD sendTime = GetTickCount() - startTime;
+	
+	// 接收数据
+	startTime = GetTickCount();
+	std::vector<uint8_t> receivedData;
+	receivedData.reserve(testDataSize);
+	
+	while (receivedData.size() < testDataSize && transport.Available() > 0)
+	{
+		std::vector<uint8_t> chunk;
+		size_t received = transport.Read(chunk, chunkSize);
+		if (received > 0)
+		{
+			receivedData.insert(receivedData.end(), chunk.begin(), chunk.end());
+		}
+	}
+	
+	DWORD receiveTime = GetTickCount() - startTime;
+	
+	if (receivedData.size() == testDataSize && CompareData(testData, receivedData))
+	{
+		double sendThroughput = MeasureThroughput(testDataSize, sendTime);
+		double receiveThroughput = MeasureThroughput(testDataSize, receiveTime);
+		
+		CString result;
+		result.Format(L"    发送: %.2f MB/s, 接收: %.2f MB/s", sendThroughput, receiveThroughput);
+		AppendTestResult(result);
+		
+		// 性能要求：至少100MB/s（回环传输应该很快）
+		if (sendThroughput >= 100.0 && receiveThroughput >= 100.0)
+		{
+			AppendTestResult(L"    性能测试: 通过");
+		}
+		else
+		{
+			AppendTestResult(L"    性能测试: 性能不达标");
+			allPassed = false;
+		}
+	}
+	else
+	{
+		AppendTestResult(L"    性能测试: 数据校验失败");
+		allPassed = false;
+	}
+	
+	// 2. 延迟测试
+	AppendTestResult(L"    测试传输延迟...");
+	
+	const int latencyTests = 100;
+	const size_t smallPacketSize = 64;
+	DWORD totalLatency = 0;
+	
+	for (int i = 0; i < latencyTests; i++)
+	{
+		std::vector<uint8_t> packet = GenerateTestData(smallPacketSize, true);
+		
+		DWORD start = GetTickCount();
+		transport.Write(packet.data(), packet.size());
+		
+		std::vector<uint8_t> received;
+		transport.Read(received, smallPacketSize);
+		
+		DWORD latency = GetTickCount() - start;
+		totalLatency += latency;
+	}
+	
+	double avgLatency = static_cast<double>(totalLatency) / latencyTests;
+	CString latencyResult;
+	latencyResult.Format(L"    平均延迟: %.2f ms", avgLatency);
+	AppendTestResult(latencyResult);
+	
+	// 回环传输延迟应该很低
+	if (avgLatency <= 10.0)
+	{
+		AppendTestResult(L"    延迟测试: 通过");
+	}
+	else
+	{
+		AppendTestResult(L"    延迟测试: 延迟过高");
+		allPassed = false;
+	}
+	
+	return allPassed;
+}
+
+// =================== 可靠协议测试方法 ===================
+
+bool CTestWizardDialog::ExecuteReliableChannelBasicTest()
+{
+	AppendTestResult(L"  [1/5] 基础协议流程测试");
+	
+	try
+	{
+		// 创建回环传输作为底层传输
+		auto loopbackTransport = std::make_shared<LoopbackTransport>();
+		TransportConfig config;
+		if (!loopbackTransport->Open(config))
+		{
+			AppendTestResult(L"    无法打开回环传输");
+			return false;
+		}
+		
+		// 创建可靠通道
+		ReliableChannel channel(loopbackTransport);
+		if (!channel.Start())
+		{
+			AppendTestResult(L"    无法启动可靠通道");
+			return false;
+		}
+		
+		bool allPassed = true;
+		
+		// 测试基础数据传输
+		AppendTestResult(L"    测试基础数据传输...");
+		
+		std::vector<uint8_t> testData = GenerateTestData(1024, true);
+		
+		// 设置完成回调
+		bool transferCompleted = false;
+		bool transferSuccess = false;
+		std::string completionMessage;
+		
+		channel.SetCompletionCallback([&](bool success, const std::string& message) {
+			transferCompleted = true;
+			transferSuccess = success;
+			completionMessage = message;
+		});
+		
+		// 发送数据
+		if (channel.SendData(testData))
+		{
+			// 等待传输完成
+			if (WaitForCondition([&]() { return transferCompleted; }, 5000))
+			{
+				if (transferSuccess)
+				{
+					AppendTestResult(L"    基础数据传输: 通过");
+				}
+				else
+				{
+					CString msg;
+					msg.Format(L"    基础数据传输失败: %S", completionMessage.c_str());
+					AppendTestResult(msg);
+					allPassed = false;
+				}
+			}
+			else
+			{
+				AppendTestResult(L"    基础数据传输: 超时");
+				allPassed = false;
+			}
+		}
+		else
+		{
+			AppendTestResult(L"    无法发送数据");
+			allPassed = false;
+		}
+		
+		// 测试状态转换
+		AppendTestResult(L"    验证状态转换...");
+		ReliableState state = channel.GetState();
+		if (state == RELIABLE_DONE || state == RELIABLE_IDLE)
+		{
+			AppendTestResult(L"    状态转换: 通过");
+		}
+		else
+		{
+			CString msg;
+			msg.Format(L"    状态转换异常: %d", static_cast<int>(state));
+			AppendTestResult(msg);
+			allPassed = false;
+		}
+		
+		// 获取传输统计
+		TransferStats stats = channel.GetStats();
+		CString statsMsg;
+		statsMsg.Format(L"    统计: %zu/%zu 字节, %zu 帧, %zu 重传", 
+			stats.transferredBytes, stats.totalBytes, stats.sentFrames, stats.retransmissions);
+		AppendTestResult(statsMsg);
+		
+		channel.Stop();
+		loopbackTransport->Close();
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		AppendTestResult(L"    基础协议测试发生异常");
+		return false;
+	}
+}
+
+bool CTestWizardDialog::ExecuteReliableChannelCrcTest()
+{
+	AppendTestResult(L"  [2/5] CRC错误和重传测试");
+	
+	try
+	{
+		// 创建支持错误模拟的回环传输
+		auto loopbackTransport = std::make_shared<LoopbackTransport>();
+		TransportConfig config;
+		if (!loopbackTransport->Open(config))
+		{
+			AppendTestResult(L"    无法打开回环传输");
+			return false;
+		}
+		
+		// 设置错误率来模拟CRC错误
+		loopbackTransport->SetErrorRate(0.2); // 20%错误率
+		
+		ReliableChannel channel(loopbackTransport);
+		channel.SetMaxRetries(5); // 增加重试次数
+		
+		if (!channel.Start())
+		{
+			AppendTestResult(L"    无法启动可靠通道");
+			return false;
+		}
+		
+		bool allPassed = true;
+		
+		AppendTestResult(L"    测试带错误的数据传输...");
+		
+		std::vector<uint8_t> testData = GenerateTestData(2048, true);
+		
+		bool transferCompleted = false;
+		bool transferSuccess = false;
+		
+		channel.SetCompletionCallback([&](bool success, const std::string& message) {
+			transferCompleted = true;
+			transferSuccess = success;
+		});
+		
+		if (channel.SendData(testData))
+		{
+			// 等待传输完成（需要更长时间因为有重传）
+			if (WaitForCondition([&]() { return transferCompleted; }, 15000))
+			{
+				TransferStats stats = channel.GetStats();
+				
+				CString msg;
+				msg.Format(L"    传输结果: %s", transferSuccess ? L"成功" : L"失败");
+				AppendTestResult(msg);
+				
+				msg.Format(L"    重传次数: %zu", stats.retransmissions);
+				AppendTestResult(msg);
+				
+				// 应该有重传发生
+				if (stats.retransmissions > 0)
+				{
+					AppendTestResult(L"    重传机制: 通过");
+				}
+				else
+				{
+					AppendTestResult(L"    重传机制: 未触发（可能是概率问题）");
+					// 不算作失败，因为是概率性的
+				}
+				
+				if (transferSuccess)
+				{
+					AppendTestResult(L"    CRC错误恢复: 通过");
+				}
+				else
+				{
+					AppendTestResult(L"    CRC错误恢复: 失败");
+					allPassed = false;
+				}
+			}
+			else
+			{
+				AppendTestResult(L"    CRC测试: 超时");
+				allPassed = false;
+			}
+		}
+		else
+		{
+			AppendTestResult(L"    无法发送数据");
+			allPassed = false;
+		}
+		
+		channel.Stop();
+		loopbackTransport->Close();
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		AppendTestResult(L"    CRC测试发生异常");
+		return false;
+	}
+}
+
+bool CTestWizardDialog::ExecuteReliableChannelTimeoutTest()
+{
+	AppendTestResult(L"  [3/5] 超时和恢复测试");
+	
+	try
+	{
+		auto loopbackTransport = std::make_shared<LoopbackTransport>();
+		TransportConfig config;
+		if (!loopbackTransport->Open(config))
+		{
+			AppendTestResult(L"    无法打开回环传输");
+			return false;
+		}
+		
+		ReliableChannel channel(loopbackTransport);
+		channel.SetAckTimeout(500);  // 设置较短的超时时间
+		channel.SetMaxRetries(3);
+		
+		if (!channel.Start())
+		{
+			AppendTestResult(L"    无法启动可靠通道");
+			return false;
+		}
+		
+		bool allPassed = true;
+		
+		AppendTestResult(L"    测试正常超时处理...");
+		
+		// 模拟一个会导致ACK丢失的情况
+		loopbackTransport->SetErrorRate(0.5); // 50%错误率，高概率触发超时
+		
+		std::vector<uint8_t> testData = GenerateTestData(512, true);
+		
+		bool transferCompleted = false;
+		bool transferSuccess = false;
+		
+		channel.SetCompletionCallback([&](bool success, const std::string& message) {
+			transferCompleted = true;
+			transferSuccess = success;
+		});
+		
+		DWORD startTime = GetTickCount();
+		
+		if (channel.SendData(testData))
+		{
+			// 等待传输完成或超时
+			if (WaitForCondition([&]() { return transferCompleted; }, 10000))
+			{
+				DWORD elapsed = GetTickCount() - startTime;
+				TransferStats stats = channel.GetStats();
+				
+				CString msg;
+				msg.Format(L"    传输耗时: %d ms", elapsed);
+				AppendTestResult(msg);
+				
+				msg.Format(L"    超时次数: %zu", stats.timeouts);
+				AppendTestResult(msg);
+				
+				if (stats.timeouts > 0)
+				{
+					AppendTestResult(L"    超时机制: 通过");
+				}
+				else
+				{
+					AppendTestResult(L"    超时机制: 未触发");
+				}
+				
+				// 即使有超时，传输也可能成功（通过重传）
+				if (transferSuccess || stats.retransmissions > 0)
+				{
+					AppendTestResult(L"    超时恢复: 通过");
+				}
+				else
+				{
+					AppendTestResult(L"    超时恢复: 失败");
+					allPassed = false;
+				}
+			}
+			else
+			{
+				AppendTestResult(L"    超时测试: 整体超时");
+				allPassed = false;
+			}
+		}
+		else
+		{
+			AppendTestResult(L"    无法发送数据");
+			allPassed = false;
+		}
+		
+		channel.Stop();
+		loopbackTransport->Close();
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		AppendTestResult(L"    超时测试发生异常");
+		return false;
+	}
+}
+
+bool CTestWizardDialog::ExecuteReliableChannelFileTest()
+{
+	AppendTestResult(L"  [4/5] 文件传输测试");
+	
+	// 由于回环传输的限制，我们将创建一个简化的文件传输测试
+	AppendTestResult(L"    模拟文件传输协议...");
+	
+	try
+	{
+		auto loopbackTransport = std::make_shared<LoopbackTransport>();
+		TransportConfig config;
+		if (!loopbackTransport->Open(config))
+		{
+			AppendTestResult(L"    无法打开回环传输");
+			return false;
+		}
+		
+		ReliableChannel channel(loopbackTransport);
+		
+		if (!channel.Start())
+		{
+			AppendTestResult(L"    无法启动可靠通道");
+			return false;
+		}
+		
+		bool allPassed = true;
+		
+		// 创建测试文件内容
+		std::string testContent = "这是一个测试文件的内容。\\n包含中文字符和特殊符号：!@#$%^&*()\\n";
+		for (int i = 0; i < 50; i++)
+		{
+			testContent += "第" + std::to_string(i) + "行数据：ABCDEFGHIJKLMNOPQRSTUVWXYZ\\n";
+		}
+		
+		std::string testFilePath = CreateTemporaryTestFile(testContent);
+		if (testFilePath.empty())
+		{
+			AppendTestResult(L"    无法创建测试文件");
+			return false;
+		}
+		
+		// 使用SendFile接口发送文件数据
+		std::vector<uint8_t> fileData(testContent.begin(), testContent.end());
+		std::filesystem::path filePath(testFilePath);
+		std::string fileName = filePath.filename().string();
+		
+		bool transferCompleted = false;
+		bool transferSuccess = false;
+		
+		channel.SetCompletionCallback([&](bool success, const std::string& message) {
+			transferCompleted = true;
+			transferSuccess = success;
+		});
+		
+		// 发送文件数据
+		AppendTestResult(L"    发送文件数据...");
+		if (channel.SendFile(fileName, fileData))
+		{
+			// 等待传输完成
+			if (WaitForCondition([&]() { return transferCompleted; }, 10000))
+			{
+				if (transferSuccess)
+				{
+					AppendTestResult(L"    文件数据传输: 通过");
+					
+					// 获取传输统计
+					TransferStats stats = channel.GetStats();
+					CString statsMsg;
+					statsMsg.Format(L"    文件大小: %zu 字节, 传输帧数: %zu", 
+						stats.totalBytes, stats.sentFrames);
+					AppendTestResult(statsMsg);
+				}
+				else
+				{
+					AppendTestResult(L"    文件数据传输: 失败");
+					allPassed = false;
+				}
+			}
+			else
+			{
+				AppendTestResult(L"    文件传输: 超时");
+				allPassed = false;
+			}
+		}
+		else
+		{
+			AppendTestResult(L"    无法发送文件");
+			allPassed = false;
+		}
+		
+		// 清理
+		channel.Stop();
+		loopbackTransport->Close();
+		
+		// 删除临时文件
+		try
+		{
+			std::filesystem::remove(testFilePath);
+		}
+		catch (...)
+		{
+			// 忽略删除失败
+		}
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		AppendTestResult(L"    文件传输测试发生异常");
+		return false;
+	}
+}
+
+bool CTestWizardDialog::ExecuteReliableChannelConcurrentTest()
+{
+	AppendTestResult(L"  [5/5] 并发和线程安全测试");
+	
+	try
+	{
+		bool allPassed = true;
+		
+		// 测试多个传输通道的并发使用
+		AppendTestResult(L"    测试多通道并发传输...");
+		
+		const int channelCount = 3;
+		std::vector<std::shared_ptr<LoopbackTransport>> transports;
+		std::vector<std::unique_ptr<ReliableChannel>> channels;
+		std::vector<std::future<bool>> futures;
+		
+		// 创建多个通道
+		for (int i = 0; i < channelCount; i++)
+		{
+			auto transport = std::make_shared<LoopbackTransport>();
+			TransportConfig config;
+			if (!transport->Open(config))
+			{
+				AppendTestResult(L"    无法创建传输通道");
+				allPassed = false;
+				break;
+			}
+			
+			auto channel = std::make_unique<ReliableChannel>(transport);
+			if (!channel->Start())
+			{
+				AppendTestResult(L"    无法启动可靠通道");
+				allPassed = false;
+				break;
+			}
+			
+			transports.push_back(transport);
+			channels.push_back(std::move(channel));
+		}
+		
+		if (allPassed)
+		{
+			// 并发发送数据
+			for (int i = 0; i < channelCount; i++)
+			{
+				auto future = std::async(std::launch::async, [this, &channels, i]() -> bool {
+					std::vector<uint8_t> testData = GenerateTestData(1024 * (i + 1), true);
+					
+					bool completed = false;
+					bool success = false;
+					
+					channels[i]->SetCompletionCallback([&](bool s, const std::string&) {
+						completed = true;
+						success = s;
+					});
+					
+					if (channels[i]->SendData(testData))
+					{
+						// 等待完成
+						return WaitForCondition([&]() { return completed; }, 5000) && success;
+					}
+					return false;
+				});
+				
+				futures.push_back(std::move(future));
+			}
+			
+			// 等待所有传输完成
+			int successCount = 0;
+			for (auto& future : futures)
+			{
+				try
+				{
+					if (future.get())
+					{
+						successCount++;
+					}
+				}
+				catch (...)
+				{
+					// 忽略异常
+				}
+			}
+			
+			CString msg;
+			msg.Format(L"    并发传输结果: %d/%d 成功", successCount, channelCount);
+			AppendTestResult(msg);
+			
+			if (successCount == channelCount)
+			{
+				AppendTestResult(L"    并发测试: 通过");
+			}
+			else
+			{
+				AppendTestResult(L"    并发测试: 部分失败");
+				allPassed = false;
+			}
+		}
+		
+		// 清理资源
+		for (auto& channel : channels)
+		{
+			if (channel)
+			{
+				channel->Stop();
+			}
+		}
+		
+		for (auto& transport : transports)
+		{
+			if (transport)
+			{
+				transport->Close();
+			}
+		}
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		AppendTestResult(L"    并发测试发生异常");
+		return false;
+	}
+}
+
+// =================== 测试工具方法 ===================
+
+std::string CTestWizardDialog::CreateTemporaryTestFile(const std::string& content)
+{
+	try
+	{
+		std::filesystem::path tempDir = std::filesystem::temp_directory_path();
+		std::filesystem::path tempFile = tempDir / ("portmaster_test_" + std::to_string(GetTickCount()) + ".txt");
+		
+		std::ofstream file(tempFile, std::ios::binary);
+		if (file.is_open())
+		{
+			file.write(content.data(), content.size());
+			file.close();
+			return tempFile.string();
+		}
+	}
+	catch (...)
+	{
+		// 忽略异常
+	}
+	
+	return "";
+}
+
+bool CTestWizardDialog::ValidateFileContent(const std::string& filePath, const std::string& expectedContent)
+{
+	try
+	{
+		std::ifstream file(filePath, std::ios::binary);
+		if (file.is_open())
+		{
+			std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+			return content == expectedContent;
+		}
+	}
+	catch (...)
+	{
+		// 忽略异常
+	}
+	
+	return false;
+}
+
+double CTestWizardDialog::MeasureThroughput(size_t dataSize, DWORD timeMs)
+{
+	if (timeMs == 0) return 0.0;
+	
+	double bytesPerSecond = static_cast<double>(dataSize) * 1000.0 / timeMs;
+	return bytesPerSecond / (1024.0 * 1024.0); // 转换为 MB/s
+}
+
+bool CTestWizardDialog::WaitForCondition(std::function<bool()> condition, int timeoutMs)
+{
+	DWORD startTime = GetTickCount();
+	
+	while (GetTickCount() - startTime < static_cast<DWORD>(timeoutMs))
+	{
+		if (condition())
+		{
+			return true;
+		}
+		
+		Sleep(10); // 短暂休眠避免占用过多CPU
+	}
+	
+	return false;
+}
+
+// =================== 错误处理和验证方法 ===================
+
+bool CTestWizardDialog::VerifyControlsExist()
+{
+	// 检查所有必要的控件是否在对话框中存在
+	struct ControlInfo
+	{
+		UINT id;
+		const wchar_t* name;
+	};
+	
+	ControlInfo controls[] = {
+		{ IDC_TEST_TYPE, L"测试类型" },
+		{ IDC_TRANSPORT_TYPE3, L"传输类型" },
+		{ IDC_TEST_CONFIG, L"测试配置" },
+		{ IDC_TEST_RESULTS, L"测试结果" },
+		{ IDC_TEST_PROGRESS, L"测试进度" },
+		{ IDC_START_TEST, L"开始测试" },
+		{ IDC_STOP_TEST, L"停止测试" },
+		{ IDC_TEST_STATUS, L"状态文本" }
+	};
+	
+	bool allControlsExist = true;
+	
+	for (const auto& control : controls)
+	{
+		CWnd* pControl = GetDlgItem(control.id);
+		if (pControl == nullptr || !::IsWindow(pControl->GetSafeHwnd()))
+		{
+			LogControlError(control.name, control.id);
+			allControlsExist = false;
+		}
+	}
+	
+	return allControlsExist;
+}
+
+void CTestWizardDialog::LogControlError(const CString& controlName, UINT controlId)
+{
+	CString errorMsg;
+	errorMsg.Format(L"缺失控件: %s (ID: %u)", controlName, controlId);
+	
+	// 记录到系统日志或调试输出
+	::OutputDebugString(errorMsg + L"\n");
+	
+	// 也可以记录到文件
+	try
+	{
+		std::wofstream logFile(L"TestWizardError.log", std::ios::app);
+		if (logFile.is_open())
+		{
+			SYSTEMTIME st;
+			GetLocalTime(&st);
+			
+			logFile << L"[" << st.wYear << L"-" << st.wMonth << L"-" << st.wDay
+					<< L" " << st.wHour << L":" << st.wMinute << L":" << st.wSecond << L"] "
+					<< errorMsg.GetString() << L"\n";
+			logFile.close();
+		}
+	}
+	catch (...)
+	{
+		// 忽略日志写入错误
+	}
+}

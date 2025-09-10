@@ -1,0 +1,327 @@
+#pragma execution_character_set("utf-8")
+#include "pch.h"
+#include "LogWindowDialog.h"
+#include "Resource.h"
+#include <fstream>
+#include <chrono>
+#include <shlobj.h>
+
+extern void WriteDebugLog(const char* message);
+
+IMPLEMENT_DYNAMIC(CLogWindowDialog, CDialogEx)
+
+CLogWindowDialog::CLogWindowDialog(CWnd* pParent /*=nullptr*/)
+    : CDialogEx(IDD_LOG_WINDOW, pParent)
+    , m_filterLevel(LogLevel::Debug)
+    , m_autoScroll(true)
+{
+}
+
+CLogWindowDialog::~CLogWindowDialog()
+{
+}
+
+void CLogWindowDialog::DoDataExchange(CDataExchange* pDX)
+{
+    CDialogEx::DoDataExchange(pDX);
+    
+    try
+    {
+        DDX_Control(pDX, IDC_LOG_LIST, m_ctrlLogList);
+        DDX_Control(pDX, IDC_FILTER_LEVEL, m_ctrlFilterLevel);
+        DDX_Control(pDX, IDC_AUTO_SCROLL, m_ctrlAutoScroll);
+        DDX_Control(pDX, IDC_CLEAR_LOG, m_ctrlClearBtn);
+        DDX_Control(pDX, IDC_SAVE_LOG, m_ctrlSaveBtn);
+        DDX_Control(pDX, IDC_CONNECTION_STATUS_LOG, m_ctrlConnectionStatus);
+        DDX_Control(pDX, IDC_PROTOCOL_STATUS_LOG, m_ctrlProtocolStatus);
+        DDX_Control(pDX, IDC_TRANSFER_STATS_LOG, m_ctrlTransferStats);
+    }
+    catch (CException* e)
+    {
+        TCHAR szError[256] = {0};
+        e->GetErrorMessage(szError, 256);
+        
+        CString errorMsg;
+        errorMsg.Format(L"日志窗口控件绑定失败: %s", szError);
+        ::MessageBox(NULL, errorMsg, L"日志窗口错误", MB_OK | MB_ICONERROR);
+        
+        e->Delete();
+        throw;
+    }
+}
+
+BEGIN_MESSAGE_MAP(CLogWindowDialog, CDialogEx)
+    ON_BN_CLICKED(IDC_CLEAR_LOG, &CLogWindowDialog::OnBnClickedClearLog)
+    ON_BN_CLICKED(IDC_SAVE_LOG, &CLogWindowDialog::OnBnClickedSaveLog)
+    ON_CBN_SELCHANGE(IDC_FILTER_LEVEL, &CLogWindowDialog::OnBnClickedFilterLevel)
+    ON_BN_CLICKED(IDC_AUTO_SCROLL, &CLogWindowDialog::OnBnClickedAutoScroll)
+    ON_WM_CLOSE()
+END_MESSAGE_MAP()
+
+BOOL CLogWindowDialog::OnInitDialog()
+{
+    try
+    {
+        if (!CDialogEx::OnInitDialog())
+        {
+            return FALSE;
+        }
+
+        InitializeControls();
+        InitializeLogList();
+        
+        // 添加初始日志条目
+        AddInfoLog(L"专用日志窗口已启动");
+
+        return TRUE;
+    }
+    catch (...)
+    {
+        ::MessageBox(NULL, L"日志窗口初始化失败", L"错误", MB_OK | MB_ICONERROR);
+        return FALSE;
+    }
+}
+
+void CLogWindowDialog::InitializeControls()
+{
+    // 初始化过滤级别下拉框
+    m_ctrlFilterLevel.AddString(L"调试");    // Debug
+    m_ctrlFilterLevel.AddString(L"信息");    // Info  
+    m_ctrlFilterLevel.AddString(L"警告");    // Warning
+    m_ctrlFilterLevel.AddString(L"错误");    // Error
+    m_ctrlFilterLevel.SetCurSel(0); // 默认显示所有级别
+    
+    // 设置自动滚动复选框
+    m_ctrlAutoScroll.SetCheck(BST_CHECKED);
+    
+    // 初始化状态显示
+    m_ctrlConnectionStatus.SetWindowText(L"连接: 未连接");
+    m_ctrlProtocolStatus.SetWindowText(L"协议: 空闲");
+    m_ctrlTransferStats.SetWindowText(L"传输: 0/0");
+}
+
+void CLogWindowDialog::InitializeLogList()
+{
+    // 设置列表控件样式
+    m_ctrlLogList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+    
+    // 添加列
+    m_ctrlLogList.InsertColumn(0, L"时间", LVCFMT_LEFT, 100);
+    m_ctrlLogList.InsertColumn(1, L"级别", LVCFMT_CENTER, 60);
+    m_ctrlLogList.InsertColumn(2, L"类别", LVCFMT_LEFT, 80);
+    m_ctrlLogList.InsertColumn(3, L"消息", LVCFMT_LEFT, 400);
+}
+
+void CLogWindowDialog::AddLog(LogLevel level, const CString& category, const CString& message)
+{
+    // SOLID-S: 单一职责 - 专门负责添加日志条目
+    m_logEntries.emplace_back(level, category, message);
+    
+    // 如果满足过滤条件，添加到显示列表
+    if (level >= m_filterLevel)
+    {
+        int index = m_ctrlLogList.GetItemCount();
+        
+        // 插入新行
+        m_ctrlLogList.InsertItem(index, FormatTimestamp(m_logEntries.back().timestamp));
+        m_ctrlLogList.SetItemText(index, 1, GetLevelString(level));
+        m_ctrlLogList.SetItemText(index, 2, category);
+        m_ctrlLogList.SetItemText(index, 3, message);
+        
+        // 设置行颜色（通过子项数据存储颜色信息）
+        m_ctrlLogList.SetItemData(index, static_cast<DWORD>(level));
+        
+        // 自动滚动到底部
+        if (m_autoScroll)
+        {
+            ScrollToBottom();
+        }
+    }
+    
+    WriteDebugLog(("[LOG] " + std::string(CT2A(category)) + ": " + std::string(CT2A(message))).c_str());
+}
+
+void CLogWindowDialog::AddDebugLog(const CString& message)
+{
+    AddLog(LogLevel::Debug, L"调试", message);
+}
+
+void CLogWindowDialog::AddInfoLog(const CString& message)
+{
+    AddLog(LogLevel::Info, L"信息", message);
+}
+
+void CLogWindowDialog::AddWarningLog(const CString& message)
+{
+    AddLog(LogLevel::Warning, L"警告", message);
+}
+
+void CLogWindowDialog::AddErrorLog(const CString& message)
+{
+    AddLog(LogLevel::Error, L"错误", message);
+}
+
+void CLogWindowDialog::UpdateConnectionStatus(const CString& status)
+{
+    // SOLID-S: 单一职责 - 更新连接状态显示
+    m_ctrlConnectionStatus.SetWindowText(L"连接: " + status);
+    AddInfoLog(L"连接状态: " + status);
+}
+
+void CLogWindowDialog::UpdateProtocolStatus(const CString& status)
+{
+    m_ctrlProtocolStatus.SetWindowText(L"协议: " + status);
+    AddInfoLog(L"协议状态: " + status);
+}
+
+void CLogWindowDialog::UpdateTransferStats(const CString& stats)
+{
+    m_ctrlTransferStats.SetWindowText(L"传输: " + stats);
+}
+
+void CLogWindowDialog::OnBnClickedClearLog()
+{
+    m_logEntries.clear();
+    m_ctrlLogList.DeleteAllItems();
+    AddInfoLog(L"日志已清空");
+}
+
+void CLogWindowDialog::OnBnClickedSaveLog()
+{
+    CFileDialog saveDialog(FALSE, L"txt", GetDefaultLogFileName(),
+        OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+        L"文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*||");
+        
+    if (saveDialog.DoModal() == IDOK)
+    {
+        if (SaveLogToFile(saveDialog.GetPathName()))
+        {
+            AddInfoLog(L"日志已保存到: " + saveDialog.GetPathName());
+        }
+        else
+        {
+            AddErrorLog(L"保存日志失败");
+        }
+    }
+}
+
+void CLogWindowDialog::OnBnClickedFilterLevel()
+{
+    int selection = m_ctrlFilterLevel.GetCurSel();
+    if (selection != CB_ERR)
+    {
+        m_filterLevel = static_cast<LogLevel>(selection);
+        RefreshLogList();
+        
+        CString levelName = GetLevelString(m_filterLevel);
+        AddInfoLog(L"过滤级别设置为: " + levelName);
+    }
+}
+
+void CLogWindowDialog::OnBnClickedAutoScroll()
+{
+    m_autoScroll = (m_ctrlAutoScroll.GetCheck() == BST_CHECKED);
+    AddInfoLog(m_autoScroll ? L"已启用自动滚动" : L"已禁用自动滚动");
+}
+
+void CLogWindowDialog::OnClose()
+{
+    // 隐藏而不是销毁窗口，以保持日志数据
+    ShowWindow(SW_HIDE);
+}
+
+void CLogWindowDialog::RefreshLogList()
+{
+    m_ctrlLogList.DeleteAllItems();
+    
+    int index = 0;
+    for (const auto& entry : m_logEntries)
+    {
+        if (entry.level >= m_filterLevel)
+        {
+            m_ctrlLogList.InsertItem(index, FormatTimestamp(entry.timestamp));
+            m_ctrlLogList.SetItemText(index, 1, GetLevelString(entry.level));
+            m_ctrlLogList.SetItemText(index, 2, entry.category);
+            m_ctrlLogList.SetItemText(index, 3, entry.message);
+            m_ctrlLogList.SetItemData(index, static_cast<DWORD>(entry.level));
+            index++;
+        }
+    }
+    
+    if (m_autoScroll)
+    {
+        ScrollToBottom();
+    }
+}
+
+void CLogWindowDialog::ScrollToBottom()
+{
+    int count = m_ctrlLogList.GetItemCount();
+    if (count > 0)
+    {
+        m_ctrlLogList.EnsureVisible(count - 1, FALSE);
+    }
+}
+
+CString CLogWindowDialog::FormatTimestamp(const SYSTEMTIME& time)
+{
+    CString timestamp;
+    timestamp.Format(L"%02d:%02d:%02d.%03d", 
+        time.wHour, time.wMinute, time.wSecond, time.wMilliseconds);
+    return timestamp;
+}
+
+CString CLogWindowDialog::GetLevelString(LogLevel level)
+{
+    switch (level)
+    {
+    case LogLevel::Debug:   return L"调试";
+    case LogLevel::Info:    return L"信息";
+    case LogLevel::Warning: return L"警告";
+    case LogLevel::Error:   return L"错误";
+    default:               return L"未知";
+    }
+}
+
+bool CLogWindowDialog::SaveLogToFile(const CString& filePath)
+{
+    try
+    {
+        std::wofstream file(filePath.GetString());
+        if (!file.is_open())
+            return false;
+            
+        // 写入文件头
+        file << L"PortMaster 日志文件" << std::endl;
+        file << L"生成时间: " << FormatTimestamp({0}) << std::endl;
+        file << L"========================================" << std::endl << std::endl;
+        
+        // 写入日志条目
+        for (const auto& entry : m_logEntries)
+        {
+            file << FormatTimestamp(entry.timestamp).GetString() << L" ["
+                 << GetLevelString(entry.level).GetString() << L"] "
+                 << entry.category.GetString() << L": "
+                 << entry.message.GetString() << std::endl;
+        }
+        
+        file.close();
+        return true;
+    }
+    catch (...)
+    {
+        return false;
+    }
+}
+
+CString CLogWindowDialog::GetDefaultLogFileName()
+{
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    
+    CString fileName;
+    fileName.Format(L"PortMaster_Log_%04d%02d%02d_%02d%02d%02d.txt",
+        st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        
+    return fileName;
+}

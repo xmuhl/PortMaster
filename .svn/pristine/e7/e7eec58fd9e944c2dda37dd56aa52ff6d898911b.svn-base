@@ -1,0 +1,86 @@
+﻿#include "pch.h"
+#include "framework.h"
+#include "PortMaster.h"
+#include "PortMasterDlg.h"
+#include "SplashDialog.h"
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+// CPortMasterApp
+
+BEGIN_MESSAGE_MAP(CPortMasterApp, CWinApp)
+	ON_COMMAND(ID_HELP, &CWinApp::OnHelp)
+END_MESSAGE_MAP()
+
+// CPortMasterApp 鏋勯€?
+CPortMasterApp::CPortMasterApp()
+{
+	// 鏀寔閲嶆柊鍚姩绠＄悊鍣?	m_dwRestartManagerSupportFlags = AFX_RESTART_MANAGER_SUPPORT_RESTART;
+
+	// TODO: 鍦ㄦ澶勬坊鍔犳瀯閫犱唬鐮侊紝
+	// 灏嗘墍鏈夐噸瑕佺殑鍒濆鍖栨斁缃湪 InitInstance 涓?}
+
+// 鍞竴鐨?CPortMasterApp 瀵硅薄
+
+CPortMasterApp theApp;
+
+// CPortMasterApp 鍒濆鍖?
+BOOL CPortMasterApp::InitInstance()
+{
+	// 濡傛灉涓€涓繍琛屽湪 Windows XP 涓婄殑搴旂敤绋嬪簭娓呭崟鎸囧畾瑕?	// 浣跨敤 ComCtl32.dll 鐗堟湰 6 鎴栨洿楂樼増鏈潵鍚敤鍙鍖栨柟寮忥紝
+	//鍒欓渶瑕?InitCommonControlsEx()銆? 鍚﹀垯锛屽皢鏃犳硶鍒涘缓绐楀彛銆?	INITCOMMONCONTROLSEX InitCtrls;
+	InitCtrls.dwSize = sizeof(InitCtrls);
+	// 灏嗗畠璁剧疆涓哄寘鎷墍鏈夎鍦ㄥ簲鐢ㄧ▼搴忎腑浣跨敤鐨?	// 鍏叡鎺т欢绫汇€?	InitCtrls.dwICC = ICC_WIN95_CLASSES;
+	InitCommonControlsEx(&InitCtrls);
+
+	CWinApp::InitInstance();
+
+	// 鍒濆鍖?OLE 搴?	if (!AfxOleInit())
+	{
+		AfxMessageBox(L"鍒濆鍖?OLE 搴撳け璐ワ紒");
+		return FALSE;
+	}
+
+	AfxEnableControlContainer();
+
+	// 鍒涘缓 shell 绠＄悊鍣紝浠ラ槻瀵硅瘽妗嗗寘鍚?	// 浠讳綍 shell 鏍戣鍥炬帶浠舵垨 shell 鍒楄〃瑙嗗浘鎺т欢銆?	CShellManager *pShellManager = new CShellManager;
+
+	// 婵€娲?Windows Native"瑙嗚绠＄悊鍣紝浠ヤ究鍦?MFC 鎺т欢涓惎鐢ㄤ富棰?	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
+
+	// 鏍囧噯鍒濆鍖?	// 濡傛灉鏈娇鐢ㄨ繖浜涘姛鑳藉苟甯屾湜鍑忓皬
+	// 鏈€缁堝彲鎵ц鏂囦欢鐨勫ぇ灏忥紝鍒欏簲绉婚櫎涓嬪垪
+	// 涓嶉渶瑕佺殑鐗瑰畾鍒濆鍖栦緥绋?	// 鏇存敼鐢ㄤ簬瀛樺偍璁剧疆鐨勬敞鍐岃〃椤?	// TODO: 搴旈€傚綋淇敼璇ュ瓧绗︿覆锛?	// 渚嬪淇敼涓哄叕鍙告垨缁勭粐鍚?	SetRegistryKey(L"绔彛澶у笀");
+
+	// 鏄剧ず鍚姩鐢婚潰
+	CSplashDialog splash;
+	splash.DoModal();
+
+	CPortMasterDlg dlg;
+	m_pMainWnd = &dlg;
+	INT_PTR nResponse = dlg.DoModal();
+	if (nResponse == IDOK)
+	{
+		// TODO: 鍦ㄦ鏀剧疆澶勭悊浣曟椂鐢?		//  "纭畾"鏉ュ叧闂璇濇鐨勪唬鐮?	}
+	else if (nResponse == IDCANCEL)
+	{
+		// TODO: 鍦ㄦ鏀剧疆澶勭悊浣曟椂鐢?		//  "鍙栨秷"鏉ュ叧闂璇濇鐨勪唬鐮?	}
+	else if (nResponse == -1)
+	{
+		TRACE(traceAppMsg, 0, "璀﹀憡: 瀵硅瘽妗嗗垱寤哄け璐ワ紝搴旂敤绋嬪簭灏嗘剰澶栫粓姝€俓n");
+		TRACE(traceAppMsg, 0, "璀﹀憡: 濡傛灉鎮ㄥ湪瀵硅瘽妗嗕笂浣跨敤 MFC 鎺т欢锛屽垯涓嶈兘 #define _AFX_NO_MFC_CONTROLS_IN_DIALOGS銆俓n");
+	}
+
+	// 鍒犻櫎涓婇潰鍒涘缓鐨?shell 绠＄悊鍣ㄣ€?	if (pShellManager != nullptr)
+	{
+		delete pShellManager;
+	}
+
+#if !defined(_AFXDLL) && !defined(_AFX_NO_MFC_CONTROLS_IN_DIALOGS)
+	ControlBarCleanUp();
+#endif
+
+	// 鐢变簬瀵硅瘽妗嗗凡鍏抽棴锛屾墍浠ュ皢杩斿洖 FALSE 浠ヤ究閫€鍑哄簲鐢ㄧ▼搴忥紝
+	//  鑰屼笉鏄惎鍔ㄥ簲鐢ㄧ▼搴忕殑娑堟伅娉点€?	return FALSE;
+}

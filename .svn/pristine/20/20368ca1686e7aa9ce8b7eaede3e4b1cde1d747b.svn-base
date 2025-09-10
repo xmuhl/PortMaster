@@ -1,0 +1,3688 @@
+﻿#include "pch.h"
+#include "framework.h"
+#include "PortMaster.h"
+#include "PortMasterDlg.h"
+#include "Resource.h"
+#include "PortConfigDialog.h"
+#include "TestWizardDialog.h"
+// #include "LogWindowDialog.h" // 临时注释解决编译问题
+#include "Transport/TcpTransport.h"
+#include "Transport/UdpTransport.h"
+#include "Transport/LptSpoolerTransport.h"
+#include "Transport/SerialTransport.h"
+#include "Common/ConfigManager.h"
+#include "Common/AsyncMessageManager.h"
+#include "afxdialogex.h"
+#include <fstream>
+#include <filesystem>
+#include <Shlwapi.h>
+#include <algorithm>
+#include <Dbt.h>
+
+#pragma comment(lib, "Shlwapi.lib")
+
+extern void WriteDebugLog(const char* message);
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+// 用于应用程序"关于"菜单项的 CAboutDlg 对话框
+class CAboutDlg : public CDialogEx
+{
+public:
+	CAboutDlg();
+
+// 对话框数据
+#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_ABOUTBOX };
+#endif
+
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
+
+// 实现
+protected:
+	DECLARE_MESSAGE_MAP()
+};
+
+CAboutDlg::CAboutDlg() : CDialogEx(IDD_ABOUTBOX)
+{
+}
+
+void CAboutDlg::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+}
+
+BEGIN_MESSAGE_MAP(CAboutDlg, CDialogEx)
+END_MESSAGE_MAP()
+
+// CPortMasterDlg 对话框
+CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent)
+	, m_bConnected(false)
+	, m_bReliableMode(false)
+	, m_bTransmitting(false)
+	, m_transmissionProgress(0)
+	, m_transmissionTimer(0)
+	, m_transmissionStartTime(0)
+	, m_totalBytesTransmitted(0)
+	, m_lastSpeedUpdateTime(0)
+	// , m_pLogWindow(nullptr) // 临时注释
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数开始");
+	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
+	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数完成");
+}
+
+void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
+{
+	WriteDebugLog("[DEBUG] DoDataExchange: 开始数据交换");
+	CDialogEx::DoDataExchange(pDX);
+	WriteDebugLog("[DEBUG] DoDataExchange: CDialogEx::DoDataExchange 完成");
+
+	// 逐个绑定控件，并记录调试信息
+	try {
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PORT_TYPE");
+		DDX_Control(pDX, IDC_PORT_TYPE, m_ctrlPortType);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PORT_LIST");
+		DDX_Control(pDX, IDC_PORT_LIST, m_ctrlPortList);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_BAUD_RATE");
+		DDX_Control(pDX, IDC_BAUD_RATE, m_ctrlBaudRate);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_DATA_BITS");
+		DDX_Control(pDX, IDC_DATA_BITS, m_ctrlDataBits);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PARITY");
+		DDX_Control(pDX, IDC_PARITY, m_ctrlParity);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_STOP_BITS");
+		DDX_Control(pDX, IDC_STOP_BITS, m_ctrlStopBits);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CONNECT_BUTTON");
+		DDX_Control(pDX, IDC_CONNECT_BUTTON, m_ctrlConnectBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_DISCONNECT_BUTTON");
+		DDX_Control(pDX, IDC_DISCONNECT_BUTTON, m_ctrlDisconnectBtn);
+		
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_SEND_BUTTON");
+        DDX_Control(pDX, IDC_SEND_BUTTON, m_ctrlSendBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CLEAR_INPUT_BUTTON");
+        DDX_Control(pDX, IDC_CLEAR_INPUT_BUTTON, m_ctrlClearInputBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CLEAR_DISPLAY_BUTTON");
+        DDX_Control(pDX, IDC_CLEAR_DISPLAY_BUTTON, m_ctrlClearDisplayBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_LOAD_FILE_BUTTON");
+        DDX_Control(pDX, IDC_LOAD_FILE_BUTTON, m_ctrlLoadFileBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_SAVE_FILE_BUTTON");
+        DDX_Control(pDX, IDC_SAVE_FILE_BUTTON, m_ctrlSaveFileBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_COPY_HEX_BUTTON");
+        DDX_Control(pDX, IDC_COPY_BUTTON, m_ctrlCopyBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_COPY_TEXT_BUTTON");
+        // DDX_Control for IDC_COPY_TEXT_BUTTON removed; unified copy button is used
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_RELIABLE_MODE");
+        DDX_Control(pDX, IDC_RELIABLE_MODE, m_ctrlReliableMode);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_HEX_DISPLAY_CHECK");
+        DDX_Control(pDX, IDC_HEX_DISPLAY_CHECK, m_ctrlHexDisplayCheck);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_INPUT_HEX");
+        DDX_Control(pDX, IDC_INPUT_HEX, m_ctrlInputHex);
+        
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_HEX_VIEW");
+        DDX_Control(pDX, IDC_HEX_VIEW, m_ctrlHexView);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_TEXT_VIEW");
+        DDX_Control(pDX, IDC_TEXT_VIEW, m_ctrlTextView);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_LOG");
+        DDX_Control(pDX, IDC_LOG, m_ctrlLog);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PROGRESS");
+        DDX_Control(pDX, IDC_PROGRESS, m_ctrlProgress);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CONNECTION_STATUS");
+        DDX_Control(pDX, IDC_CONNECTION_STATUS, m_ctrlConnectionStatus);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PROTOCOL_STATUS");
+        DDX_Control(pDX, IDC_PROTOCOL_STATUS, m_ctrlProtocolStatus);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_TRANSFER_STATS");
+        DDX_Control(pDX, IDC_TRANSFER_STATS, m_ctrlTransferStatus);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_TRANSFER_SPEED");
+        DDX_Control(pDX, IDC_TRANSFER_SPEED, m_ctrlTransferSpeed);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_TRANSFER_PROGRESS");
+        DDX_Control(pDX, IDC_TRANSFER_PROGRESS, m_ctrlTransferProgress);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_STATUS");
+        DDX_Control(pDX, IDC_STATUS, m_ctrlStatus);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_FILE_DROP_ZONE");
+        DDX_Control(pDX, IDC_FILE_DROP_ZONE, m_ctrlFileDropZone);
+        // DDX_Control(pDX, IDC_TIME_REMAINING, m_ctrlTimeRemaining);
+        // DDX_Control(pDX, IDC_CLEAR_BUTTON, m_ctrlClearBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 所有控件绑定完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] DoDataExchange: 控件绑定过程中出现异常");
+		throw;
+	}
+}
+
+BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
+	ON_WM_SYSCOMMAND()
+	ON_WM_PAINT()
+	ON_WM_QUERYDRAGICON()
+	ON_BN_CLICKED(IDC_CONNECT_BUTTON, &CPortMasterDlg::OnBnClickedConnect)
+	ON_BN_CLICKED(IDC_DISCONNECT_BUTTON, &CPortMasterDlg::OnBnClickedDisconnect)
+	ON_BN_CLICKED(IDC_SEND_BUTTON, &CPortMasterDlg::OnBnClickedSend)
+	ON_BN_CLICKED(IDC_CLEAR_INPUT_BUTTON, &CPortMasterDlg::OnBnClickedClearInput)
+	ON_BN_CLICKED(IDC_CLEAR_DISPLAY_BUTTON, &CPortMasterDlg::OnBnClickedClearDisplay)
+	ON_BN_CLICKED(IDC_CLEAR_BUTTON, &CPortMasterDlg::OnBnClickedClear)
+	ON_BN_CLICKED(IDC_LOAD_FILE_BUTTON, &CPortMasterDlg::OnBnClickedLoadFile)
+	ON_BN_CLICKED(IDC_SAVE_FILE_BUTTON, &CPortMasterDlg::OnBnClickedSaveFile)
+    ON_BN_CLICKED(IDC_COPY_BUTTON, &CPortMasterDlg::OnBnClickedCopy)
+	ON_BN_CLICKED(IDC_TEST_WIZARD_BUTTON, &CPortMasterDlg::OnBnClickedTestWizard)
+	ON_BN_CLICKED(IDC_LOG_WINDOW_BUTTON, &CPortMasterDlg::OnBnClickedLogWindow)
+	ON_BN_CLICKED(IDC_HEX_DISPLAY_CHECK, &CPortMasterDlg::OnBnClickedHexDisplay)
+	ON_CBN_SELCHANGE(IDC_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangePortType)
+	ON_BN_CLICKED(IDC_REFRESH_PORTS, &CPortMasterDlg::OnBnClickedRefreshPorts)
+	ON_WM_DEVICECHANGE()
+	ON_BN_CLICKED(IDC_RELIABLE_MODE, &CPortMasterDlg::OnBnClickedReliableMode)
+	ON_WM_DROPFILES()
+	ON_WM_SIZE()
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+// CPortMasterDlg 消息处理程序
+
+BOOL CPortMasterDlg::OnInitDialog()
+{
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始初始化主对话框");
+	
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤1 - 调用CDialogEx::OnInitDialog");
+	
+	// 现在应该可以安全调用，因为已经修复了DDX绑定和资源定义
+	if (!CDialogEx::OnInitDialog()) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: CDialogEx::OnInitDialog失败");
+		return FALSE;
+	}
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: CDialogEx::OnInitDialog成功完成");
+	
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤2 - 开始初始化复杂对象");
+	try {
+		// 现在在控件已经正确绑定后初始化复杂对象
+		InitializeTransportObjects();
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 复杂对象初始化完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 复杂对象初始化失败");
+		return FALSE;
+	}
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3 - 开始设置系统菜单");
+	// 将"关于..."菜单项添加到系统菜单中。
+	// IDM_ABOUTBOX 必须在系统命令范围内。
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.1 - 检查IDM_ABOUTBOX常量");
+	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
+	ASSERT(IDM_ABOUTBOX < 0xF000);
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.2 - IDM_ABOUTBOX常量检查完成");
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.3 - 获取系统菜单");
+	CMenu* pSysMenu = GetSystemMenu(FALSE);
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.4 - 系统菜单获取完成");
+	if (pSysMenu != nullptr)
+	{
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.5 - 系统菜单有效，开始加载字符串");
+		BOOL bNameValid;
+		CString strAboutMenu;
+		bNameValid = strAboutMenu.LoadString(IDS_ABOUTBOX);
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.6 - 字符串加载完成");
+		ASSERT(bNameValid);
+		if (!strAboutMenu.IsEmpty())
+		{
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.7 - 添加菜单项");
+			pSysMenu->AppendMenu(MF_SEPARATOR);
+			pSysMenu->AppendMenu(MF_STRING, IDM_ABOUTBOX, strAboutMenu);
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.8 - 菜单项添加完成");
+		}
+	}
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3 - 系统菜单设置完成");
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 设置对话框图标");
+		// 设置此对话框的图标。当应用程序主窗口不是对话框时，框架将自动
+		//  执行此操作
+		SetIcon(m_hIcon, TRUE);			// 设置大图标
+		SetIcon(m_hIcon, FALSE);		// 设置小图标
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 对话框图标设置完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 设置图标异常");
+	}
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始初始化控件");
+		// 初始化控件
+		InitializeControls();
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 控件初始化完成");
+		
+		InitializeDeviceManager();
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 设备管理器初始化完成");
+		
+		InitializeProtocolManager();
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 协议管理器初始化完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 初始化异常");
+		return FALSE;
+	}
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 启用拖放功能");
+		// 启用拖放
+		DragAcceptFiles(TRUE);
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 拖放功能启用完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 启用拖放功能异常");
+	}
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 窗口初始化完成");
+		// TODO: 实现窗口大小自适应功能
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 窗口初始化异常");
+	}
+
+	// 初始化增强的异步消息管理器
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 初始化异步消息管理器");
+	try {
+		AsyncMessageManager::GetInstance().Initialize(GetSafeHwnd());
+		
+		// 设置错误处理器
+		AsyncMessageManager::GetInstance().SetErrorHandler(
+			[this](const std::string& error, MessageType type) {
+				WriteDebugLog(("[ERROR] AsyncMessageManager: " + error).c_str());
+				// 可以在这里添加更多错误处理逻辑
+			}
+		);
+		
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 异步消息管理器初始化成功");
+	}
+	catch (const std::exception& ex) {
+		WriteDebugLog(("[ERROR] PortMasterDlg::OnInitDialog: 异步消息管理器初始化失败: " + std::string(ex.what())).c_str());
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 异步消息管理器初始化未知异常");
+	}
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 主对话框初始化完成");
+	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
+}
+
+void CPortMasterDlg::OnSysCommand(UINT nID, LPARAM lParam)
+{
+	if ((nID & 0xFFF0) == IDM_ABOUTBOX)
+	{
+		CAboutDlg dlgAbout;
+		dlgAbout.DoModal();
+	}
+	else
+	{
+		CDialogEx::OnSysCommand(nID, lParam);
+	}
+}
+
+// 如果向对话框添加最小化按钮，则需要下面的代码
+//  来绘制该图标。对于文档/视图模型的 MFC 应用程序，
+//  这将由框架自动完成。
+
+void CPortMasterDlg::OnPaint()
+{
+	if (IsIconic())
+	{
+		CPaintDC dc(this); // 用于绘制的设备上下文
+
+		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.GetSafeHdc()), 0);
+
+		// 使图标在工作区矩形中居中
+		int cxIcon = GetSystemMetrics(SM_CXICON);
+		int cyIcon = GetSystemMetrics(SM_CYICON);
+		CRect rect;
+		GetClientRect(&rect);
+		int x = (rect.Width() - cxIcon + 1) / 2;
+		int y = (rect.Height() - cyIcon + 1) / 2;
+
+		// 绘制图标
+		dc.DrawIcon(x, y, m_hIcon);
+	}
+	else
+	{
+		CDialogEx::OnPaint();
+	}
+}
+
+//当用户拖动最小化窗口时系统调用此函数取得光标
+//显示。
+HCURSOR CPortMasterDlg::OnQueryDragIcon()
+{
+	return static_cast<HCURSOR>(m_hIcon);
+}
+
+void CPortMasterDlg::InitializeControls()
+{
+	WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始初始化控件");
+	
+	try {
+		// 初始化端口类型下拉框 - 实现所有设计功能
+		m_ctrlPortType.AddString(L"串口");
+		m_ctrlPortType.AddString(L"并口");
+		m_ctrlPortType.AddString(L"USB打印机");
+		m_ctrlPortType.AddString(L"TCP客户端");
+		m_ctrlPortType.AddString(L"TCP服务器");
+		m_ctrlPortType.AddString(L"UDP");
+		m_ctrlPortType.AddString(L"回环测试");
+		
+		m_ctrlPortType.SetCurSel(0); // 默认选择串口
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 端口类型下拉框初始化完成");
+
+		// 初始化波特率下拉框
+		m_ctrlBaudRate.AddString(L"9600");
+		m_ctrlBaudRate.AddString(L"19200");
+		m_ctrlBaudRate.AddString(L"38400");
+		m_ctrlBaudRate.AddString(L"57600");
+		m_ctrlBaudRate.AddString(L"115200");
+		m_ctrlBaudRate.SetCurSel(0);
+
+		// 初始化数据位下拉框
+		m_ctrlDataBits.AddString(L"5");
+		m_ctrlDataBits.AddString(L"6");
+		m_ctrlDataBits.AddString(L"7");
+		m_ctrlDataBits.AddString(L"8");
+		m_ctrlDataBits.SetCurSel(3);
+
+		// 初始化停止位下拉框
+		m_ctrlStopBits.AddString(L"1");
+		m_ctrlStopBits.AddString(L"1.5");
+		m_ctrlStopBits.AddString(L"2");
+		m_ctrlStopBits.SetCurSel(0);
+
+		// 初始化校验位下拉框
+		m_ctrlParity.AddString(L"None");
+		m_ctrlParity.AddString(L"Odd");
+		m_ctrlParity.AddString(L"Even");
+		m_ctrlParity.AddString(L"Mark");
+		m_ctrlParity.AddString(L"Space");
+		m_ctrlParity.SetCurSel(0);
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 下拉框初始化完成");
+
+		// 更新端口列表
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始更新端口列表");
+		UpdatePortList();
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 端口列表更新完成");
+	
+		// 更新按钮状态
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始更新按钮状态");
+		UpdateButtonStates();
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 按钮状态更新完成");
+		
+		// 更新端口类型特定控件状态
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始更新端口类型控件状态");
+		UpdatePortTypeSpecificControls();
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 端口类型控件状态更新完成");
+
+		// 设置文件拖放区域提示文本
+		// m_ctrlFileDropZone.SetWindowText(L"拖拽文件到此处加载(不自动传输)");  // 控件不存在
+
+		// 初始化状态显示
+		m_ctrlConnectionStatus.SetWindowText(L"未连接");
+		m_ctrlProtocolStatus.SetWindowText(L"空闲");
+		m_ctrlTransferStatus.SetWindowText(L"就绪");
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 设置状态显示完成");
+		
+		// 设置等宽字体用于十六进制显示
+		static CFont monoFont;
+		monoFont.CreateFont(
+			-12,                    // 字体高度
+			0,                      // 字体宽度（自动）
+			0,                      // 倾斜角度
+			0,                      // 基线倾斜角度
+			FW_NORMAL,             // 字体粗细
+			FALSE,                 // 是否斜体
+			FALSE,                 // 是否下划线
+			0,                     // 是否删除线
+			ANSI_CHARSET,          // 字符集
+			OUT_DEFAULT_PRECIS,    // 输出精度
+			CLIP_DEFAULT_PRECIS,   // 裁剪精度
+			CLEARTYPE_QUALITY,     // 输出质量
+			FIXED_PITCH | FF_MODERN, // 字体间距和系列
+			_T("Consolas")         // 字体名称，备选：Courier New
+		);
+		m_ctrlHexView.SetFont(&monoFont);
+		m_ctrlInputHex.SetFont(&monoFont);
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 等宽字体设置完成");
+		
+		// 初始化十六进制显示复选框状态
+		if (IsWindow(m_ctrlHexDisplayCheck.GetSafeHwnd()))
+		{
+			m_bHexDisplay = false;  // 默认为文本显示
+			m_ctrlHexDisplayCheck.SetCheck(m_bHexDisplay ? BST_CHECKED : BST_UNCHECKED);
+			SetDataDisplayFormat(m_bHexDisplay);
+			WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 十六进制显示复选框初始化完成");
+		}
+		
+		// 强制刷新输入数据编辑框
+		if (IsWindow(m_ctrlInputHex.GetSafeHwnd()))
+		{
+			m_ctrlInputHex.Invalidate();
+			m_ctrlInputHex.UpdateWindow();
+			m_ctrlInputHex.ShowWindow(SW_SHOW);
+			WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 输入编辑框刷新完成");
+		}
+		
+		// 添加初始化日志
+		AppendLog(L"PortMaster 初始化完成");
+		AppendLog(L"现代化界面已启用");
+		
+		// SOLID-O: 开放封闭原则 - 显示设备管理功能提示
+		if (m_deviceManager) {
+			AppendLog(L"提示: 输入 'history' 查看设备历史记录");
+			AppendLog(L"提示: 输入 'favorites' 查看收藏设备");
+			AppendLog(L"提示: 输入 'addfav' 添加当前设备到收藏");
+		}
+		
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 控件初始化完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::InitializeControls: 控件初始化异常");
+		throw;
+	}
+}
+
+void CPortMasterDlg::InitializeTransportObjects()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeTransportObjects: 开始初始化传输对象");
+	
+	// 初始化传输层和可靠通道
+	m_transport = std::make_shared<LoopbackTransport>();
+	m_reliableChannel = std::make_shared<ReliableChannel>(m_transport);
+	
+	// 设置可靠通道回调 - 现在控件已经正确绑定，可以安全访问
+	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
+		// 更新进度显示
+		if (stats.totalBytes > 0)
+		{
+			int progress = static_cast<int>((stats.transferredBytes * 100) / stats.totalBytes);
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(progress);
+			}
+			
+			if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+				CString statusText;
+				statusText.Format(L"传输中 (%.1f%%)", stats.GetProgress() * 100);
+				m_ctrlTransferStatus.SetWindowText(statusText);
+			}
+		}
+	});
+	
+	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
+		// 传输完成回调
+		CString msg = CA2W(message.c_str(), CP_UTF8);
+		AppendLog(msg);
+		
+		if (success)
+		{
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(0);
+			}
+			if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+				m_ctrlTransferStatus.SetWindowText(L"传输完成");
+			}
+		}
+		else
+		{
+			if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+				m_ctrlTransferStatus.SetWindowText(L"传输失败");
+			}
+		}
+		
+		m_bTransmitting = false;
+	});
+	
+	m_reliableChannel->SetFileReceivedCallback([this](const std::string& filename, const std::vector<uint8_t>& data) {
+		// 文件接收完成回调
+		CString filenameW = CA2W(filename.c_str(), CP_UTF8);
+		if (filename == "[数据传输]")
+		{
+			AppendLogWithDetails(L"可靠传输完成", data.size());
+		}
+		else
+		{
+			CString msg;
+			msg.Format(L"接收到文件: %s", filenameW.GetString());
+			AppendLogWithDetails(msg, data.size());
+		}
+		
+		// 在数据视图中显示接收到的内容
+		DisplayReceivedData(data);
+	});
+	
+	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeTransportObjects: 传输对象初始化完成");
+}
+
+void CPortMasterDlg::UpdatePortList()
+{
+	// YAGNI: 优先使用DeviceManager，保留原有逻辑作为后备
+	if (m_deviceManager) {
+		WriteDebugLog("[DEBUG] CPortMasterDlg::UpdatePortList: 使用DeviceManager更新端口列表");
+		UpdatePortListFromDeviceManager();
+		return;
+	}
+	
+	// DRY: 保留原有逻辑作为后备方案
+	WriteDebugLog("[DEBUG] CPortMasterDlg::UpdatePortList: 使用原有逻辑更新端口列表");
+	m_ctrlPortList.ResetContent();
+	
+	int portType = m_ctrlPortType.GetCurSel();
+	switch (portType)
+	{
+	case 0: // 串口
+		{
+			// 使用SerialTransport的枚举功能获取实际可用串口
+			try {
+				std::vector<std::string> ports = SerialTransport::EnumeratePorts();
+				for (const auto& port : ports) {
+					CString portName = CA2W(port.c_str(), CP_UTF8);
+					m_ctrlPortList.AddString(portName);
+				}
+				// 如果没有找到串口，显示提示信息
+				if (ports.empty()) {
+					m_ctrlPortList.AddString(L"(未检测到串口)");
+				}
+			}
+			catch (const std::exception& ex) {
+				WriteDebugLog(("[ERROR] 串口枚举失败: " + std::string(ex.what())).c_str());
+				// 枚举失败时使用基本端口列表
+				for (int i = 1; i <= 4; i++) {
+					CString portName;
+					portName.Format(L"COM%d", i);
+					m_ctrlPortList.AddString(portName);
+				}
+			}
+		}
+		break;
+	case 1: // 并口
+		{
+			// 使用LptSpoolerTransport的枚举功能获取可用打印机和LPT端口
+			try {
+				std::vector<std::string> printers = LptSpoolerTransport::EnumeratePrinters();
+				for (const auto& printer : printers) {
+					CString printerName = CA2W(printer.c_str(), CP_UTF8);
+					m_ctrlPortList.AddString(printerName);
+				}
+			}
+			catch (const std::exception& ex) {
+				WriteDebugLog(("[ERROR] LPT端口枚举失败: " + std::string(ex.what())).c_str());
+				// 枚举失败时使用默认端口
+				m_ctrlPortList.AddString(L"LPT1:");
+				m_ctrlPortList.AddString(L"LPT2:");
+			}
+		}
+		break;
+	case 2: // USB打印机
+		m_ctrlPortList.AddString(L"USB打印机1");
+		break;
+	case 3: // TCP客户端
+		m_ctrlPortList.AddString(L"127.0.0.1:8080");
+		break;
+	case 4: // TCP服务端
+		m_ctrlPortList.AddString(L"监听端口:8080");
+		break;
+	case 5: // UDP
+		m_ctrlPortList.AddString(L"UDP:8080");
+		break;
+	case 6: // 本地回环
+		m_ctrlPortList.AddString(L"本地回环");
+		break;
+	}
+	
+	if (m_ctrlPortList.GetCount() > 0)
+		m_ctrlPortList.SetCurSel(0);
+}
+
+void CPortMasterDlg::UpdateButtonStates()
+{
+	// 添加控件句柄安全检查
+	if (!IsWindow(m_ctrlConnectBtn.GetSafeHwnd()) || !IsWindow(m_ctrlDisconnectBtn.GetSafeHwnd()))
+	{
+		WriteDebugLog("[WARNING] UpdateButtonStates: 控件句柄未初始化，跳过更新");
+		return;
+	}
+	
+	// 更新在DoDataExchange中实际绑定的控件
+	m_ctrlConnectBtn.EnableWindow(!m_bConnected);
+	m_ctrlDisconnectBtn.EnableWindow(m_bConnected);
+	
+	// 改进的发送按钮状态管理
+	bool hasSendableData = HasValidInputData();
+	if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
+	{
+		bool enableSend = m_bConnected && !m_bTransmitting && hasSendableData;
+		m_ctrlSendBtn.EnableWindow(enableSend);
+		
+		// 根据状态设置按钮文本和工具提示
+		if (!m_bConnected)
+			m_ctrlSendBtn.SetWindowText(L"发送(需要连接)");
+		else if (m_bTransmitting)
+			m_ctrlSendBtn.SetWindowText(L"发送中...");
+		else if (!hasSendableData)
+			m_ctrlSendBtn.SetWindowText(L"发送(无数据)");
+		else
+			m_ctrlSendBtn.SetWindowText(L"发送");
+	}
+	
+	// 文件操作按钮状态管理
+	if (IsWindow(m_ctrlLoadFileBtn.GetSafeHwnd()))
+		m_ctrlLoadFileBtn.EnableWindow(!m_bTransmitting);
+	if (IsWindow(m_ctrlSaveFileBtn.GetSafeHwnd()))
+	{
+		bool hasDisplayData = !m_displayedData.empty();
+		m_ctrlSaveFileBtn.EnableWindow(hasDisplayData);
+	}
+	
+	// 清除按钮始终可用 - 使用实际绑定的控件
+	if (IsWindow(m_ctrlClearInputBtn.GetSafeHwnd()))
+		m_ctrlClearInputBtn.EnableWindow(TRUE);
+	if (IsWindow(m_ctrlClearDisplayBtn.GetSafeHwnd()))
+		m_ctrlClearDisplayBtn.EnableWindow(TRUE);
+	
+	// 更新连接状态显示（带状态指示器）
+	if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
+	{
+		CString statusText;
+		if (m_bTransmitting)
+			statusText = L"● 传输中";
+		else if (m_bConnected)
+			statusText = L"● 已连接";
+		else
+			statusText = L"○ 未连接";
+		
+		m_ctrlConnectionStatus.SetWindowText(statusText);
+	}
+	
+	// 更新协议状态显示 - 增强版本，支持颜色编码和详细信息
+	if (m_reliableChannel)
+	{
+		UpdateEnhancedProtocolStatus();
+	}
+	
+	// 更新状态栏显示
+	CString statusText;
+	if (m_bTransmitting)
+	{
+		statusText = L"状态: 传输中";
+	}
+	else if (m_bConnected)
+	{
+		statusText = L"状态: 已连接";
+		if (m_bReliableMode)
+			statusText += L" (可靠模式)";
+	}
+	else
+	{
+		statusText = L"状态: 就绪";
+	}
+	m_ctrlTransferStatus.SetWindowText(statusText);
+}
+
+// 增强的协议状态可视化显示 - 支持颜色编码、详细信息和统计数据
+void CPortMasterDlg::UpdateEnhancedProtocolStatus()
+{
+	if (!m_reliableChannel)
+	{
+		m_ctrlProtocolStatus.SetWindowText(L"协议:未启用");
+		return;
+	}
+	
+	try
+	{
+		ReliableState state = m_reliableChannel->GetState();
+		TransferStats stats = m_reliableChannel->GetStats();
+		
+		CString stateText;
+		CString detailText;
+		COLORREF textColor = RGB(0, 0, 0); // 默认黑色
+		
+		// 根据协议状态设置显示文本和颜色
+		switch (state)
+		{
+		case RELIABLE_IDLE:
+			stateText = L"协议:空闲";
+			textColor = RGB(128, 128, 128); // 灰色
+			break;
+			
+		case RELIABLE_STARTING:
+			stateText = L"协议:启动中";
+			textColor = RGB(255, 165, 0); // 橙色
+			if (stats.totalFrames > 0)
+				detailText.Format(L" (准备%d帧)", static_cast<int>(stats.totalFrames));
+			break;
+			
+		case RELIABLE_SENDING:
+			stateText = L"协议:发送中";
+			textColor = RGB(0, 128, 255); // 蓝色
+			if (stats.totalFrames > 0)
+			{
+				double progress = stats.GetProgress() * 100.0;
+				detailText.Format(L" (%.1f%% %d/%d帧)", 
+					progress, 
+					static_cast<int>(stats.sentFrames), 
+					static_cast<int>(stats.totalFrames));
+				if (stats.retransmissions > 0)
+					detailText.AppendFormat(L" R:%d", static_cast<int>(stats.retransmissions));
+			}
+			break;
+			
+		case RELIABLE_ENDING:
+			stateText = L"协议:完成中";
+			textColor = RGB(255, 165, 0); // 橙色
+			break;
+			
+		case RELIABLE_READY:
+			stateText = L"协议:接收就绪";
+			textColor = RGB(0, 128, 0); // 绿色
+			break;
+			
+		case RELIABLE_RECEIVING:
+			stateText = L"协议:接收中";
+			textColor = RGB(0, 128, 0); // 绿色
+			if (stats.totalBytes > 0)
+			{
+				double progress = stats.GetProgress() * 100.0;
+				detailText.Format(L" (%.1f%% %dKB/%dKB)", 
+					progress,
+					static_cast<int>(stats.transferredBytes / 1024),
+					static_cast<int>(stats.totalBytes / 1024));
+			}
+			break;
+			
+		case RELIABLE_DONE:
+			stateText = L"协议:完成";
+			textColor = RGB(0, 128, 0); // 绿色
+			if (stats.totalBytes > 0)
+				detailText.Format(L" (%dKB)", static_cast<int>(stats.totalBytes / 1024));
+			break;
+			
+		case RELIABLE_FAILED:
+			stateText = L"协议:失败";
+			textColor = RGB(255, 0, 0); // 红色
+			if (stats.crcErrors > 0 || stats.timeouts > 0)
+				detailText.Format(L" (CRC:%d T/O:%d)", 
+					static_cast<int>(stats.crcErrors), 
+					static_cast<int>(stats.timeouts));
+			break;
+			
+		default:
+			stateText = L"协议:未知状态";
+			textColor = RGB(255, 0, 0); // 红色
+			break;
+		}
+		
+		// 构建完整的状态显示文本
+		CString fullStatusText = stateText + detailText;
+		
+		// 更新协议状态显示
+		if (IsWindow(m_ctrlProtocolStatus.GetSafeHwnd()))
+		{
+			m_ctrlProtocolStatus.SetWindowText(fullStatusText);
+			
+			// 设置文本颜色（如果支持的话 - 注意：CStatic默认不支持颜色设置）
+			// 这里我们记录颜色信息，可以在需要的时候用于自定义绘制
+			WriteDebugLog(CStringA("[DEBUG] UpdateEnhancedProtocolStatus: ") + 
+				CW2A(fullStatusText, CP_UTF8));
+		}
+		
+		// 更新传输统计显示
+		if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd()) && 
+			(state == RELIABLE_SENDING || state == RELIABLE_RECEIVING || stats.totalBytes > 0))
+		{
+			CString transferStatsText;
+			if (stats.totalBytes > 0)
+			{
+				double progressPercent = stats.GetProgress() * 100.0;
+				transferStatsText.Format(L"传输:%.1f%% %dKB/%dKB", 
+					progressPercent,
+					static_cast<int>(stats.transferredBytes / 1024),
+					static_cast<int>(stats.totalBytes / 1024));
+			}
+			else
+			{
+				transferStatsText = L"传输:就绪";
+			}
+			m_ctrlTransferStatus.SetWindowText(transferStatsText);
+		}
+		
+		// 更新进度条（如果有传输进行）
+		if (IsWindow(m_ctrlProgress.GetSafeHwnd()) && stats.totalBytes > 0)
+		{
+			int progressPercent = static_cast<int>(stats.GetProgress() * 100.0);
+			m_ctrlProgress.SetPos(progressPercent);
+		}
+	}
+	catch (const std::exception& ex)
+	{
+		WriteDebugLog(CStringA("[ERROR] UpdateEnhancedProtocolStatus: ") + ex.what());
+		m_ctrlProtocolStatus.SetWindowText(L"协议:状态错误");
+	}
+	catch (...)
+	{
+		WriteDebugLog("[ERROR] UpdateEnhancedProtocolStatus: 未知异常");
+		m_ctrlProtocolStatus.SetWindowText(L"协议:状态异常");
+	}
+}
+
+void CPortMasterDlg::UpdatePortTypeSpecificControls()
+{
+	// 添加控件句柄安全检查
+	if (!IsWindow(m_ctrlPortType.GetSafeHwnd()))
+	{
+		WriteDebugLog("[WARNING] UpdatePortTypeSpecificControls: 端口类型控件句柄未初始化，跳过更新");
+		return;
+	}
+	
+	// 获取当前选择的端口类型
+	int currentPortType = m_ctrlPortType.GetCurSel();
+	
+	// 判断是否为串口类型（索引0为串口）
+	bool isSerialPort = (currentPortType == 0);
+	
+	// 串口专用控件状态管理
+	if (IsWindow(m_ctrlBaudRate.GetSafeHwnd()))
+		m_ctrlBaudRate.EnableWindow(isSerialPort);
+	if (IsWindow(m_ctrlDataBits.GetSafeHwnd()))
+		m_ctrlDataBits.EnableWindow(isSerialPort);
+	if (IsWindow(m_ctrlStopBits.GetSafeHwnd()))
+		m_ctrlStopBits.EnableWindow(isSerialPort);
+	if (IsWindow(m_ctrlParity.GetSafeHwnd()))
+		m_ctrlParity.EnableWindow(isSerialPort);
+	
+	// 根据端口类型记录日志
+	const wchar_t* portTypeNames[] = {
+		L"串口", L"并口", L"USB打印机", L"TCP客户端", L"TCP服务器", L"UDP", L"回环测试"
+	};
+	
+	if (currentPortType >= 0 && currentPortType < 7)
+	{
+		CString logMessage;
+		logMessage.Format(L"端口类型切换到: %s, 串口专用控件%s", 
+			portTypeNames[currentPortType], 
+			isSerialPort ? L"已启用" : L"已禁用");
+		WriteDebugLog(CW2A(logMessage, CP_UTF8));
+	}
+}
+
+void CPortMasterDlg::AppendLog(const CString& message)
+{
+	CString timeStamp;
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	timeStamp.Format(L"[%02d:%02d:%02d.%03d] ", st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+	
+	CString log;
+	m_ctrlLog.GetWindowText(log);
+	log += timeStamp + message + L"\r\n";
+	m_ctrlLog.SetWindowText(log);
+	
+	// 同时向专用日志窗口发送日志（如果已创建）
+	/* 临时注释掉日志窗口代码
+	if (m_pLogWindow && ::IsWindow(m_pLogWindow->GetSafeHwnd()))
+	{
+		m_pLogWindow->AddInfoLog(message);
+	}
+	*/
+	
+	// TODO: 实现日志滚动功能（需要CEdit控件支持）
+}
+
+void CPortMasterDlg::AppendLogWithDetails(const CString& message, size_t bytes)
+{
+	CString detailedMessage = message;
+	if (bytes > 0)
+	{
+		CString byteInfo;
+		if (bytes >= 1024 * 1024)
+		{
+			byteInfo.Format(L" (%.2f MB)", bytes / (1024.0 * 1024.0));
+		}
+		else if (bytes >= 1024)
+		{
+			byteInfo.Format(L" (%.2f KB)", bytes / 1024.0);
+		}
+		else
+		{
+			byteInfo.Format(L" (%zu bytes)", bytes);
+		}
+		detailedMessage += byteInfo;
+	}
+	AppendLog(detailedMessage);
+}
+
+void CPortMasterDlg::UpdateTransferSpeed(size_t bytesTransferred)
+{
+	DWORD currentTime = GetTickCount();
+	m_totalBytesTransmitted += bytesTransferred;
+	
+	// 每500ms更新一次速度显示
+	if (currentTime - m_lastSpeedUpdateTime >= 500)
+	{
+		DWORD elapsedTime = currentTime - m_transmissionStartTime;
+		if (elapsedTime > 0)
+		{
+			double speed = (m_totalBytesTransmitted * 1000.0) / elapsedTime;  // bytes/sec
+			CString speedText;
+			
+			if (speed >= 1024 * 1024)
+			{
+				speedText.Format(L"速度: %.2f MB/s", speed / (1024.0 * 1024.0));
+			}
+			else if (speed >= 1024)
+			{
+				speedText.Format(L"速度: %.2f KB/s", speed / 1024.0);
+			}
+			else
+			{
+				speedText.Format(L"速度: %.0f B/s", speed);
+			}
+			
+			if (IsWindow(m_ctrlTransferSpeed.GetSafeHwnd()))
+			{
+				m_ctrlTransferSpeed.SetWindowText(speedText);
+			}
+			
+			// 估计剩余时间
+			if (m_transmissionData.size() > m_transmissionProgress && speed > 0)
+			{
+				size_t remainingBytes = m_transmissionData.size() - m_transmissionProgress;
+				double remainingSeconds = remainingBytes / speed;
+				
+				CString timeText;
+				if (remainingSeconds >= 60)
+				{
+					timeText.Format(L"剩余: %.1f 分钟", remainingSeconds / 60.0);
+				}
+				else
+				{
+					timeText.Format(L"剩余: %.0f 秒", remainingSeconds);
+				}
+				
+				// TODO: 显示剩余时间（需要添加对应的UI控件）
+			}
+			
+			m_lastSpeedUpdateTime = currentTime;
+		}
+	}
+	
+	// 更新传输进度显示
+	if (IsWindow(m_ctrlTransferProgress.GetSafeHwnd()) && !m_transmissionData.empty())
+	{
+		CString progressText;
+		progressText.Format(L"已传输: %zu/%zu", m_transmissionProgress, m_transmissionData.size());
+		m_ctrlTransferProgress.SetWindowText(progressText);
+	}
+}
+
+void CPortMasterDlg::AppendHexData(const BYTE* data, size_t length, bool incoming)
+{
+	const size_t BYTES_PER_LINE = 8;  // 每行限制8字节
+	CString prefix = incoming ? L"<< " : L">> ";
+	
+	CString currentHex;
+	m_ctrlHexView.GetWindowText(currentHex);
+	
+	for (size_t i = 0; i < length; i += BYTES_PER_LINE)
+	{
+		CString hexLine;
+		size_t lineLength = std::min(BYTES_PER_LINE, length - i);
+		
+		for (size_t j = 0; j < lineLength; j++)
+		{
+			CString temp;
+			temp.Format(L"%02X ", data[i + j]);
+			hexLine += temp;
+		}
+		
+		currentHex += prefix + hexLine + L"\r\n";
+	}
+	
+	m_ctrlHexView.SetWindowText(currentHex);
+	
+	// 滚动到底部
+	m_ctrlHexView.LineScroll(m_ctrlHexView.GetLineCount());
+}
+
+void CPortMasterDlg::AppendTextData(const CString& text, bool incoming)
+{
+	CString prefix = incoming ? L"<< " : L">> ";
+	
+	CString currentText;
+	m_ctrlTextView.GetWindowText(currentText);
+	currentText += prefix + text + L"\r\n";
+	m_ctrlTextView.SetWindowText(currentText);
+	
+	// 滚动到底部
+	m_ctrlTextView.LineScroll(m_ctrlTextView.GetLineCount());
+}
+
+// 按钮事件处理
+void CPortMasterDlg::OnBnClickedConnect()
+{
+<<<<<<< .mine
+	WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedConnect: 开始连接操作");
+	
+	// SOLID-S: 单一职责 - 验证UI状态
+||||||| .r19984
+	// 获取当前选择的传输类型
+=======
+	// SOLID-S: 单一职责 - 连接逻辑专门处理连接建立
+	
+	// 获取当前选择的传输类型
+>>>>>>> .r19995
+	int transportIndex = m_ctrlPortType.GetCurSel();
+	if (transportIndex == CB_ERR)
+	{
+		AppendLog(L"请选择传输类型");
+		return;
+	}
+<<<<<<< .mine
+
+	// 读取当前选中的显示文本（仅用于兼容性判断/日志）
+	CString transportType;
+	m_ctrlPortType.GetLBText(transportIndex, transportType);
+
+	// DRY: 使用原有连接逻辑
+	WriteDebugLog("[DEBUG] 使用原有连接逻辑");
+	
+	// 兼容判断：
+	// 1) 优先用索引判断（InitializeControls 中"本地回环"的索引是 6）
+	// 2) 同时兼容文本为"本地回环"或"回环测试"，避免将来本地化或文本改名带来的问题
+	if (transportIndex == 6 || transportType == L"本地回环" || transportType == L"回环测试")
+||||||| .r19984
+
+	// 读取当前选中的显示文本（仅用于兼容性判断/日志）
+	CString transportType;
+	m_ctrlPortType.GetLBText(transportIndex, transportType);
+
+	// 兼容判断：
+	// 1) 优先用索引判断（InitializeControls 中“本地回环”的索引是 6）
+	// 2) 同时兼容文本为“本地回环”或“回环测试”，避免将来本地化或文本改名带来的问题
+	if (transportIndex == 6 || transportType == L"本地回环" || transportType == L"回环测试")
+=======
+	
+	// 使用工厂模式创建传输实例 (SOLID-O: 开闭原则)
+	std::shared_ptr<ITransport> newTransport = CreateTransportFromUI();
+	if (!newTransport)
+>>>>>>> .r19995
+	{
+		AppendLog(L"不支持的传输类型");
+		return;
+	}
+	
+	// 获取配置参数 (SOLID-S: 单一职责分离)
+	TransportConfig config = GetTransportConfigFromUI();
+	
+	// 尝试打开传输连接
+	if (!newTransport->Open(config))
+	{
+		std::string error = newTransport->GetLastError();
+		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_ERROR, error);
+		
+		// SOLID-S: 单一职责 - 提供针对性的错误建议
+		CString detailedError = GetDetailedErrorSuggestion(transportIndex, error);
+		AppendLog(L"连接失败: " + statusMsg);
+		if (!detailedError.IsEmpty())
+		{
+			AppendLog(L"建议: " + detailedError);
+		}
+		
+		// 更新连接状态显示
+		if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
+		{
+			m_ctrlConnectionStatus.SetWindowText(statusMsg);
+		}
+		return;
+	}
+	
+	// 连接成功，更新传输对象和可靠通道
+	m_transport = newTransport;
+	m_reliableChannel = std::make_shared<ReliableChannel>(m_transport);
+	
+	// SOLID-S: 单一职责 - 配置协议参数 (DRY: 统一配置管理)
+	ConfigureReliableChannelFromConfig();
+	
+	// 设置回调函数 (保持原有功能)
+	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
+		if (stats.totalBytes > 0)
+		{
+			int progress = static_cast<int>((stats.transferredBytes * 100) / stats.totalBytes);
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(progress);
+			}
+			
+			CString statusText;
+			statusText.Format(L"状态: 传输中 (%.1f%%, %zu/%zu 字节)", 
+				stats.GetProgress() * 100, stats.transferredBytes, stats.totalBytes);
+			if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+				m_ctrlTransferStatus.SetWindowText(statusText);
+			}
+		}
+	});
+	
+	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
+		CString msg = CA2W(message.c_str(), CP_UTF8);
+		if (success)
+		{
+			AppendLog(L"传输完成: " + msg);
+			if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+				m_ctrlTransferStatus.SetWindowText(L"就绪");
+			}
+			
+			// 传输完成后清理发送数据，不显示到接收区域
+			// 发送的数据不应该显示在接收区域，除非是真实的回环测试
+		}
+		else
+		{
+			AppendLog(L"传输失败: " + msg);
+		}
+		m_bTransmitting = false;
+		UpdateButtonStates();
+	});
+	
+	m_reliableChannel->SetFileReceivedCallback([this](const std::string& filename, const std::vector<uint8_t>& data) {
+		CString filenameW = CA2W(filename.c_str(), CP_UTF8);
+		CString msg;
+		if (filename == "[数据传输]")
+		{
+			msg.Format(L"可靠传输完成 (%zu 字节)", data.size());
+		}
+		else
+		{
+			msg.Format(L"接收到文件: %s (%zu 字节)", filenameW.GetString(), data.size());
+		}
+		AppendLog(msg);
+		DisplayReceivedData(data);
+	});
+	
+	// 启用接收功能
+	m_reliableChannel->EnableReceiving(true);
+	
+	if (m_reliableChannel && m_reliableChannel->Start())
+	{
+		m_bConnected = true;
+		UpdateButtonStates();
+		
+		// 获取传输类型和端点信息用于显示 (DRY: 复用格式化函数)
+		std::string transportTypeStr = m_transport->GetTransportType();
+		std::string endpoint;
+		
+		// 重新获取配置信息 (KISS: 简化作用域管理)
+		TransportConfig currentConfig = GetTransportConfigFromUI();
+		
+		// 获取端点信息 (SOLID-S: 单一职责 - 端点信息获取)
+		if (transportTypeStr == "Serial")
+		{
+			endpoint = currentConfig.portName;
+		}
+		else if (transportTypeStr == "TCP" || transportTypeStr == "UDP")
+		{
+			// 获取实际的网络连接信息
+			std::string actualEndpoint = GetNetworkConnectionInfo(transportTypeStr);
+			endpoint = actualEndpoint.empty() ? (currentConfig.ipAddress + ":" + std::to_string(currentConfig.port)) : actualEndpoint;
+		}
+		else if (transportTypeStr == "LPT" || transportTypeStr == "USB")
+		{
+			endpoint = currentConfig.portName;
+		}
+		
+		// 格式化连接信息
+		CString transportInfo = FormatTransportInfo(transportTypeStr, endpoint);
+		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_OPEN);
+		
+		AppendLog(L"连接成功 - " + transportInfo);
+		
+		// 更新连接状态显示
+		if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
+		{
+			m_ctrlConnectionStatus.SetWindowText(statusMsg);
+		}
+	}
+	else
+	{
+		std::string error = m_reliableChannel ? m_reliableChannel->GetLastError() : "可靠通道启动失败";
+		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_ERROR, error);
+		AppendLog(L"可靠通道启动失败: " + statusMsg);
+		
+		// 更新连接状态显示
+		if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
+		{
+			m_ctrlConnectionStatus.SetWindowText(statusMsg);
+		}
+	}
+}
+
+void CPortMasterDlg::OnBnClickedDisconnect()
+{
+	if (m_reliableChannel)
+	{
+		m_reliableChannel->Stop();
+	}
+	
+	m_bConnected = false;
+	m_bTransmitting = false;
+	UpdateButtonStates();
+	UpdateProtocolStatus(); // SOLID-S: 更新协议状态显示
+	AppendLog(L"已断开连接");
+	
+	// 更新状态显示
+	if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
+	{
+		m_ctrlConnectionStatus.SetWindowText(L"未连接");
+	}
+	if (IsWindow(m_ctrlProtocolStatus.GetSafeHwnd()))
+	{
+		m_ctrlProtocolStatus.SetWindowText(L"空闲");
+	}
+}
+
+void CPortMasterDlg::OnBnClickedSend()
+{
+	// 优先检查是否有文件数据要发送
+	std::vector<uint8_t> dataToSend;
+	bool isFileTransmission = false;
+	
+	if (!m_transmissionData.empty())
+	{
+		// 有文件数据，发送文件
+		dataToSend = m_transmissionData;
+		isFileTransmission = true;
+		AppendLog(L"发送文件数据");
+	}
+	else
+	{
+		// 获取输入框数据
+		dataToSend = GetInputData();
+		AppendLog(L"发送输入数据");
+	}
+	
+	if (dataToSend.empty())
+	{
+		ShowUserMessage(L"没有数据可发送", L"请在十六进制或文本输入框中输入数据，或拖放文件", MB_ICONWARNING);
+		return;
+	}
+	
+<<<<<<< .mine
+	// 执行传输
+	if (m_bReliableMode) {
+		ExecuteReliableTransmission(transmissionData);
+	} else {
+		ExecuteDirectTransmission(transmissionData);
+	}
+	
+	WriteDebugLog("[DEBUG] OnBnClickedSend: 数据发送处理完成");
+}
+
+// TransmissionData 结构已移至头文件
+
+// 新增：验证连接状态
+bool CPortMasterDlg::ValidateConnectionState() {
+	if (!m_bConnected) {
+		ShowUserMessage(L"连接错误", L"请先连接端口才能发送数据", MB_ICONERROR);
+		return false;
+	}
+	return true;
+}
+
+// 新增：准备传输数据
+bool CPortMasterDlg::PrepareTransmissionData(TransmissionData& transmissionData) {
+	if (!m_transmissionData.empty()) {
+		// 文件传输优先
+		transmissionData.data = m_transmissionData;
+		transmissionData.isFileTransmission = true;
+		transmissionData.displayName = m_currentFileName.IsEmpty() ? L"文件数据" : m_currentFileName;
+		AppendLog(L"准备发送文件: " + transmissionData.displayName);
+	} else {
+		// SOLID-O: 开放封闭原则 - 检查设备管理命令
+		CString inputText;
+		if (::IsWindow(m_ctrlInputHex.m_hWnd)) {
+			m_ctrlInputHex.GetWindowText(inputText);
+			inputText.Trim();
+			
+			// 如果是设备管理命令，处理后返回false阻止数据传输
+			if (!inputText.IsEmpty() && ProcessDeviceCommand(inputText)) {
+				// 清空输入框
+				m_ctrlInputHex.SetWindowText(L"");
+				return false;
+			}
+		}
+		
+		// 输入框数据
+		transmissionData.data = GetInputData();
+		transmissionData.isFileTransmission = false;
+		transmissionData.displayName = L"输入数据";
+		AppendLog(L"准备发送输入数据");
+	}
+	
+	if (transmissionData.data.empty()) {
+		ShowUserMessage(L"没有数据可发送", L"请在输入框中输入数据，或拖放文件", MB_ICONWARNING);
+		return false;
+	}
+	
+	return true;
+}
+
+// 新增：执行可靠传输
+void CPortMasterDlg::ExecuteReliableTransmission(const TransmissionData& transmissionData) {
+	if (!m_reliableChannel) {
+		AppendLog(L"可靠传输通道未初始化");
+||||||| .r19984
+	// 执行传输
+	if (m_bReliableMode) {
+		ExecuteReliableTransmission(transmissionData);
+	} else {
+		ExecuteDirectTransmission(transmissionData);
+	}
+	
+	WriteDebugLog("[DEBUG] OnBnClickedSend: 数据发送处理完成");
+}
+
+// TransmissionData 结构已移至头文件
+
+// 新增：验证连接状态
+bool CPortMasterDlg::ValidateConnectionState() {
+	if (!m_bConnected) {
+		ShowUserMessage(L"连接错误", L"请先连接端口才能发送数据", MB_ICONERROR);
+		return false;
+	}
+	return true;
+}
+
+// 新增：准备传输数据
+bool CPortMasterDlg::PrepareTransmissionData(TransmissionData& transmissionData) {
+	if (!m_transmissionData.empty()) {
+		// 文件传输优先
+		transmissionData.data = m_transmissionData;
+		transmissionData.isFileTransmission = true;
+		transmissionData.displayName = m_currentFileName.IsEmpty() ? L"文件数据" : m_currentFileName;
+		AppendLog(L"准备发送文件: " + transmissionData.displayName);
+	} else {
+		// 输入框数据
+		transmissionData.data = GetInputData();
+		transmissionData.isFileTransmission = false;
+		transmissionData.displayName = L"输入数据";
+		AppendLog(L"准备发送输入数据");
+	}
+	
+	if (transmissionData.data.empty()) {
+		ShowUserMessage(L"没有数据可发送", L"请在输入框中输入数据，或拖放文件", MB_ICONWARNING);
+		return false;
+	}
+	
+	return true;
+}
+
+// 新增：执行可靠传输
+void CPortMasterDlg::ExecuteReliableTransmission(const TransmissionData& transmissionData) {
+	if (!m_reliableChannel) {
+		AppendLog(L"可靠传输通道未初始化");
+=======
+	// 检查连接状态
+	if (!m_bConnected)
+	{
+		ShowUserMessage(L"连接错误", 
+			L"请先点击\"连接\"按钮建立端口连接，然后再发送数据。\n\n"
+			L"操作步骤：\n"
+			L"1. 选择端口类型和参数\n"
+			L"2. 点击\"连接\"按钮\n"
+			L"3. 点击\"发送\"按钮传输数据", 
+			MB_ICONERROR);
+>>>>>>> .r19995
+		return;
+	}
+	
+	// 检查是否正在传输中
+	if (m_bTransmitting)
+	{
+		ShowUserMessage(L"传输忙碌", L"正在传输中，请等待完成后再发送新数据", MB_ICONINFORMATION);
+		return;
+	}
+	
+	if (m_bReliableMode && m_reliableChannel)
+	{
+		// 使用可靠传输模式
+		m_bTransmitting = true;
+		if (isFileTransmission && !m_currentFileName.IsEmpty())
+		{
+			// 发送文件（带文件名）
+			std::string fileNameStr = CT2A(m_currentFileName);
+			if (m_reliableChannel->SendFile(fileNameStr, dataToSend))
+			{
+				AppendLog(L"开始可靠文件传输: " + m_currentFileName);
+			}
+			else
+			{
+				m_bTransmitting = false;
+				AppendLog(L"可靠文件传输启动失败");
+				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
+				if (!error.IsEmpty())
+				{
+					AppendLog(L"错误: " + error);
+				}
+			}
+		}
+		else
+		{
+			// 发送数据
+			if (m_reliableChannel->SendData(dataToSend))
+			{
+				AppendLog(L"开始可靠传输");
+			}
+			else
+			{
+				m_bTransmitting = false;
+				AppendLog(L"可靠传输启动失败");
+				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
+				if (!error.IsEmpty())
+				{
+					AppendLog(L"错误: " + error);
+				}
+			}
+		}
+	}
+	else
+	{
+		// 使用普通传输模式（模拟）
+		StartDataTransmission(dataToSend);
+	}
+}
+
+void CPortMasterDlg::OnBnClickedClear()
+{
+	// 这个是"清除显示"按钮，只清除显示区域
+	m_ctrlHexView.SetWindowText(L"");
+	m_ctrlTextView.SetWindowText(L"");
+	
+	
+	AppendLog(L"显示区域已清空");
+}
+
+
+
+void CPortMasterDlg::OnCbnSelchangePortType()
+{
+<<<<<<< .mine
+	WriteDebugLog("[DEBUG] OnCbnSelchangePortType: 开始端口类型切换");
+	
+	// SOLID-S: 单一职责 - 检查连接状态并处理切换逻辑
+	if (!CheckConnectionStateOnPortChange()) {
+		// 用户取消了切换操作，恢复之前的选择
+		WriteDebugLog("[INFO] 用户取消端口类型切换");
+		return;
+	}
+	
+	// KISS: 简化的端口列表更新（同时刷新设备）
+	if (m_deviceManager) {
+		WriteDebugLog("[DEBUG] 端口类型改变，自动刷新设备列表");
+		RefreshDeviceList();
+	} else {
+		UpdatePortList();
+	}
+||||||| .r19984
+	WriteDebugLog("[DEBUG] OnCbnSelchangePortType: 开始端口类型切换");
+	
+	// SOLID-S: 单一职责 - 检查连接状态并处理切换逻辑
+	if (!CheckConnectionStateOnPortChange()) {
+		// 用户取消了切换操作，恢复之前的选择
+		WriteDebugLog("[INFO] 用户取消端口类型切换");
+		return;
+	}
+	
+	// KISS: 简化的端口列表更新
+	UpdatePortList();
+=======
+	UpdatePortList();
+>>>>>>> .r19995
+	UpdatePortTypeSpecificControls(); // 新增：更新端口类型相关控件状态
+	AppendLog(L"切换端口类型");
+}
+
+void CPortMasterDlg::OnBnClickedRefreshPorts()
+{
+	// SOLID-S: 单一职责 - 专门负责手动刷新设备列表
+	WriteDebugLog("[DEBUG] OnBnClickedRefreshPorts: 用户手动刷新设备列表");
+	UpdatePortList();
+	AppendLog(L"设备列表已手动刷新");
+}
+
+void CPortMasterDlg::OnBnClickedReliableMode()
+{
+	m_bReliableMode = (m_ctrlReliableMode.GetCheck() == BST_CHECKED);
+<<<<<<< .mine
+	
+	WriteDebugLog(("[MODE] 传输模式切换: " + std::string(oldReliableMode ? "可靠" : "直接") + " -> " + std::string(m_bReliableMode ? "可靠" : "直接")).c_str());
+	
+	// SOLID-S: 简化的协议配置信息显示
+	if (m_bConnected) {
+		WriteDebugLog("[DEBUG] 应用协议配置优化");
+		
+		if (m_bReliableMode) {
+			AppendLog(L"已切换到可靠传输模式");
+		} else {
+			AppendLog(L"已切换到直接传输模式");
+		}
+		
+		// 更新协议状态显示
+		UpdateProtocolStatus();
+	}
+	
+	// ★★★ 修复：记录切换前的关键状态 ★★★
+	WriteDebugLog(("[STATE] 切换前状态 - 连接:" + std::string(m_bConnected ? "是" : "否") + 
+				   ", 传输中:" + std::string(m_bTransmitting.load() ? "是" : "否")).c_str());
+	
+	// ★修复：只有在已连接状态下才需要清理，未连接时保持状态不变
+	if (m_bConnected) {
+		WriteDebugLog("[MODE] 已连接状态下切换模式，开始状态清理");
+		
+		// 1. 确保传输状态正确重置
+		bool wasTransmitting = m_bTransmitting.load();
+		m_bTransmitting.store(false);
+		WriteDebugLog(("[STATE] 传输状态重置: " + std::string(wasTransmitting ? "是" : "否") + " -> 否").c_str());
+		
+		// 2. 清理传输定时器
+		if (m_transmissionTimer != 0) {
+			WriteDebugLog(("[TIMER] 清理传输定时器 ID: " + std::to_string(m_transmissionTimer)).c_str());
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
+		}
+		KillTimer(AppConstants::TRANSMISSION_TIMER_ID);
+		
+		// 3. 重置可靠通道状态（但保持连接）
+		if (m_reliableChannel) {
+			WriteDebugLog("[CHANNEL] 重置可靠通道状态，保持连接");
+			// 注意：不调用Stop()，而是重置内部状态，保持连接
+			// m_reliableChannel->Stop(); // ★ 修复：注释掉，避免断开连接
+		}
+		
+		// 4. ★★★ 修复：仅清理分片传输相关缓冲区，保留用户输入数据 ★★★
+		// 注意：不清空m_transmissionData，因为它可能包含用户拖放的文件或输入的数据
+		// m_transmissionData.clear(); // ★ 修复：注释掉，保留用户数据
+		m_chunkTransmissionData.clear(); // 仅清理分片传输缓冲区
+		m_chunkTransmissionIndex = 0;
+		WriteDebugLog("[BUFFER] 分片传输缓冲区已清理，保留用户数据");
+		
+		// 5. 重置传输统计
+		m_transmissionProgress = 0;
+		m_totalBytesTransmitted = 0;
+		m_transmissionStartTime = 0;
+		m_lastSpeedUpdateTime = 0;
+		WriteDebugLog("[STATS] 传输统计已重置");
+		
+		// 6. 重新配置Transport回调
+		WriteDebugLog("[MODE] 开始重新配置Transport回调");
+		ConfigureTransportCallback();
+		WriteDebugLog("[MODE] Transport回调重新配置完成");
+		
+		// ★★★ 修复：确保连接状态未被意外修改 ★★★
+		if (!m_bConnected) {
+			WriteDebugLog("[ERROR] 连接状态在模式切换过程中丢失，强制恢复");
+			m_bConnected = true; // 强制恢复连接状态
+		}
+	} else {
+		WriteDebugLog("[MODE] 未连接状态下切换模式，无需状态清理");
+	}
+	
+	// ★★★ 修复：记录切换后的关键状态 ★★★
+	WriteDebugLog(("[STATE] 切换后状态 - 连接:" + std::string(m_bConnected ? "是" : "否") + 
+				   ", 传输中:" + std::string(m_bTransmitting.load() ? "是" : "否") + 
+				   ", 可靠模式:" + std::string(m_bReliableMode ? "是" : "否")).c_str());
+	
+	// ★★★ 修复：添加按钮状态调试信息 ★★★
+	bool hasSendableData = HasValidInputData();
+	bool shouldEnableSend = m_bConnected && !m_bTransmitting.load() && hasSendableData;
+	WriteDebugLog(("[BUTTON] 发送按钮状态计算 - 连接:" + std::string(m_bConnected ? "是" : "否") + 
+				   ", 非传输中:" + std::string(!m_bTransmitting.load() ? "是" : "否") + 
+				   ", 有数据:" + std::string(hasSendableData ? "是" : "否") + 
+				   ", 应启用:" + std::string(shouldEnableSend ? "是" : "否")).c_str());
+	
+||||||| .r19984
+	
+	WriteDebugLog(("[MODE] 传输模式切换: " + std::string(oldReliableMode ? "可靠" : "直接") + " -> " + std::string(m_bReliableMode ? "可靠" : "直接")).c_str());
+	
+	// ★★★ 修复：记录切换前的关键状态 ★★★
+	WriteDebugLog(("[STATE] 切换前状态 - 连接:" + std::string(m_bConnected ? "是" : "否") + 
+				   ", 传输中:" + std::string(m_bTransmitting.load() ? "是" : "否")).c_str());
+	
+	// ★修复：只有在已连接状态下才需要清理，未连接时保持状态不变
+	if (m_bConnected) {
+		WriteDebugLog("[MODE] 已连接状态下切换模式，开始状态清理");
+		
+		// 1. 确保传输状态正确重置
+		bool wasTransmitting = m_bTransmitting.load();
+		m_bTransmitting.store(false);
+		WriteDebugLog(("[STATE] 传输状态重置: " + std::string(wasTransmitting ? "是" : "否") + " -> 否").c_str());
+		
+		// 2. 清理传输定时器
+		if (m_transmissionTimer != 0) {
+			WriteDebugLog(("[TIMER] 清理传输定时器 ID: " + std::to_string(m_transmissionTimer)).c_str());
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
+		}
+		KillTimer(AppConstants::TRANSMISSION_TIMER_ID);
+		
+		// 3. 重置可靠通道状态（但保持连接）
+		if (m_reliableChannel) {
+			WriteDebugLog("[CHANNEL] 重置可靠通道状态，保持连接");
+			// 注意：不调用Stop()，而是重置内部状态，保持连接
+			// m_reliableChannel->Stop(); // ★ 修复：注释掉，避免断开连接
+		}
+		
+		// 4. ★★★ 修复：仅清理分片传输相关缓冲区，保留用户输入数据 ★★★
+		// 注意：不清空m_transmissionData，因为它可能包含用户拖放的文件或输入的数据
+		// m_transmissionData.clear(); // ★ 修复：注释掉，保留用户数据
+		m_chunkTransmissionData.clear(); // 仅清理分片传输缓冲区
+		m_chunkTransmissionIndex = 0;
+		WriteDebugLog("[BUFFER] 分片传输缓冲区已清理，保留用户数据");
+		
+		// 5. 重置传输统计
+		m_transmissionProgress = 0;
+		m_totalBytesTransmitted = 0;
+		m_transmissionStartTime = 0;
+		m_lastSpeedUpdateTime = 0;
+		WriteDebugLog("[STATS] 传输统计已重置");
+		
+		// 6. 重新配置Transport回调
+		WriteDebugLog("[MODE] 开始重新配置Transport回调");
+		ConfigureTransportCallback();
+		WriteDebugLog("[MODE] Transport回调重新配置完成");
+		
+		// ★★★ 修复：确保连接状态未被意外修改 ★★★
+		if (!m_bConnected) {
+			WriteDebugLog("[ERROR] 连接状态在模式切换过程中丢失，强制恢复");
+			m_bConnected = true; // 强制恢复连接状态
+		}
+	} else {
+		WriteDebugLog("[MODE] 未连接状态下切换模式，无需状态清理");
+	}
+	
+	// ★★★ 修复：记录切换后的关键状态 ★★★
+	WriteDebugLog(("[STATE] 切换后状态 - 连接:" + std::string(m_bConnected ? "是" : "否") + 
+				   ", 传输中:" + std::string(m_bTransmitting.load() ? "是" : "否") + 
+				   ", 可靠模式:" + std::string(m_bReliableMode ? "是" : "否")).c_str());
+	
+	// ★★★ 修复：添加按钮状态调试信息 ★★★
+	bool hasSendableData = HasValidInputData();
+	bool shouldEnableSend = m_bConnected && !m_bTransmitting.load() && hasSendableData;
+	WriteDebugLog(("[BUTTON] 发送按钮状态计算 - 连接:" + std::string(m_bConnected ? "是" : "否") + 
+				   ", 非传输中:" + std::string(!m_bTransmitting.load() ? "是" : "否") + 
+				   ", 有数据:" + std::string(hasSendableData ? "是" : "否") + 
+				   ", 应启用:" + std::string(shouldEnableSend ? "是" : "否")).c_str());
+	
+=======
+>>>>>>> .r19995
+	UpdateButtonStates();
+	AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
+}
+
+void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
+{
+	WriteDebugLog("[DEBUG] OnDropFiles: 接收到文件拖放事件");
+	
+	try 
+	{
+		UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, NULL, 0);
+		
+		if (fileCount == 0)
+		{
+			ShowUserMessage(L"拖放失败", L"未检测到有效文件", MB_ICONWARNING);
+			WriteDebugLog("[WARNING] OnDropFiles: 未检测到有效文件");
+			return;
+		}
+		
+		// 多文件拖放处理
+		if (fileCount > 1)
+		{
+			CString message;
+			message.Format(L"检测到 %u 个文件，只能处理第一个文件。\n请一次只拖放一个文件。", fileCount);
+			ShowUserMessage(L"多文件拖放", message, MB_ICONINFORMATION);
+		}
+		
+		// 处理第一个文件
+		TCHAR filePath[MAX_PATH];
+		UINT pathLength = DragQueryFile(hDropInfo, 0, filePath, MAX_PATH);
+		
+		if (pathLength == 0)
+		{
+			ShowUserMessage(L"拖放错误", L"无法获取文件路径", MB_ICONERROR);
+			WriteDebugLog("[ERROR] OnDropFiles: DragQueryFile 返回路径长度为0");
+			return;
+		}
+		
+		// 显示拖放的文件路径
+		CString fileName = PathFindFileName(filePath);
+		CString message;
+		message.Format(L"正在处理文件: %s", fileName);
+		AppendLog(message);
+		
+		// 检查文件是否存在
+		DWORD attributes = GetFileAttributes(filePath);
+		if (attributes == INVALID_FILE_ATTRIBUTES)
+		{
+			message.Format(L"文件不存在或无法访问:\n%s", filePath);
+			ShowUserMessage(L"文件访问错误", message, MB_ICONERROR);
+			WriteDebugLog(CT2A(message));
+			return;
+		}
+		
+		// 检查是否为目录
+		if (attributes & FILE_ATTRIBUTE_DIRECTORY)
+		{
+			ShowUserMessage(L"目录拖放", L"暂不支持目录拖放，请选择具体文件进行传输", MB_ICONWARNING);
+			WriteDebugLog("[INFO] OnDropFiles: 跳过目录拖放");
+			return;
+		}
+		
+		// 获取文件大小并显示
+		HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		if (hFile != INVALID_HANDLE_VALUE)
+		{
+			LARGE_INTEGER fileSize;
+			if (GetFileSizeEx(hFile, &fileSize))
+			{
+				CString sizeMessage;
+				if (fileSize.QuadPart < 1024)
+					sizeMessage.Format(L"文件大小: %I64d 字节", fileSize.QuadPart);
+				else if (fileSize.QuadPart < 1024 * 1024)
+					sizeMessage.Format(L"文件大小: %.2f KB", fileSize.QuadPart / 1024.0);
+				else
+					sizeMessage.Format(L"文件大小: %.2f MB", fileSize.QuadPart / (1024.0 * 1024.0));
+				
+				AppendLog(sizeMessage);
+				UpdateDataSourceDisplay(L"文件: " + fileName);
+			}
+			CloseHandle(hFile);
+		}
+		
+		// 读取文件内容
+		WriteDebugLog("[INFO] OnDropFiles: 开始加载文件内容");
+		if (LoadFileForTransmission(filePath))
+		{
+			ShowUserMessage(L"文件加载成功", 
+				L"文件已加载并准备传输。\n可以在下方查看文件内容预览，\n点击发送按钮开始传输。", 
+				MB_ICONINFORMATION);
+			
+			// 更新按钮状态
+			UpdateButtonStates();
+			WriteDebugLog("[SUCCESS] OnDropFiles: 文件加载成功");
+		}
+		else
+		{
+			ShowUserMessage(L"文件加载失败", L"无法读取文件内容，请检查文件是否损坏或权限不足", MB_ICONERROR);
+			WriteDebugLog("[ERROR] OnDropFiles: 文件加载失败");
+		}
+	}
+	catch (...)
+	{
+		ShowUserMessage(L"拖放异常", L"文件拖放处理过程中发生异常", MB_ICONERROR);
+		WriteDebugLog("[ERROR] OnDropFiles: 处理拖放文件时发生异常");
+	}
+	
+	DragFinish(hDropInfo);
+	CDialogEx::OnDropFiles(hDropInfo);
+	WriteDebugLog("[DEBUG] OnDropFiles: 文件拖放事件处理完成");
+}
+
+// SOLID-S: 单一职责 - 专门负责获取详细错误建议
+CString CPortMasterDlg::GetDetailedErrorSuggestion(int transportIndex, const std::string& error)
+{
+	// SOLID-S: 单一职责 - 使用静态映射避免UI依赖 (YAGNI: 仅实现必要的传输类型)
+	static const wchar_t* transportTypes[] = {
+		L"串口", L"TCP客户端", L"TCP服务器", L"UDP", L"并口", L"USB打印机", L"回环测试"
+	};
+	
+	CString transportType = L"";
+	if (transportIndex >= 0 && transportIndex < _countof(transportTypes))
+	{
+		transportType = transportTypes[transportIndex];
+	}
+	
+	CString errorMsg = CA2W(error.c_str(), CP_UTF8);
+	errorMsg.MakeLower();
+	
+	// 串口相关错误建议
+	if (transportType == L"串口")
+	{
+		if (errorMsg.Find(L"access") != -1 || errorMsg.Find(L"占用") != -1)
+		{
+			return L"串口被其他程序占用，请关闭相关程序后重试";
+		}
+		else if (errorMsg.Find(L"find") != -1 || errorMsg.Find(L"exist") != -1)
+		{
+			return L"串口不存在，请检查设备连接并刷新端口列表";
+		}
+		else if (errorMsg.Find(L"parameter") != -1 || errorMsg.Find(L"baud") != -1)
+		{
+			return L"串口参数配置错误，请检查波特率、数据位等设置";
+		}
+		return L"请检查串口连接、权限和参数配置";
+	}
+	// 网络相关错误建议
+	else if (transportType == L"TCP客户端" || transportType == L"TCP服务器")
+	{
+		if (errorMsg.Find(L"connect") != -1 || errorMsg.Find(L"connection") != -1)
+		{
+			return L"无法建立TCP连接，请检查IP地址、端口号和网络状况";
+		}
+		else if (errorMsg.Find(L"bind") != -1 || errorMsg.Find(L"address") != -1)
+		{
+			return L"TCP端口绑定失败，请检查端口是否被占用或更换端口";
+		}
+		else if (errorMsg.Find(L"timeout") != -1)
+		{
+			return L"连接超时，请检查网络连通性和防火墙设置";
+		}
+		return L"请检查网络配置、防火墙设置和目标设备状态";
+	}
+	else if (transportType == L"UDP")
+	{
+		if (errorMsg.Find(L"bind") != -1)
+		{
+			return L"UDP端口绑定失败，请更换端口或检查权限";
+		}
+		else if (errorMsg.Find(L"address") != -1)
+		{
+			return L"UDP地址配置错误，请检查IP地址和端口设置";
+		}
+		return L"请检查UDP端口配置和网络权限";
+	}
+	// 打印机相关错误建议
+	else if (transportType == L"并口" || transportType == L"USB打印机")
+	{
+		if (errorMsg.Find(L"printer") != -1 || errorMsg.Find(L"打印") != -1)
+		{
+			return L"打印机不可用，请检查设备连接和驱动安装";
+		}
+		else if (errorMsg.Find(L"access") != -1 || errorMsg.Find(L"permission") != -1)
+		{
+			return L"打印机访问权限不足，请以管理员身份运行程序";
+		}
+		return L"请检查打印机连接、权限和驱动程序";
+	}
+	// 回环测试
+	else if (transportType == L"回环测试")
+	{
+		return L"回环测试失败，请检查程序配置和系统资源";
+	}
+	
+	// 通用建议
+	return L"请检查设备连接、权限设置和配置参数";
+}
+
+// SOLID-S: 单一职责 - 专门负责接收目录的设置和创建
+void CPortMasterDlg::SetupReceiveDirectory()
+{
+	if (!m_reliableChannel)
+		return;
+		
+	// 从配置管理器获取接收目录 (DRY: 复用配置管理)
+	ConfigManager config;
+	ConfigManager::AppConfig appConfig = config.GetAppConfig();
+	
+	std::string receiveDir = appConfig.receiveDirectory;
+	if (receiveDir.empty())
+	{
+		// 使用默认接收目录
+		char localAppData[MAX_PATH];
+		if (SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData) == S_OK)
+		{
+			receiveDir = std::string(localAppData) + "\\PortIO\\Recv";
+		}
+		else
+		{
+			receiveDir = ".\\Recv";
+		}
+	}
+	
+	// 确保接收目录存在 (SOLID-S: 单一职责 - 目录管理)
+	try
+	{
+		std::filesystem::path dirPath(receiveDir);
+		if (!std::filesystem::exists(dirPath))
+		{
+			std::filesystem::create_directories(dirPath);
+			CString dirMsg = CA2W(receiveDir.c_str(), CP_UTF8);
+			AppendLog(L"已创建接收目录: " + dirMsg);
+		}
+		
+		// 设置到可靠通道
+		m_reliableChannel->SetReceiveDirectory(receiveDir);
+		
+		CString dirMsg = CA2W(receiveDir.c_str(), CP_UTF8);
+		AppendLog(L"接收目录设置为: " + dirMsg);
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg = CA2W(e.what(), CP_UTF8);
+		AppendLog(L"创建接收目录失败: " + errorMsg);
+		
+		// 使用当前目录作为备用方案
+		m_reliableChannel->SetReceiveDirectory(".");
+		AppendLog(L"使用当前目录作为接收目录");
+	}
+}
+
+// SOLID-S: 单一职责 - 专门负责获取网络连接详细信息
+std::string CPortMasterDlg::GetNetworkConnectionInfo(const std::string& transportType)
+{
+	if (!m_transport)
+		return "";
+		
+	std::string info;
+	
+	try
+	{
+		if (transportType == "TCP")
+		{
+			// 尝试转换为TCP传输获取详细连接信息
+			auto tcpTransport = std::dynamic_pointer_cast<TcpTransport>(m_transport);
+			if (tcpTransport)
+			{
+				std::string localEndpoint = tcpTransport->GetLocalEndpoint();
+				std::string remoteEndpoint = tcpTransport->GetRemoteEndpoint();
+				
+				if (tcpTransport->IsServerMode())
+				{
+					if (!remoteEndpoint.empty())
+					{
+						info = "服务器(" + localEndpoint + ") ← 客户端(" + remoteEndpoint + ")";
+					}
+					else
+					{
+						info = "服务器(" + localEndpoint + ") - 等待连接";
+					}
+				}
+				else
+				{
+					info = "客户端 → " + remoteEndpoint + " (本地:" + localEndpoint + ")";
+				}
+			}
+		}
+		else if (transportType == "UDP")
+		{
+			// 尝试转换为UDP传输获取详细连接信息
+			auto udpTransport = std::dynamic_pointer_cast<UdpTransport>(m_transport);
+			if (udpTransport)
+			{
+				std::string localEndpoint = udpTransport->GetLocalEndpoint();
+				std::string remoteEndpoint = udpTransport->GetRemoteEndpoint();
+				
+				if (!remoteEndpoint.empty())
+				{
+					info = "UDP(" + localEndpoint + ") ↔ " + remoteEndpoint;
+				}
+				else
+				{
+					info = "UDP(" + localEndpoint + ") - 学习模式";
+				}
+			}
+		}
+	}
+	catch (const std::exception&)
+	{
+		// 如果转换失败，返回空字符串使用默认显示
+		return "";
+	}
+	
+	return info;
+}
+
+// SOLID-S: 单一职责 - 传输工厂方法 (SOLID-O: 开闭原则)
+std::shared_ptr<ITransport> CPortMasterDlg::CreateTransportFromUI()
+{
+	int transportIndex = m_ctrlPortType.GetCurSel();
+	if (transportIndex == CB_ERR)
+		return nullptr;
+
+	// SOLID-O: 开闭原则 - 可扩展的传输类型工厂
+	switch (transportIndex)
+	{
+	case 0: // 串口
+		return std::make_shared<SerialTransport>();
+		
+	case 1: // 并口 
+		return std::make_shared<LptSpoolerTransport>();
+		
+	case 2: // USB打印机
+		return std::make_shared<UsbPrinterTransport>();
+		
+	case 3: // TCP客户端
+		{
+			auto tcp = std::make_shared<TcpTransport>();
+			return tcp;
+		}
+		
+	case 4: // TCP服务器
+		{
+			auto tcp = std::make_shared<TcpTransport>();
+			return tcp;
+		}
+		
+	case 5: // UDP
+		return std::make_shared<UdpTransport>();
+		
+	case 6: // 回环测试
+		return std::make_shared<LoopbackTransport>();
+		
+	default:
+		return nullptr;
+	}
+}
+
+// SOLID-S: 单一职责 - 配置参数采集 (DRY: 消除重复配置获取)
+TransportConfig CPortMasterDlg::GetTransportConfigFromUI()
+{
+	TransportConfig config; // 使用默认构造函数提供的基础默认值
+	
+	int transportIndex = m_ctrlPortType.GetCurSel();
+	
+	// SOLID-S: 单一职责 - 分类型配置采集
+	switch (transportIndex)
+	{
+	case 0: // 串口
+		{
+			// 端口名称
+			CString portName;
+			if (m_ctrlPortList.GetCurSel() != CB_ERR)
+			{
+				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), portName);
+				config.portName = CT2A(portName);
+			}
+			
+			// 波特率
+			CString baudRateStr;
+			if (m_ctrlBaudRate.GetCurSel() != CB_ERR)
+			{
+				m_ctrlBaudRate.GetLBText(m_ctrlBaudRate.GetCurSel(), baudRateStr);
+				config.baudRate = _ttoi(baudRateStr);
+			}
+			
+			// 数据位
+			CString dataBitsStr;
+			if (m_ctrlDataBits.GetCurSel() != CB_ERR)
+			{
+				m_ctrlDataBits.GetLBText(m_ctrlDataBits.GetCurSel(), dataBitsStr);
+				config.dataBits = _ttoi(dataBitsStr);
+			}
+			
+			// 校验位
+			int parityIndex = m_ctrlParity.GetCurSel();
+			if (parityIndex != CB_ERR)
+			{
+				config.parity = parityIndex; // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
+			}
+			
+			// 停止位
+			int stopBitsIndex = m_ctrlStopBits.GetCurSel();
+			if (stopBitsIndex != CB_ERR)
+			{
+				config.stopBits = (stopBitsIndex == 0) ? 1 : ((stopBitsIndex == 1) ? 2 : 2); // 1, 1.5->2, 2
+			}
+		}
+		break;
+		
+	case 1: // 并口
+	case 2: // USB打印机
+		{
+			// 获取打印机名称
+			CString printerName;
+			if (m_ctrlPortList.GetCurSel() != CB_ERR)
+			{
+				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), printerName);
+				config.portName = CT2A(printerName);
+			}
+		}
+		break;
+		
+	case 3: // TCP客户端
+		{
+			config.isServer = false;
+			
+			// 从端口列表中解析IP:端口
+			CString endpoint;
+			if (m_ctrlPortList.GetCurSel() != CB_ERR)
+			{
+				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), endpoint);
+				
+				// 解析 "127.0.0.1:8080" 格式
+				int colonPos = endpoint.Find(':');
+				if (colonPos != -1)
+				{
+					CString ipStr = endpoint.Left(colonPos);
+					CString portStr = endpoint.Mid(colonPos + 1);
+					
+					config.ipAddress = CT2A(ipStr);
+					config.port = _ttoi(portStr);
+				}
+				else
+				{
+					// 默认值
+					config.ipAddress = "127.0.0.1";
+					config.port = 8080;
+				}
+			}
+		}
+		break;
+		
+	case 4: // TCP服务器
+		{
+			config.isServer = true;
+			
+			// 从端口列表中解析端口
+			CString endpoint;
+			if (m_ctrlPortList.GetCurSel() != CB_ERR)
+			{
+				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), endpoint);
+				
+				// 解析 "监听端口:8080" 格式
+				int colonPos = endpoint.Find(':');
+				if (colonPos != -1)
+				{
+					CString portStr = endpoint.Mid(colonPos + 1);
+					config.port = _ttoi(portStr);
+				}
+				else
+				{
+					config.port = 8080;
+				}
+			}
+			
+			// 服务器绑定到所有接口
+			config.ipAddress = "0.0.0.0";
+		}
+		break;
+		
+	case 5: // UDP
+		{
+			// 从端口列表中解析端口
+			CString endpoint;
+			if (m_ctrlPortList.GetCurSel() != CB_ERR)
+			{
+				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), endpoint);
+				
+				// 解析 "UDP:8080" 格式
+				int colonPos = endpoint.Find(':');
+				if (colonPos != -1)
+				{
+					CString portStr = endpoint.Mid(colonPos + 1);
+					config.port = _ttoi(portStr);
+				}
+				else
+				{
+					config.port = 8080;
+				}
+			}
+			
+			// UDP默认配置
+			config.ipAddress = "127.0.0.1";
+		}
+		break;
+		
+	case 6: // 回环测试
+		{
+			// 回环测试使用默认配置
+			config.portName = "loopback";
+		}
+		break;
+	}
+	
+	return config;
+}
+
+// SOLID-S: 单一职责 - 从配置管理器设置可靠通道参数 (DRY: 统一配置管理)
+void CPortMasterDlg::ConfigureReliableChannelFromConfig()
+{
+	if (!m_reliableChannel)
+		return;
+		
+	try
+	{
+		// 从配置管理器获取协议配置 (DRY: 复用配置管理)
+		ConfigManager config;
+		ConfigManager::AppConfig appConfig = config.GetAppConfig();
+		
+		// 应用协议参数到可靠通道 (SOLID-S: 单一职责 - 参数配置)
+		m_reliableChannel->SetAckTimeout(appConfig.ackTimeoutMs);
+		m_reliableChannel->SetMaxRetries(appConfig.maxRetries);
+		m_reliableChannel->SetMaxPayloadSize(appConfig.maxPayloadSize);
+		
+		// 设置接收目录 (KISS: 简化目录管理逻辑)
+		std::string receiveDir = appConfig.receiveDirectory;
+		if (receiveDir.empty())
+		{
+			// 使用默认接收目录
+			char localAppData[MAX_PATH];
+			if (SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData) == S_OK)
+			{
+				receiveDir = std::string(localAppData) + "\\PortIO\\Recv";
+			}
+			else
+			{
+				receiveDir = ".\\Recv";
+			}
+		}
+		
+		// 确保接收目录存在 (SOLID-S: 单一职责 - 目录管理)
+		std::filesystem::path dirPath(receiveDir);
+		if (!std::filesystem::exists(dirPath))
+		{
+			std::filesystem::create_directories(dirPath);
+			CString dirMsg = CA2W(receiveDir.c_str(), CP_UTF8);
+			AppendLog(L"已创建接收目录: " + dirMsg);
+		}
+		
+		// 设置到可靠通道
+		m_reliableChannel->SetReceiveDirectory(receiveDir);
+		
+		// 记录配置应用日志
+		CString protocolMsg;
+		protocolMsg.Format(L"协议参数已配置: 超时=%dms, 重试=%d次, 负载=%zu字节", 
+			appConfig.ackTimeoutMs, appConfig.maxRetries, appConfig.maxPayloadSize);
+		AppendLog(protocolMsg);
+		
+		CString dirMsg = CA2W(receiveDir.c_str(), CP_UTF8);
+		AppendLog(L"接收目录: " + dirMsg);
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg = CA2W(e.what(), CP_UTF8);
+		AppendLog(L"配置协议参数失败: " + errorMsg);
+		
+		// 使用默认参数作为备用方案 (SOLID-I: 接口隔离 - 不依赖外部配置)
+		m_reliableChannel->SetAckTimeout(1000);
+		m_reliableChannel->SetMaxRetries(3);
+		m_reliableChannel->SetMaxPayloadSize(1024);
+		m_reliableChannel->SetReceiveDirectory(".");
+		
+		AppendLog(L"已使用默认协议参数");
+	}
+}
+
+// SOLID-S: 单一职责 - 用户界面交互方法实现
+
+CPortMasterDlg::~CPortMasterDlg()
+{
+	// 析构函数 - 清理资源
+	if (m_transmissionTimer != 0)
+	{
+		KillTimer(m_transmissionTimer);
+		m_transmissionTimer = 0;
+	}
+	
+	// 清理日志窗口
+	/* 临时注释掉日志窗口代码
+	if (m_pLogWindow)
+	{
+		if (::IsWindow(m_pLogWindow->GetSafeHwnd()))
+		{
+			m_pLogWindow->DestroyWindow();
+		}
+		delete m_pLogWindow;
+		m_pLogWindow = nullptr;
+	}
+	*/
+	
+	// 关闭异步消息管理器
+	try {
+		WriteDebugLog("[DEBUG] CPortMasterDlg::~CPortMasterDlg: 关闭异步消息管理器");
+		AsyncMessageManager::GetInstance().Shutdown();
+		WriteDebugLog("[DEBUG] CPortMasterDlg::~CPortMasterDlg: 异步消息管理器已关闭");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::~CPortMasterDlg: 关闭异步消息管理器异常");
+	}
+}
+
+void CPortMasterDlg::OnBnClickedClearInput()
+{
+	m_ctrlInputHex.SetWindowText(L"");
+	AppendLog(L"输入区域已清空");
+}
+
+void CPortMasterDlg::OnBnClickedClearDisplay()
+{
+	m_ctrlHexView.SetWindowText(L"");
+	m_ctrlTextView.SetWindowText(L"");
+	
+	// 清空显示数据缓冲区 (SOLID-S: 单一职责)
+	{
+		std::lock_guard<std::mutex> lock(m_displayDataMutex);
+		m_displayedData.clear();
+	}
+	
+	AppendLog(L"显示区域已清空");
+	UpdateButtonStates(); // 更新保存按钮状态
+}
+
+void CPortMasterDlg::OnBnClickedLoadFile()
+{
+	CFileDialog fileDlg(TRUE, nullptr, nullptr, 
+		OFN_FILEMUSTEXIST | OFN_HIDEREADONLY,
+		L"所有文件|*.*|文本文件|*.txt|二进制文件|*.bin|数据文件|*.dat||");
+		
+	if (fileDlg.DoModal() == IDOK)
+	{
+		CString filePath = fileDlg.GetPathName();
+		if (LoadFileForTransmission(filePath))
+		{
+			ShowUserMessage(L"文件加载成功", L"文件已加载并准备传输", MB_ICONINFORMATION);
+			UpdateButtonStates();
+		}
+		else
+		{
+			ShowUserMessage(L"文件加载失败", L"无法读取文件内容", MB_ICONERROR);
+		}
+	}
+}
+
+void CPortMasterDlg::OnBnClickedSaveFile()
+{
+	std::vector<uint8_t> dataToSave;
+	{
+		std::lock_guard<std::mutex> lock(m_displayDataMutex);
+		dataToSave = m_displayedData;
+	}
+	
+	if (dataToSave.empty())
+	{
+		ShowUserMessage(L"保存失败", L"没有数据可保存", MB_ICONWARNING);
+		return;
+	}
+	
+	CFileDialog fileDlg(FALSE, L"dat", L"ReceivedData",
+		OFN_OVERWRITEPROMPT,
+		L"数据文件|*.dat|二进制文件|*.bin|文本文件|*.txt|所有文件|*.*||");
+		
+	if (fileDlg.DoModal() == IDOK)
+	{
+		CString filePath = fileDlg.GetPathName();
+		std::ofstream file(CT2A(filePath), std::ios::binary);
+		
+		if (file.is_open())
+		{
+			file.write(reinterpret_cast<const char*>(dataToSave.data()), dataToSave.size());
+			file.close();
+			
+			CString msg;
+			msg.Format(L"文件保存成功: %s (%zu 字节)", 
+				PathFindFileName(filePath), dataToSave.size());
+			AppendLog(msg);
+			ShowUserMessage(L"保存成功", msg, MB_ICONINFORMATION);
+		}
+		else
+		{
+			ShowUserMessage(L"保存失败", L"无法创建文件", MB_ICONERROR);
+		}
+	}
+}
+
+void CPortMasterDlg::OnBnClickedCopyHex()
+{
+	CString hexText;
+	m_ctrlHexView.GetWindowText(hexText);
+	
+	if (!hexText.IsEmpty())
+	{
+		if (OpenClipboard())
+		{
+			EmptyClipboard();
+			size_t len = (hexText.GetLength() + 1) * sizeof(WCHAR);
+			HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len);
+			
+			if (hMem)
+			{
+				wcscpy_s((WCHAR*)GlobalLock(hMem), hexText.GetLength() + 1, hexText);
+				GlobalUnlock(hMem);
+				SetClipboardData(CF_UNICODETEXT, hMem);
+				AppendLog(L"十六进制数据已复制到剪贴板");
+			}
+			CloseClipboard();
+		}
+	}
+	else
+	{
+		ShowUserMessage(L"复制失败", L"没有十六进制数据可复制", MB_ICONWARNING);
+	}
+}
+
+void CPortMasterDlg::OnBnClickedCopyText()
+{
+	CString textData;
+	m_ctrlTextView.GetWindowText(textData);
+	
+	if (!textData.IsEmpty())
+	{
+		if (OpenClipboard())
+		{
+			EmptyClipboard();
+			size_t len = (textData.GetLength() + 1) * sizeof(WCHAR);
+			HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, len);
+			
+			if (hMem)
+			{
+				wcscpy_s((WCHAR*)GlobalLock(hMem), textData.GetLength() + 1, textData);
+				GlobalUnlock(hMem);
+				SetClipboardData(CF_UNICODETEXT, hMem);
+				AppendLog(L"文本数据已复制到剪贴板");
+			}
+			CloseClipboard();
+		}
+	}
+	else
+	{
+		ShowUserMessage(L"复制失败", L"没有文本数据可复制", MB_ICONWARNING);
+	}
+}
+
+void CPortMasterDlg::OnBnClickedCopy()
+{
+    // 统一复制：根据当前显示模式复制 HEX 文本或普通文本
+    if (m_bHexDisplay)
+    {
+        OnBnClickedCopyHex();
+    }
+    else
+    {
+        OnBnClickedCopyText();
+    }
+}
+
+void CPortMasterDlg::OnBnClickedTestWizard()
+{
+	// SOLID-S: 单一职责 - 专门负责打开测试向导对话框
+	WriteDebugLog("[DEBUG] OnBnClickedTestWizard: 用户点击测试向导按钮");
+	
+	try {
+		CTestWizardDialog testWizard(this);
+		testWizard.DoModal();
+		WriteDebugLog("[DEBUG] OnBnClickedTestWizard: 测试向导对话框已关闭");
+	}
+	catch (const std::exception& ex) {
+		WriteDebugLog(("[ERROR] OnBnClickedTestWizard: " + std::string(ex.what())).c_str());
+		ShowUserMessage(L"测试向导错误", L"无法打开测试向导对话框", MB_ICONERROR);
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] OnBnClickedTestWizard: 未知错误");
+		ShowUserMessage(L"测试向导错误", L"打开测试向导时发生未知错误", MB_ICONERROR);
+	}
+}
+
+void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == AppConstants::TRANSMISSION_TIMER_ID)
+	{
+		OnChunkTransmissionTimer();
+	}
+	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CPortMasterDlg::DisplayReceivedData(const std::vector<uint8_t>& data)
+{
+	if (data.empty())
+		return;
+		
+	// 更新显示数据缓冲区 (SOLID-S: 单一职责 - 数据管理)
+	{
+		std::lock_guard<std::mutex> lock(m_displayDataMutex);
+		m_displayedData = data; // 替换而不是追加
+	}
+	
+	// 更新十六进制视图
+	CString hexDisplay = FormatHexDisplay(data);
+	m_ctrlHexView.SetWindowText(hexDisplay);
+	
+	// 更新文本视图
+	CString textDisplay = FormatTextDisplay(data);
+	m_ctrlTextView.SetWindowText(textDisplay);
+	
+	// 滚动到底部
+	ScrollToBottom();
+	
+	// 更新按钮状态
+	UpdateButtonStates();
+}
+
+void CPortMasterDlg::DisplaySendData(const std::vector<uint8_t>& data)
+{
+	if (data.empty())
+		return;
+		
+	// 将数据转换为十六进制格式显示到输入框
+	CString hexDisplay;
+	for (size_t i = 0; i < data.size(); i++)
+	{
+		CString byteStr;
+		byteStr.Format(L"%02X", data[i]);
+		hexDisplay += byteStr;
+		
+		// 每16字节加一个空格，便于阅读
+		if ((i + 1) % 16 == 0 && i + 1 < data.size())
+		{
+			hexDisplay += L" ";
+		}
+	}
+	
+	// 显示到输入框
+	m_ctrlInputHex.SetWindowText(hexDisplay);
+	
+	// 更新传输数据缓冲区但不更新显示数据缓冲区
+	// m_transmissionData 已经在调用处设置，这里不需要重复设置
+	
+	// 更新按钮状态
+	UpdateButtonStates();
+	
+	AppendLog(L"文件内容已加载到输入区域，可以点击发送按钮进行传输");
+}
+
+bool CPortMasterDlg::HasValidInputData()
+{
+	CString inputText;
+	m_ctrlInputHex.GetWindowText(inputText);
+	
+	// 检查输入框是否有数据或者文件传输数据是否存在
+	return (!inputText.IsEmpty() || !m_transmissionData.empty());
+}
+
+CString CPortMasterDlg::GetConnectionStatusMessage(TransportState state, const std::string& error)
+{
+	switch (state)
+	{
+	case TRANSPORT_CLOSED:
+		return L"未连接";
+	case TRANSPORT_OPENING:
+		return L"连接中...";
+	case TRANSPORT_OPEN:
+		return L"已连接";
+	case TRANSPORT_CLOSING:
+		return L"断开中...";
+	case TRANSPORT_ERROR:
+		{
+			if (error.empty())
+				return L"连接错误";
+			CString errorMsg = CA2W(error.c_str(), CP_UTF8);
+			return L"错误: " + errorMsg;
+		}
+	default:
+		return L"未知状态";
+	}
+}
+
+CString CPortMasterDlg::FormatTransportInfo(const std::string& transportType, const std::string& endpoint)
+{
+	CString typeMsg = CA2W(transportType.c_str(), CP_UTF8);
+	
+	if (endpoint.empty())
+	{
+		return typeMsg + L" 连接";
+	}
+	else
+	{
+		CString endpointMsg = CA2W(endpoint.c_str(), CP_UTF8);
+		return typeMsg + L" (" + endpointMsg + L")";
+	}
+}
+
+std::vector<uint8_t> CPortMasterDlg::GetInputData()
+{
+	CString inputText;
+	m_ctrlInputHex.GetWindowText(inputText);
+	
+	if (inputText.IsEmpty())
+		return std::vector<uint8_t>();
+		
+	// 检查是否为十六进制格式
+	if (IsHexFormatInput(inputText))
+	{
+		return ProcessHexInput(inputText);
+	}
+	else
+	{
+		return ProcessTextInput(inputText);
+	}
+}
+
+void CPortMasterDlg::ShowUserMessage(const CString& title, const CString& message, UINT type)
+{
+	MessageBox(message, title, type);
+}
+
+void CPortMasterDlg::StartDataTransmission(const std::vector<uint8_t>& data)
+{
+	// 简单的数据传输模拟 (KISS: 保持简单)
+	m_bTransmitting = true;
+	
+	// 记录传输开始
+	m_transmissionStartTime = GetTickCount();
+	m_totalBytesTransmitted = 0;
+	
+	AppendLogWithDetails(L"开始直接传输", data.size());
+	
+	// 模拟传输完成 - 不显示发送的数据到接收区域
+	// 只有在真正的回环传输时才应该显示数据到接收区域
+	
+	m_bTransmitting = false;
+	AppendLog(L"直接传输完成");
+	UpdateButtonStates();
+}
+
+void CPortMasterDlg::UpdateDataSourceDisplay(const CString& source)
+{
+	// 更新数据源显示标签（如果存在）
+	if (IsWindow(m_ctrlDataSourceLabel.GetSafeHwnd()))
+	{
+		m_ctrlDataSourceLabel.SetWindowText(L"数据源: " + source);
+	}
+	
+	AppendLog(L"数据源: " + source);
+}
+
+bool CPortMasterDlg::LoadFileForTransmission(const CString& filePath)
+{
+	try
+	{
+		std::ifstream file(CT2A(filePath), std::ios::binary | std::ios::ate);
+		if (!file.is_open())
+			return false;
+			
+		size_t fileSize = static_cast<size_t>(file.tellg());
+		if (fileSize == 0)
+		{
+			file.close();
+			return false;
+		}
+		
+		// 检查文件大小限制 (SOLID-S: 单一职责 - 资源管理)
+		if (fileSize > AppConstants::MAX_FILE_SIZE)
+		{
+			file.close();
+			CString sizeMsg;
+			sizeMsg.Format(L"文件过大 (%.2f MB)，最大支持 %.2f MB", 
+				fileSize * AppConstants::GetBytesToMegabytes(),
+				AppConstants::MAX_FILE_SIZE * AppConstants::GetBytesToMegabytes());
+			ShowUserMessage(L"文件过大", sizeMsg, MB_ICONWARNING);
+			return false;
+		}
+		
+		file.seekg(0, std::ios::beg);
+		
+		m_transmissionData.resize(fileSize);
+		file.read(reinterpret_cast<char*>(m_transmissionData.data()), fileSize);
+		file.close();
+		
+		// 设置文件名
+		m_currentFileName = PathFindFileName(filePath);
+		
+		// 显示文件内容到输入区域（作为发送预览）
+		DisplaySendData(m_transmissionData);
+		
+		CString msg;
+		msg.Format(L"已加载文件: %s (%zu 字节)", 
+			PathFindFileName(filePath), fileSize);
+		AppendLog(msg);
+		UpdateDataSourceDisplay(L"文件: " + CString(PathFindFileName(filePath)));
+		
+		return true;
+	}
+	catch (...)
+	{
+		return false;
+	}
+}
+
+// SOLID-S: 单一职责 - 数据格式处理辅助方法
+
+bool CPortMasterDlg::IsHexFormatInput(const CString& input)
+{
+	// 检查是否包含十六进制字符
+	for (int i = 0; i < input.GetLength(); i++)
+	{
+		WCHAR ch = input[i];
+		if (!iswspace(ch) && !iswxdigit(ch))
+			return false;
+	}
+	return true;
+}
+
+std::vector<uint8_t> CPortMasterDlg::ProcessHexInput(const CString& hexInput)
+{
+	std::vector<uint8_t> data;
+	CString cleanHex = hexInput;
+	cleanHex.Replace(L" ", L"");
+	cleanHex.Replace(L"\t", L"");
+	cleanHex.Replace(L"\r", L"");
+	cleanHex.Replace(L"\n", L"");
+	
+	for (int i = 0; i < cleanHex.GetLength(); i += 2)
+	{
+		if (i + 1 < cleanHex.GetLength())
+		{
+			CString byteStr = cleanHex.Mid(i, 2);
+			uint8_t byte = (uint8_t)wcstoul(byteStr, nullptr, 16);
+			data.push_back(byte);
+		}
+	}
+	
+	return data;
+}
+
+std::vector<uint8_t> CPortMasterDlg::ProcessTextInput(const CString& textInput)
+{
+	std::string utf8Text = CT2A(textInput, CP_UTF8);
+	return std::vector<uint8_t>(utf8Text.begin(), utf8Text.end());
+}
+
+CString CPortMasterDlg::FormatHexDisplay(const std::vector<uint8_t>& data)
+{
+	const size_t BYTES_PER_LINE = 16;
+	CString result;
+	
+	for (size_t i = 0; i < data.size(); i += BYTES_PER_LINE)
+	{
+		// 地址
+		CString line;
+		line.Format(L"%08X: ", (unsigned int)i);
+		
+		// 十六进制数据
+		for (size_t j = 0; j < BYTES_PER_LINE && (i + j) < data.size(); j++)
+		{
+			CString byteStr;
+			byteStr.Format(L"%02X ", data[i + j]);
+			line += byteStr;
+		}
+		
+		// 填充对齐
+		size_t actualBytes = std::min(BYTES_PER_LINE, data.size() - i);
+		for (size_t j = actualBytes; j < BYTES_PER_LINE; j++)
+		{
+			line += L"   ";
+		}
+		
+		line += L" |";
+		
+		// ASCII字符
+		for (size_t j = 0; j < BYTES_PER_LINE && (i + j) < data.size(); j++)
+		{
+			uint8_t byte = data[i + j];
+			if (byte >= 32 && byte <= 126)
+				line += (WCHAR)byte;
+			else
+				line += L'.';
+		}
+		
+		line += L"|";
+		result += line + L"\r\n";
+	}
+	
+	return result;
+}
+
+CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
+{
+	if (data.empty())
+		return L"";
+		
+	// 尝试将数据转换为UTF-8文本
+	std::string utf8Text(data.begin(), data.end());
+	// 使用 MultiByteToWideChar 进行 UTF-8 到 UTF-16 转换，避免不安全的临时对象转换告警
+	const char* src = utf8Text.c_str();
+	int srcLen = static_cast<int>(utf8Text.size());
+	int wlen = MultiByteToWideChar(CP_UTF8, 0, src, srcLen, NULL, 0);
+	if (wlen <= 0)
+	{
+		return L"";
+	}
+	CString result;
+	LPWSTR buf = result.GetBuffer(wlen);
+	int written = MultiByteToWideChar(CP_UTF8, 0, src, srcLen, buf, wlen);
+	result.ReleaseBuffer((written > 0) ? written : 0);
+	return result;
+}
+
+void CPortMasterDlg::ScrollToBottom()
+{
+	// 滚动十六进制视图到底部
+	int hexLines = m_ctrlHexView.GetLineCount();
+	if (hexLines > 0)
+	{
+		m_ctrlHexView.LineScroll(hexLines);
+	}
+	
+	// 滚动文本视图到底部
+	int textLines = m_ctrlTextView.GetLineCount();
+	if (textLines > 0)
+	{
+		m_ctrlTextView.LineScroll(textLines);
+	}
+}
+
+void CPortMasterDlg::OnChunkTransmissionTimer()
+{
+	// 分片传输定时器处理 - 简化实现
+	if (!m_bTransmitting || m_chunkTransmissionData.empty())
+	{
+		if (m_transmissionTimer != 0)
+		{
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
+		}
+		return;
+	}
+	
+	// 模拟分片传输进度
+	m_chunkTransmissionIndex += m_chunkSize;
+	if (m_chunkTransmissionIndex >= m_chunkTransmissionData.size())
+	{
+		// 传输完成
+		m_bTransmitting = false;
+		if (m_transmissionTimer != 0)
+		{
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
+		}
+		
+		AppendLog(L"分片传输完成");
+		UpdateButtonStates();
+	}
+}
+
+// ========== 新增：十六进制显示切换与设备热插拔处理 ==========
+
+void CPortMasterDlg::OnBnClickedHexDisplay()
+{
+    // 切换十六进制/文本显示
+    m_bHexDisplay = (m_ctrlHexDisplayCheck.GetCheck() == BST_CHECKED);
+    SetDataDisplayFormat(m_bHexDisplay);
+    AppendLog(m_bHexDisplay ? L"切换为十六进制显示" : L"切换为文本显示");
+}
+
+void CPortMasterDlg::SetDataDisplayFormat(bool hexMode)
+{
+    // 切换视图可见性并强制重绘
+    if (IsWindow(m_ctrlHexView.GetSafeHwnd()))
+    {
+        m_ctrlHexView.ShowWindow(hexMode ? SW_SHOW : SW_HIDE);
+        if (hexMode)
+        {
+            m_ctrlHexView.Invalidate();
+            m_ctrlHexView.UpdateWindow();
+        }
+    }
+    if (IsWindow(m_ctrlTextView.GetSafeHwnd()))
+    {
+        m_ctrlTextView.ShowWindow(hexMode ? SW_HIDE : SW_SHOW);
+        if (!hexMode)
+        {
+            m_ctrlTextView.Invalidate();
+            m_ctrlTextView.UpdateWindow();
+        }
+    }
+
+    RefreshDataDisplay();
+}
+
+void CPortMasterDlg::RefreshDataDisplay()
+{
+    std::vector<uint8_t> data;
+    {
+        std::lock_guard<std::mutex> lock(m_displayDataMutex);
+        data = m_displayedData;
+    }
+
+    if (data.empty())
+    {
+        if (IsWindow(m_ctrlHexView.GetSafeHwnd())) m_ctrlHexView.SetWindowText(L"");
+        if (IsWindow(m_ctrlTextView.GetSafeHwnd())) m_ctrlTextView.SetWindowText(L"");
+        return;
+    }
+
+    CString hexDisplay = FormatHexDisplay(data);
+    CString textDisplay = FormatTextDisplay(data);
+
+    if (IsWindow(m_ctrlHexView.GetSafeHwnd())) m_ctrlHexView.SetWindowText(hexDisplay);
+    if (IsWindow(m_ctrlTextView.GetSafeHwnd())) m_ctrlTextView.SetWindowText(textDisplay);
+
+    ScrollToBottom();
+}
+
+BOOL CPortMasterDlg::OnDeviceChange(UINT nEventType, DWORD_PTR dwData)
+{
+    UNREFERENCED_PARAMETER(dwData);
+    switch (nEventType)
+    {
+    case DBT_DEVNODES_CHANGED:
+    case DBT_DEVICEARRIVAL:
+    case DBT_DEVICEREMOVECOMPLETE:
+        UpdatePortList();
+        AppendLog(L"检测到设备变更，已刷新端口列表");
+        break;
+    default:
+        break;
+    }
+    return TRUE;
+}
+
+void CPortMasterDlg::OnBnClickedLogWindow()
+{
+<<<<<<< .mine
+	// 辅助方法：计算控件在给定窗口尺寸下的矩形位置
+	// 支持百分比和像素混合计算
+	return CRect(left, top, left + width, top + height);
+}
+
+// SOLID-S: 单一职责 - 专门负责刷新设备列表
+void CPortMasterDlg::RefreshDeviceList()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::RefreshDeviceList: 开始刷新设备列表");
+	
+	if (!m_deviceManager) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::RefreshDeviceList: 设备管理器未初始化");
+		AppendLog(L"设备管理器未初始化，无法刷新设备列表");
+		return;
+	}
+	
+	try {
+		// SOLID-O: 开放封闭原则 - 通过扩展而非修改来添加功能
+		AppendLog(L"正在刷新设备列表...");
+		
+		// 强制重新枚举所有设备
+		std::vector<DeviceInfo> allDevices = m_deviceManager->EnumerateAllDevices();
+		WriteDebugLog(("[DEBUG] 刷新完成，总共找到 " + std::to_string(allDevices.size()) + " 个设备").c_str());
+		
+		// 更新当前端口列表显示
+		UpdatePortListFromDeviceManager();
+		
+		CString deviceCount;
+		deviceCount.Format(L"设备列表刷新完成，找到 %d 个设备", (int)allDevices.size());
+		AppendLog(deviceCount);
+		
+		// 显示设备类型统计信息（简化版）
+		std::map<std::string, int> typeCount;
+		for (const auto& device : allDevices) {
+			typeCount[device.transportType]++;
+		}
+		
+		for (const auto& pair : typeCount) {
+			CString typeStats;
+			typeStats.Format(L"  - %s: %d 个", CString(pair.first.c_str()), pair.second);
+			AppendLog(typeStats);
+		}
+		
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::RefreshDeviceList: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"刷新设备列表时发生异常");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::RefreshDeviceList: 未知异常");
+		AppendLog(L"刷新设备列表时发生未知异常");
+	}
+}
+
+// SOLID-S: 单一职责 - 显示设备详细信息
+void CPortMasterDlg::ShowDeviceDetails(const DeviceInfo& device)
+{
+	WriteDebugLog(("[DEBUG] CPortMasterDlg::ShowDeviceDetails: 显示设备详情 - " + device.deviceName).c_str());
+	
+	try {
+		CString details;
+		details.Format(L"设备详情:\n名称: %s\n描述: %s\n类型: %s\n状态: %s", 
+					   CString(device.deviceName.c_str()),
+					   CString(device.description.c_str()),
+					   CString(device.transportType.c_str()),
+					   device.isAvailable ? L"可用" : L"不可用");
+		
+		// 显示在日志中而不是弹窗（避免打断用户操作）
+		AppendLog(L"========== 设备详情 ==========");
+		
+		// 分行显示详情
+		int start = 0;
+		int pos = details.Find(L'\n', start);
+		while (pos != -1) {
+			CString line = details.Mid(start, pos - start);
+			AppendLog(line);
+			start = pos + 1;
+			pos = details.Find(L'\n', start);
+		}
+		// 添加最后一行
+		if (start < details.GetLength()) {
+			AppendLog(details.Mid(start));
+		}
+		
+		AppendLog(L"===============================");
+		
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::ShowDeviceDetails: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"显示设备详情时发生异常");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::ShowDeviceDetails: 未知异常");
+		AppendLog(L"显示设备详情时发生未知异常");
+	}
+}
+
+// 刷新设备按钮处理（为将来的UI扩展预留）
+void CPortMasterDlg::OnBnClickedRefreshDevices()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedRefreshDevices: 用户点击刷新设备按钮");
+	RefreshDeviceList();
+}
+
+// SOLID-S: 单一职责 - 显示设备历史记录
+void CPortMasterDlg::ShowDeviceHistory()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::ShowDeviceHistory: 显示设备历史记录");
+	
+	if (!m_deviceManager) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::ShowDeviceHistory: 设备管理器未初始化");
+		AppendLog(L"设备管理器未初始化，无法显示历史记录");
+		return;
+	}
+	
+	try {
+		std::vector<DeviceInfo> historyDevices = m_deviceManager->GetHistoryDevices();
+		
+		if (historyDevices.empty()) {
+			AppendLog(L"暂无设备历史记录");
+			return;
+		}
+		
+		AppendLog(L"========== 设备历史记录 ==========");
+		CString historyCountMsg;
+		historyCountMsg.Format(L"总计 %zu 个历史设备:", historyDevices.size());
+		AppendLog(historyCountMsg);
+		
+		int index = 1;
+		for (const auto& device : historyDevices) {
+			CString deviceInfo;
+			deviceInfo.Format(L"%d. %s (%s) - %s", 
+							  index++,
+							  CString(device.deviceName.c_str()),
+							  CString(device.transportType.c_str()),
+							  device.isAvailable ? L"可用" : L"不可用");
+			AppendLog(deviceInfo);
+		}
+		AppendLog(L"================================");
+		
+		WriteDebugLog(("[DEBUG] 显示了 " + std::to_string(historyDevices.size()) + " 个历史设备").c_str());
+		
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::ShowDeviceHistory: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"显示设备历史记录时发生异常");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::ShowDeviceHistory: 未知异常");
+		AppendLog(L"显示设备历史记录时发生未知异常");
+	}
+}
+
+// SOLID-S: 单一职责 - 显示收藏设备
+void CPortMasterDlg::ShowFavoriteDevices()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::ShowFavoriteDevices: 显示收藏设备");
+	
+	if (!m_deviceManager) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::ShowFavoriteDevices: 设备管理器未初始化");
+		AppendLog(L"设备管理器未初始化，无法显示收藏设备");
+		return;
+	}
+	
+	try {
+		std::vector<DeviceInfo> favoriteDevices = m_deviceManager->GetFavoriteDevices();
+		
+		if (favoriteDevices.empty()) {
+			AppendLog(L"暂无收藏设备");
+			return;
+		}
+		
+		AppendLog(L"========== 收藏设备列表 ==========");
+		CString favoriteCountMsg;
+		favoriteCountMsg.Format(L"总计 %zu 个收藏设备:", favoriteDevices.size());
+		AppendLog(favoriteCountMsg);
+		
+		int index = 1;
+		for (const auto& device : favoriteDevices) {
+			CString deviceInfo;
+			deviceInfo.Format(L"★%d. %s (%s) - %s", 
+							  index++,
+							  CString(device.deviceName.c_str()),
+							  CString(device.transportType.c_str()),
+							  device.isAvailable ? L"可用" : L"不可用");
+			AppendLog(deviceInfo);
+		}
+		AppendLog(L"================================");
+		
+		WriteDebugLog(("[DEBUG] 显示了 " + std::to_string(favoriteDevices.size()) + " 个收藏设备").c_str());
+		
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::ShowFavoriteDevices: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"显示收藏设备时发生异常");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::ShowFavoriteDevices: 未知异常");
+		AppendLog(L"显示收藏设备时发生未知异常");
+	}
+}
+
+// SOLID-S: 单一职责 - 添加当前设备到收藏
+void CPortMasterDlg::AddCurrentDeviceToFavorites()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::AddCurrentDeviceToFavorites: 添加当前设备到收藏");
+	
+	if (!m_deviceManager) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::AddCurrentDeviceToFavorites: 设备管理器未初始化");
+		AppendLog(L"设备管理器未初始化，无法添加收藏");
+		return;
+	}
+	
+	try {
+		// 获取当前选中的设备
+		int deviceIndex = m_ctrlPortList.GetCurSel();
+		if (deviceIndex == CB_ERR) {
+			AppendLog(L"请先选择要收藏的设备");
+			return;
+		}
+		
+		CString deviceName;
+		m_ctrlPortList.GetLBText(deviceIndex, deviceName);
+		
+		// 简化处理 - 创建基本设备信息并添加到收藏
+		DeviceInfo selectedDevice;
+		selectedDevice.deviceName = std::string(CT2A(deviceName));
+		selectedDevice.displayName = std::string(CT2A(deviceName));
+		selectedDevice.transportType = "Unknown";
+		selectedDevice.isAvailable = true;
+		
+		// 添加到收藏
+		m_deviceManager->AddToFavorites(selectedDevice);
+		AppendLog(L"设备已添加到收藏: " + CString(selectedDevice.deviceName.c_str()));
+		WriteDebugLog(("[DEBUG] 设备添加到收藏成功: " + selectedDevice.deviceName).c_str());
+		
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::AddCurrentDeviceToFavorites: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"添加收藏时发生异常");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::AddCurrentDeviceToFavorites: 未知异常");
+		AppendLog(L"添加收藏时发生未知异常");
+	}
+}
+
+// SOLID-S: 单一职责 - 处理设备管理命令
+bool CPortMasterDlg::ProcessDeviceCommand(const CString& command)
+{
+	WriteDebugLog(("[DEBUG] CPortMasterDlg::ProcessDeviceCommand: 处理命令 - " + std::string(CT2A(command))).c_str());
+	
+	CString cmd = command;
+	cmd.Trim();
+	cmd.MakeLower();
+	
+	if (cmd == L"history") {
+		ShowDeviceHistory();
+		return true;
+	}
+	else if (cmd == L"favorites" || cmd == L"fav") {
+		ShowFavoriteDevices();
+		return true;
+	}
+	else if (cmd == L"addfav") {
+		AddCurrentDeviceToFavorites();
+		return true;
+	}
+	else if (cmd == L"refresh") {
+		RefreshDeviceList();
+		return true;
+	}
+	else if (cmd.Left(7) == L"details") {
+		// 显示当前选中设备的详细信息
+		int deviceIndex = m_ctrlPortList.GetCurSel();
+		if (deviceIndex != CB_ERR && m_deviceManager) {
+			CString deviceName;
+			m_ctrlPortList.GetLBText(deviceIndex, deviceName);
+			
+			// 简化处理 - 创建基本设备信息并显示详情
+			DeviceInfo selectedDevice;
+			selectedDevice.deviceName = std::string(CT2A(deviceName));
+			selectedDevice.displayName = std::string(CT2A(deviceName));
+			selectedDevice.transportType = "Unknown";
+			selectedDevice.isAvailable = true;
+			
+			ShowDeviceDetails(selectedDevice);
+			return true;
+		}
+		AppendLog(L"请先选择要查看详情的设备");
+		return true;
+	}
+	else if (cmd == L"config" || cmd == L"status") {
+		ShowProtocolConfiguration();
+		return true;
+	}
+	else if (cmd == L"help") {
+		AppendLog(L"========== 设备管理命令帮助 ==========");
+		AppendLog(L"history    - 查看设备历史记录");
+		AppendLog(L"favorites  - 查看收藏设备列表");
+		AppendLog(L"addfav     - 添加当前设备到收藏");
+		AppendLog(L"refresh    - 刷新设备列表");
+		AppendLog(L"details    - 显示当前设备详细信息");
+		AppendLog(L"config     - 显示协议配置信息");
+		AppendLog(L"help       - 显示此帮助信息");
+		AppendLog(L"================================");
+		return true;
+	}
+	
+	return false; // 不是设备管理命令
+}
+
+// SOLID-S: 单一职责 - 更新协议状态显示（增强版：包含滑动窗口参数）
+void CPortMasterDlg::UpdateProtocolStatus()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::UpdateProtocolStatus: 更新协议状态显示");
+	
+	try {
+		CString statusText;
+		
+		if (m_bConnected) {
+			if (m_bReliableMode) {
+				// 获取可靠通道的详细状态信息
+				if (m_reliableChannel) {
+					ReliableState state = m_reliableChannel->GetState();
+					TransferStats stats = m_reliableChannel->GetStats();
+					
+					// 构建详细的协议状态信息
+					CString stateText;
+					switch (state) {
+					case RELIABLE_IDLE: stateText = L"空闲"; break;
+					case RELIABLE_STARTING: stateText = L"启动中"; break;
+					case RELIABLE_SENDING: stateText = L"发送中"; break;
+					case RELIABLE_ENDING: stateText = L"结束中"; break;
+					case RELIABLE_READY: stateText = L"就绪"; break;
+					case RELIABLE_RECEIVING: stateText = L"接收中"; break;
+					case RELIABLE_DONE: stateText = L"完成"; break;
+					case RELIABLE_FAILED: stateText = L"失败"; break;
+					default: stateText = L"未知"; break;
+					}
+					
+					// ⭐ 新增：显示滑动窗口参数
+					statusText.Format(L"协议:可靠[窗口:%d|重传:%d|超时:%.1fs]", 
+						stats.window_size, 
+						stats.retransmissions, 
+						stats.ack_timeout_ms / 1000.0);
+					
+					// 添加状态信息
+					statusText += L" - " + stateText;
+					
+					// ⭐ 新增：显示实时吞吐量
+					if (stats.throughput_bps > 0) {
+						CString throughputText;
+						if (stats.throughput_bps >= 1024) {
+							throughputText.Format(L" %.2fKB/s", stats.throughput_bps / 1024.0);
+						} else {
+							throughputText.Format(L" %dB/s", stats.throughput_bps);
+						}
+						statusText += throughputText;
+					}
+				} else {
+					statusText = L"协议:可靠传输 - 初始化中";
+				}
+			} else {
+				statusText = L"协议:直接传输";
+				// 添加传输状态
+				if (m_bTransmitting.load()) {
+					statusText += L" - 传输中";
+				} else {
+					statusText += L" - 空闲";
+				}
+			}
+		} else {
+			statusText = L"协议:未连接";
+		}
+		
+		// 更新协议状态显示
+		if (IsWindow(m_ctrlProtocolStatus.GetSafeHwnd())) {
+			m_ctrlProtocolStatus.SetWindowText(statusText);
+		}
+		
+		WriteDebugLog(("[DEBUG] 协议状态已更新: " + std::string(CT2A(statusText))).c_str());
+		
+	} catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::UpdateProtocolStatus: 异常 - " + std::string(e.what())).c_str());
+	}
+}
+
+// SOLID-S: 单一职责 - 显示协议配置信息
+void CPortMasterDlg::ShowProtocolConfiguration()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::ShowProtocolConfiguration: 显示协议配置信息");
+	
+	try {
+		AppendLog(L"========== 当前协议配置 ==========");
+		
+		// 基本协议信息
+		AppendLog(L"传输模式: " + CString(m_bReliableMode ? L"可靠传输" : L"直接传输"));
+		AppendLog(L"连接状态: " + CString(m_bConnected ? L"已连接" : L"未连接"));
+		AppendLog(L"传输状态: " + CString(m_bTransmitting.load() ? L"传输中" : L"空闲"));
+		
+		// ⭐ 新增：显示滑动窗口详细配置
+		if (m_bReliableMode && m_reliableChannel) {
+			TransferStats stats = m_reliableChannel->GetStats();
+			AppendLog(L"========== 滑动窗口参数 ==========");
+			CString windowInfo;
+			windowInfo.Format(L"窗口大小: %d 帧", stats.window_size);
+			AppendLog(windowInfo);
+			
+			CString timeoutInfo;
+			timeoutInfo.Format(L"ACK超时: %.1f 秒", stats.ack_timeout_ms / 1000.0);
+			AppendLog(timeoutInfo);
+			
+			CString retryInfo;
+			retryInfo.Format(L"最大重试: %d 次", 5); // 默认重试次数
+			AppendLog(retryInfo);
+			
+			// 显示传输统计
+			AppendLog(L"========== 传输统计 ==========");
+			CString statsInfo;
+			statsInfo.Format(L"已发送: %d 帧, 已接收: %d 帧", 
+				stats.frames_sent, stats.frames_received);
+			AppendLog(statsInfo);
+			
+			CString errorInfo;
+			errorInfo.Format(L"重传次数: %d, 超时次数: %d", 
+				stats.retransmissions, stats.timeouts);
+			AppendLog(errorInfo);
+			
+			if (stats.throughput_bps > 0) {
+				CString throughputInfo;
+				if (stats.throughput_bps >= 1024) {
+					throughputInfo.Format(L"当前吞吐量: %.2f KB/s", stats.throughput_bps / 1024.0);
+				} else {
+					throughputInfo.Format(L"当前吞吐量: %d B/s", stats.throughput_bps);
+				}
+				AppendLog(throughputInfo);
+			}
+		}
+		
+		// 协议管理器状态
+		if (m_protocolManager) {
+			AppendLog(L"========== 协议管理器状态 ==========");
+			AppendLog(L"协议管理器: 已启用");
+			AppendLog(L"会话管理: 支持");
+			
+			if (m_bReliableMode) {
+				AppendLog(L"可靠传输特性:");
+				AppendLog(L"  - 滑动窗口流控: 启用");
+				AppendLog(L"  - 累积确认: 支持");
+				AppendLog(L"  - 乱序处理: 启用");
+				AppendLog(L"  - 快速重传: 支持");
+				AppendLog(L"  - 超时时间: 3000ms");
+				AppendLog(L"  - 校验和: 启用");
+				AppendLog(L"  - 压缩: 禁用");
+			} else {
+				AppendLog(L"直接传输参数:");
+				AppendLog(L"  - 重试次数: 0");
+				AppendLog(L"  - 超时时间: 1000ms");
+				AppendLog(L"  - 校验和: 禁用");
+				AppendLog(L"  - 压缩: 禁用");
+			}
+		} else {
+			AppendLog(L"协议管理器: 未启用");
+			AppendLog(L"会话管理: 不支持");
+		}
+		
+		// 设备管理器状态
+		if (m_deviceManager) {
+			AppendLog(L"设备管理器: 已启用");
+			int totalDevices = static_cast<int>(m_deviceManager->GetTotalDeviceCount()); // SOLID-S: 安全的size_t到int转换
+			int historyCount = static_cast<int>(m_deviceManager->GetHistoryDevices().size()); // ⭐ 修复size_t转换警告
+			int favoriteCount = static_cast<int>(m_deviceManager->GetFavoriteDevices().size()); // ⭐ 修复size_t转换警告
+			
+			AppendLog(L"设备统计:");
+			CString deviceStats;
+			deviceStats.Format(L"  - 总设备数: %d", totalDevices);
+			AppendLog(deviceStats);
+			deviceStats.Format(L"  - 历史记录: %d", historyCount);
+			AppendLog(deviceStats);
+			deviceStats.Format(L"  - 收藏设备: %d", favoriteCount);
+			AppendLog(deviceStats);
+		} else {
+			AppendLog(L"设备管理器: 未启用");
+		}
+		
+		AppendLog(L"===============================");
+		
+	} catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::ShowProtocolConfiguration: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"显示协议配置信息时发生异常");
+	}
+}
+
+// SOLID-O: 开放封闭原则 - 从历史记录加载设备
+void CPortMasterDlg::LoadDeviceFromHistory(const DeviceInfo& device)
+{
+	WriteDebugLog(("[DEBUG] CPortMasterDlg::LoadDeviceFromHistory: 从历史记录加载设备 - " + device.deviceName).c_str());
+	
+	try {
+		// 简化处理 - 搜索并选择设备
+		for (int i = 0; i < m_ctrlPortList.GetCount(); i++) {
+			CString portName;
+			m_ctrlPortList.GetLBText(i, portName);
+			if (portName == CString(device.deviceName.c_str())) {
+				m_ctrlPortList.SetCurSel(i);
+				AppendLog(L"已从历史记录加载设备: " + CString(device.deviceName.c_str()));
+				WriteDebugLog(("[DEBUG] 设备加载成功: " + device.deviceName).c_str());
+				return;
+			}
+		}
+		
+		AppendLog(L"历史设备当前不可用: " + CString(device.deviceName.c_str()));
+		WriteDebugLog(("[WARNING] 历史设备不可用: " + device.deviceName).c_str());
+		
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::LoadDeviceFromHistory: 异常 - " + std::string(e.what())).c_str());
+		AppendLog(L"从历史记录加载设备时发生异常");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::LoadDeviceFromHistory: 未知异常");
+		AppendLog(L"从历史记录加载设备时发生未知异常");
+	}
+}
+
+// SOLID-S: 单一职责 - DeviceManager初始化
+void CPortMasterDlg::InitializeDeviceManager()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeDeviceManager: 开始初始化设备管理器");
+	
+	try {
+		m_deviceManager = std::make_shared<DeviceManager>();
+		WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeDeviceManager: DeviceManager实例创建成功");
+		
+		// 初始化设备管理器配置
+		// 这里可以加载配置文件中的设备历史记录和收藏列表
+		WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeDeviceManager: 设备管理器初始化完成");
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::InitializeDeviceManager: 异常 - " + std::string(e.what())).c_str());
+		throw;
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::InitializeDeviceManager: 未知异常");
+		throw;
+	}
+}
+
+// SOLID-S: 单一职责 - ProtocolManager初始化
+void CPortMasterDlg::InitializeProtocolManager()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeProtocolManager: 开始初始化协议管理器");
+	
+	try {
+		m_protocolManager = std::make_shared<ProtocolManager>();
+		WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeProtocolManager: ProtocolManager实例创建成功");
+		
+		WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeProtocolManager: 协议管理器初始化完成");
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::InitializeProtocolManager: 异常 - " + std::string(e.what())).c_str());
+		throw;
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::InitializeProtocolManager: 未知异常");
+		throw;
+	}
+}
+
+// SOLID-O: 开放封闭原则 - 使用DeviceManager更新端口列表
+void CPortMasterDlg::UpdatePortListFromDeviceManager()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::UpdatePortListFromDeviceManager: 开始使用设备管理器更新端口列表");
+	
+	if (!m_deviceManager) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::UpdatePortListFromDeviceManager: 设备管理器未初始化");
+		// 回退到原有的端口列表更新方式
+		return;
+	}
+	
+	try {
+		m_ctrlPortList.ResetContent();
+		
+		int portType = m_ctrlPortType.GetCurSel();
+		if (portType == CB_ERR) {
+			WriteDebugLog("[WARNING] CPortMasterDlg::UpdatePortListFromDeviceManager: 未选择端口类型");
+			return;
+		}
+		
+		// ⭐ SOLID-S: 端口类型到传输类型的映射 
+		std::string transportType;
+		switch (portType) {
+		case 0: transportType = "Serial"; break;    // 串口
+		case 1: transportType = "LPT"; break;       // 并口  
+		case 2: transportType = "USB"; break;       // USB打印机
+		case 3: 
+		case 4: transportType = "TCP"; break;       // TCP客户端/服务端
+		case 5: transportType = "UDP"; break;       // UDP
+		case 6: transportType = "Loopback"; break;  // 本地回环
+		default:
+			WriteDebugLog(("[WARNING] CPortMasterDlg::UpdatePortListFromDeviceManager: 未知端口类型 " + std::to_string(portType)).c_str());
+			return;
+		}
+		
+		// ⭐ DRY: 使用DeviceManager的专门按类型筛选方法
+		std::vector<DeviceInfo> filteredDevices = m_deviceManager->EnumerateDevicesByType(transportType);
+		
+		WriteDebugLog(("[DEBUG] CPortMasterDlg::UpdatePortListFromDeviceManager: 端口类型=" + std::to_string(portType) + " 传输类型=" + transportType + " 找到 " + std::to_string(filteredDevices.size()) + " 个匹配设备").c_str());
+		
+		// ⭐ KISS: 简化 - 只添加匹配类型的设备
+		for (const auto& device : filteredDevices) {
+			CString deviceName(device.deviceName.c_str());
+			m_ctrlPortList.AddString(deviceName);
+			WriteDebugLog(("[DEBUG] CPortMasterDlg::UpdatePortListFromDeviceManager: 添加设备: " + device.deviceName).c_str());
+		}
+		
+		// 设置默认选择第一个设备
+		if (m_ctrlPortList.GetCount() > 0) {
+			m_ctrlPortList.SetCurSel(0);
+		}
+		
+		WriteDebugLog("[DEBUG] CPortMasterDlg::UpdatePortListFromDeviceManager: 端口列表更新完成");
+	}
+	catch (const std::exception& e) {
+		WriteDebugLog(("[ERROR] CPortMasterDlg::UpdatePortListFromDeviceManager: 异常 - " + std::string(e.what())).c_str());
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] CPortMasterDlg::UpdatePortListFromDeviceManager: 未知异常");
+	}
+}||||||| .r19984
+	// 辅助方法：计算控件在给定窗口尺寸下的矩形位置
+	// 支持百分比和像素混合计算
+	return CRect(left, top, left + width, top + height);
+}=======
+    // 临时注释掉日志窗口功能
+    MessageBox(L"日志窗口功能正在维护中", L"提示", MB_OK | MB_ICONINFORMATION);
+    return;
+    
+    /* 原有代码临时注释
+    try
+    {
+        WriteDebugLog("[DEBUG] OnBnClickedLogWindow: 用户点击日志窗口按钮");
+        
+        // 如果日志窗口还未创建，创建一个新的
+        if (m_pLogWindow == nullptr)
+        {
+            m_pLogWindow = new CLogWindowDialog(this);
+            if (!m_pLogWindow->Create(IDD_LOG_WINDOW, this))
+            {
+                WriteDebugLog("[ERROR] OnBnClickedLogWindow: 日志窗口创建失败");
+                delete m_pLogWindow;
+                m_pLogWindow = nullptr;
+                MessageBox(L"无法创建日志窗口", L"错误", MB_OK | MB_ICONERROR);
+                return;
+            }
+        }
+        
+        // 显示日志窗口
+        m_pLogWindow->ShowWindow(SW_SHOW);
+        m_pLogWindow->BringWindowToTop();
+        
+        // 添加当前主界面日志内容到专用日志窗口
+        CString mainLogContent;
+        CWnd* pLogControl = GetDlgItem(IDC_LOG);
+        if (pLogControl)
+        {
+            pLogControl->GetWindowText(mainLogContent);
+            if (!mainLogContent.IsEmpty())
+            {
+                m_pLogWindow->AddInfoLog(L"主界面日志内容: " + mainLogContent);
+            }
+        }
+        
+        AppendLog(L"已显示专用日志窗口");
+        WriteDebugLog("[DEBUG] OnBnClickedLogWindow: 日志窗口显示完成");
+    }
+    catch (const std::exception& ex)
+    {
+        WriteDebugLog(("[ERROR] OnBnClickedLogWindow: " + std::string(ex.what())).c_str());
+        MessageBox(L"显示日志窗口时发生错误", L"错误", MB_OK | MB_ICONERROR);
+    }
+    catch (...)
+    {
+        WriteDebugLog("[ERROR] OnBnClickedLogWindow: 未知错误");
+        MessageBox(L"显示日志窗口时发生未知错误", L"错误", MB_OK | MB_ICONERROR);
+    }
+    */
+}
+>>>>>>> .r19995

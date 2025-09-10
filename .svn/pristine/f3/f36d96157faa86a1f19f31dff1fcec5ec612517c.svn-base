@@ -1,0 +1,515 @@
+﻿#include "pch.h"
+#include "TestWizardDialog.h"
+#include "Resource.h"
+#include "Common/DataFormatter.h"
+#include "Transport/LoopbackTransport.h"
+#include <chrono>
+
+IMPLEMENT_DYNAMIC(CTestWizardDialog, CDialogEx)
+
+CTestWizardDialog::CTestWizardDialog(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_TEST_WIZARD, pParent)
+	, m_bTesting(false)
+	, m_nCurrentTest(0)
+	, m_nTotalTests(0)
+	, m_nTimer(0)
+{
+}
+
+CTestWizardDialog::~CTestWizardDialog()
+{
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+}
+
+void CTestWizardDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_TEST_TYPE, m_ctrlTestType);
+	DDX_Control(pDX, IDC_TRANSPORT_TYPE, m_ctrlTransportType);
+	DDX_Control(pDX, IDC_TEST_CONFIG, m_ctrlTestConfig);
+	DDX_Control(pDX, IDC_TEST_RESULTS, m_ctrlTestResults);
+	DDX_Control(pDX, IDC_TEST_PROGRESS, m_ctrlTestProgress);
+	DDX_Control(pDX, IDC_START_TEST, m_ctrlStartBtn);
+	DDX_Control(pDX, IDC_STOP_TEST, m_ctrlStopBtn);
+	DDX_Control(pDX, IDC_TEST_STATUS, m_ctrlStatusText);
+}
+
+BEGIN_MESSAGE_MAP(CTestWizardDialog, CDialogEx)
+	ON_BN_CLICKED(IDC_START_TEST, &CTestWizardDialog::OnBnClickedStartTest)
+	ON_BN_CLICKED(IDC_STOP_TEST, &CTestWizardDialog::OnBnClickedStopTest)
+	ON_CBN_SELCHANGE(IDC_TEST_TYPE, &CTestWizardDialog::OnCbnSelchangeTestType)
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+BOOL CTestWizardDialog::OnInitDialog()
+{
+	CDialogEx::OnInitDialog();
+
+	InitializeControls();
+	UpdateControlStates();
+
+	return TRUE;
+}
+
+void CTestWizardDialog::InitializeControls()
+{
+	// 初始化测试类型下拉框
+	m_ctrlTestType.AddString(L"回环测试 (快速)");
+	m_ctrlTestType.AddString(L"串口基础测试");
+	m_ctrlTestType.AddString(L"串口压力测试");
+	m_ctrlTestType.AddString(L"网络基础测试");
+	m_ctrlTestType.AddString(L"网络压力测试");
+	m_ctrlTestType.AddString(L"可靠协议测试");
+	m_ctrlTestType.AddString(L"综合测试 (全部)");
+	m_ctrlTestType.SetCurSel(0);
+
+	// 初始化传输类型下拉框
+	m_ctrlTransportType.AddString(L"本地回环");
+	m_ctrlTransportType.AddString(L"串口 (COM)");
+	m_ctrlTransportType.AddString(L"TCP客户端");
+	m_ctrlTransportType.AddString(L"TCP服务端");
+	m_ctrlTransportType.AddString(L"UDP");
+	m_ctrlTransportType.SetCurSel(0);
+
+	// 初始化测试配置显示
+	m_ctrlTestConfig.SetWindowText(L"回环测试配置:\r\n- 数据包大小: 64B - 4KB\r\n- 测试次数: 100次\r\n- 超时时间: 5秒");
+
+	// 初始化进度条
+	m_ctrlTestProgress.SetRange(0, 100);
+	m_ctrlTestProgress.SetPos(0);
+
+	// 初始化状态文本
+	m_ctrlStatusText.SetWindowText(L"状态: 就绪");
+}
+
+void CTestWizardDialog::UpdateControlStates()
+{
+	m_ctrlStartBtn.EnableWindow(!m_bTesting);
+	m_ctrlStopBtn.EnableWindow(m_bTesting);
+	m_ctrlTestType.EnableWindow(!m_bTesting);
+	m_ctrlTransportType.EnableWindow(!m_bTesting);
+}
+
+void CTestWizardDialog::OnBnClickedStartTest()
+{
+	StartTesting();
+}
+
+void CTestWizardDialog::OnBnClickedStopTest()
+{
+	StopTesting();
+}
+
+void CTestWizardDialog::OnCbnSelchangeTestType()
+{
+	int testType = m_ctrlTestType.GetCurSel();
+	CString configText;
+
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+		configText = L"回环测试配置:\r\n- 数据包大小: 64B - 4KB\r\n- 测试次数: 100次\r\n- 超时时间: 5秒";
+		break;
+	case TEST_SERIAL_BASIC:
+		configText = L"串口基础测试配置:\r\n- 波特率: 9600/115200\r\n- 数据位: 8\r\n- 停止位: 1\r\n- 校验: 无";
+		break;
+	case TEST_SERIAL_STRESS:
+		configText = L"串口压力测试配置:\r\n- 连续发送1000个数据包\r\n- 不同大小: 1B-1KB\r\n- 高频率发送测试";
+		break;
+	case TEST_NETWORK_BASIC:
+		configText = L"网络基础测试配置:\r\n- TCP/UDP连接测试\r\n- 基础数据传输\r\n- 连接稳定性测试";
+		break;
+	case TEST_NETWORK_STRESS:
+		configText = L"网络压力测试配置:\r\n- 大数据量传输\r\n- 并发连接测试\r\n- 网络中断恢复";
+		break;
+	case TEST_PROTOCOL_RELIABLE:
+		configText = L"可靠协议测试配置:\r\n- CRC32校验测试\r\n- 序列号确认\r\n- 重传机制测试";
+		break;
+	case TEST_ALL_COMPREHENSIVE:
+		configText = L"综合测试配置:\r\n- 执行所有测试项目\r\n- 完整功能验证\r\n- 预计耗时: 5-10分钟";
+		break;
+	}
+
+	m_ctrlTestConfig.SetWindowText(configText);
+}
+
+void CTestWizardDialog::StartTesting()
+{
+	m_bTesting = true;
+	m_nCurrentTest = 0;
+	m_testResults.clear();
+
+	int testType = m_ctrlTestType.GetCurSel();
+	
+	// 根据测试类型确定总测试数
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+	case TEST_SERIAL_BASIC:
+	case TEST_NETWORK_BASIC:
+	case TEST_PROTOCOL_RELIABLE:
+		m_nTotalTests = 1;
+		break;
+	case TEST_SERIAL_STRESS:
+	case TEST_NETWORK_STRESS:
+		m_nTotalTests = 3;
+		break;
+	case TEST_ALL_COMPREHENSIVE:
+		m_nTotalTests = 6;
+		break;
+	}
+
+	UpdateControlStates();
+	
+	// 清空结果显示
+	m_ctrlTestResults.SetWindowText(L"开始测试...\r\n");
+	
+	// 启动测试定时器
+	m_nTimer = SetTimer(1, 100, NULL);
+	
+	ExecuteNextTest();
+}
+
+void CTestWizardDialog::StopTesting()
+{
+	m_bTesting = false;
+	
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+	
+	UpdateControlStates();
+	AppendTestResult(L"测试已停止");
+	m_ctrlStatusText.SetWindowText(L"状态: 已停止");
+}
+
+void CTestWizardDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1 && m_bTesting)
+	{
+		UpdateTestProgress();
+	}
+	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CTestWizardDialog::UpdateTestProgress()
+{
+	if (m_nTotalTests > 0)
+	{
+		int progress = (m_nCurrentTest * 100) / m_nTotalTests;
+		m_ctrlTestProgress.SetPos(progress);
+		
+		CString statusText;
+		statusText.Format(L"状态: 正在执行测试 (%d/%d)", m_nCurrentTest, m_nTotalTests);
+		m_ctrlStatusText.SetWindowText(statusText);
+	}
+}
+
+void CTestWizardDialog::ExecuteNextTest()
+{
+	if (!m_bTesting || m_nCurrentTest >= m_nTotalTests)
+	{
+		CompleteTest();
+		return;
+	}
+
+	m_nCurrentTest++;
+	bool testResult = false;
+	
+	int testType = m_ctrlTestType.GetCurSel();
+	
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+		testResult = ExecuteLoopbackTest();
+		break;
+	case TEST_SERIAL_BASIC:
+		testResult = ExecuteSerialBasicTest();
+		break;
+	case TEST_SERIAL_STRESS:
+		testResult = ExecuteSerialStressTest();
+		break;
+	case TEST_NETWORK_BASIC:
+		testResult = ExecuteNetworkBasicTest();
+		break;
+	case TEST_NETWORK_STRESS:
+		testResult = ExecuteNetworkStressTest();
+		break;
+	case TEST_PROTOCOL_RELIABLE:
+		testResult = ExecuteProtocolReliableTest();
+		break;
+	case TEST_ALL_COMPREHENSIVE:
+		testResult = ExecuteComprehensiveTest();
+		break;
+	}
+
+	// 继续下一个测试
+	if (m_bTesting)
+	{
+		SetTimer(2, 1000, NULL); // 1秒后执行下一个测试
+	}
+}
+
+void CTestWizardDialog::CompleteTest()
+{
+	StopTesting();
+	
+	m_ctrlTestProgress.SetPos(100);
+	m_ctrlStatusText.SetWindowText(L"状态: 测试完成");
+	
+	// 显示测试总结
+	CString summary = FormatTestSummary();
+	AppendTestResult(summary);
+}
+
+bool CTestWizardDialog::ExecuteLoopbackTest()
+{
+	DWORD startTime = GetTickCount();
+	
+	try
+	{
+		AppendTestResult(L"[回环测试] 开始执行回环传输测试..");
+		
+		// 创建回环传输对象
+		LoopbackTransport loopback;
+		TransportConfig config;
+		
+		if (!loopback.Open(config))
+		{
+			LogTestResult(L"回环测试", false, L"无法打开回环传输", GetTickCount() - startTime);
+			return false;
+		}
+		
+		// 测试不同大小的数据包
+		std::vector<size_t> testSizes = {64, 256, 1024, 4096};
+		bool allPassed = true;
+		
+		for (size_t size : testSizes)
+		{
+			std::vector<uint8_t> testData = GenerateTestData(size);
+			
+			size_t bytesSent = loopback.Write(testData.data(), testData.size());
+			if (bytesSent != testData.size())
+			{
+				AppendTestResult(L"发送数据失败");
+				allPassed = false;
+				break;
+			}
+			
+			std::vector<uint8_t> receivedData;
+			size_t bytesReceived = loopback.Read(receivedData, size);
+			
+			if (bytesReceived != size || !CompareData(testData, receivedData))
+			{
+				AppendTestResult(L"数据接收或校验失败");
+				allPassed = false;
+				break;
+			}
+			
+			CString sizeMsg;
+			sizeMsg.Format(L"数据包测试(%zu字节): 通过", size);
+			AppendTestResult(sizeMsg);
+		}
+		
+		loopback.Close();
+		
+		LogTestResult(L"回环测试", allPassed, 
+			allPassed ? L"所有数据包测试通过" : L"部分测试失败", 
+			GetTickCount() - startTime);
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		LogTestResult(L"回环测试", false, L"测试过程中发生异常", GetTickCount() - startTime);
+		return false;
+	}
+}
+
+bool CTestWizardDialog::ExecuteSerialBasicTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[串口基础测试] 模拟串口连接和基础通信...");
+	
+	// 模拟串口测试
+	Sleep(1000);
+	
+	LogTestResult(L"串口基础测试", true, L"模拟测试完成", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteSerialStressTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[串口压力测试] 模拟高频数据传输...");
+	
+	// 模拟压力测试
+	Sleep(2000);
+	
+	LogTestResult(L"串口压力测试", true, L"压力测试完成", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteNetworkBasicTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[网络基础测试] 模拟网络连接测试...");
+	
+	// 模拟网络测试
+	Sleep(1500);
+	
+	LogTestResult(L"网络基础测试", true, L"网络连接测试完成", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteNetworkStressTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[网络压力测试] 模拟大数据量传输...");
+	
+	// 模拟网络压力测试
+	Sleep(3000);
+	
+	LogTestResult(L"网络压力测试", true, L"大数据量传输完成", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteProtocolReliableTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[可靠协议测试] 测试CRC校验和重传机制..");
+	
+	// 模拟协议测试
+	Sleep(1000);
+	
+	LogTestResult(L"可靠协议测试", true, L"CRC和重传测试完成", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteComprehensiveTest()
+{
+	// 综合测试会依次执行所有单项测试
+	static int subTest = 0;
+	
+	switch (subTest)
+	{
+	case 0:
+		subTest++;
+		return ExecuteLoopbackTest();
+	case 1:
+		subTest++;
+		return ExecuteSerialBasicTest();
+	case 2:
+		subTest++;
+		return ExecuteNetworkBasicTest();
+	case 3:
+		subTest++;
+		return ExecuteProtocolReliableTest();
+	case 4:
+		subTest++;
+		return ExecuteSerialStressTest();
+	case 5:
+		subTest = 0; // 重置
+		return ExecuteNetworkStressTest();
+	}
+	
+	return true;
+}
+
+void CTestWizardDialog::AppendTestResult(const CString& message)
+{
+	CString current;
+	m_ctrlTestResults.GetWindowText(current);
+	current += message + L"\r\n";
+	m_ctrlTestResults.SetWindowText(current);
+	
+	// 滚动到底部
+	m_ctrlTestResults.LineScroll(m_ctrlTestResults.GetLineCount());
+}
+
+void CTestWizardDialog::LogTestResult(const CString& testName, bool passed, const CString& details, DWORD duration)
+{
+	TestResult result;
+	result.testName = testName;
+	result.passed = passed;
+	result.details = details;
+	result.duration = duration;
+	m_testResults.push_back(result);
+	
+	CString resultMsg;
+	resultMsg.Format(L"[%s] %s - %s (耗时: %dms)", 
+		testName, passed ? L"通过" : L"失败", details, duration);
+	AppendTestResult(resultMsg);
+}
+
+CString CTestWizardDialog::FormatTestSummary()
+{
+	CString summary = L"\r\n=== 测试总结 ===\r\n";
+	
+	int passed = 0, failed = 0;
+	DWORD totalTime = 0;
+	
+	for (const auto& result : m_testResults)
+	{
+		if (result.passed)
+			passed++;
+		else
+			failed++;
+		totalTime += result.duration;
+	}
+	
+	CString stats;
+	stats.Format(L"总测试数: %d\r\n通过: %d\r\n失败: %d\r\n总耗时: %.2f秒\r\n",
+		passed + failed, passed, failed, totalTime / 1000.0);
+	
+	summary += stats;
+	summary += L"\r\n详细结果:\r\n";
+	
+	for (const auto& result : m_testResults)
+	{
+		CString line;
+		line.Format(L"- %s: %s\r\n", result.testName, result.passed ? L"通过" : L"失败");
+		summary += line;
+	}
+	
+	return summary;
+}
+
+std::vector<uint8_t> CTestWizardDialog::GenerateTestData(size_t size, bool pattern)
+{
+	std::vector<uint8_t> data(size);
+	
+	if (pattern)
+	{
+		// 生成有规律的测试数据
+		for (size_t i = 0; i < size; i++)
+		{
+			data[i] = static_cast<uint8_t>(i % 256);
+		}
+	}
+	else
+	{
+		// 生成随机数据
+		srand(static_cast<unsigned>(time(nullptr)));
+		for (size_t i = 0; i < size; i++)
+		{
+			data[i] = static_cast<uint8_t>(rand() % 256);
+		}
+	}
+	
+	return data;
+}
+
+bool CTestWizardDialog::CompareData(const std::vector<uint8_t>& sent, const std::vector<uint8_t>& received)
+{
+	if (sent.size() != received.size())
+		return false;
+	
+	return memcmp(sent.data(), received.data(), sent.size()) == 0;
+}

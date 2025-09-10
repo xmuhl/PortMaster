@@ -1,0 +1,518 @@
+﻿#include "pch.h"
+#include "IOWorker.h"
+
+IOWorker::IOWorker()
+    : m_running(false)
+    , m_completionPort(NULL)
+    , m_threadCount(2)
+    , m_timeoutMs(INFINITE)
+{
+}
+
+IOWorker::~IOWorker()
+{
+    Stop();
+}
+
+bool IOWorker::Start()
+{
+    if (m_running.load())
+        return true;
+    
+    // 创建完成端口
+    m_completionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, m_threadCount);
+    if (m_completionPort == NULL)
+        return false;
+    
+    // 启动工作线程
+    m_running = true;
+    m_workerThreads.reserve(m_threadCount);
+    
+    for (int i = 0; i < m_threadCount; i++)
+    {
+        m_workerThreads.emplace_back(&IOWorker::WorkerThreadFunc, this);
+    }
+    
+    return true;
+}
+
+void IOWorker::Stop()
+{
+    if (!m_running.load())
+        return;
+    
+    m_running = false;
+    
+    // 通知工作线程退出
+    for (int i = 0; i < m_threadCount; i++)
+    {
+        PostQueuedCompletionStatus(m_completionPort, 0, 0, NULL);
+    }
+    
+    // 等待线程结束
+    for (auto& thread : m_workerThreads)
+    {
+        if (thread.joinable())
+            thread.join();
+    }
+    m_workerThreads.clear();
+    
+    // 关闭完成端口
+    if (m_completionPort != NULL)
+    {
+        CloseHandle(m_completionPort);
+        m_completionPort = NULL;
+    }
+    
+    // 清理上下文池
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    while (!m_contextPool.empty())
+        m_contextPool.pop();
+}
+
+bool IOWorker::IsRunning() const
+{
+    return m_running.load();
+}
+
+bool IOWorker::AsyncRead(HANDLE handle, std::vector<uint8_t>& buffer, IOCompletionCallback callback)
+{
+<<<<<<< .mine
+    if (!m_running.load() || handle == INVALID_HANDLE_VALUE || buffer.empty())
+        return false;
+    
+    // 获取IO上下文
+    auto context = GetContext();
+    if (!context)
+        return false;
+    
+    // 将句柄关联到完成端口
+    HANDLE port = CreateIoCompletionPort(handle, m_completionPort, 
+                                        reinterpret_cast<ULONG_PTR>(handle), 0);
+    if (port == NULL)
+    {
+        ReturnContext(std::move(context));
+        return false;
+    }
+    
+    // 设置上下文
+    context->operation = IOOperation::Read;
+    context->handle = handle;
+    context->buffer = buffer;
+    context->callback = callback;
+    context->worker = this;
+    
+    // 检查是否为套接字句柄
+    if (IsSocketHandle(handle))
+    {
+        // 使用套接字异步读取
+        if (!AsyncSocketRead(context.get()))
+        {
+            ReturnContext(std::move(context));
+            return false;
+        }
+    }
+    else
+    {
+        // 发起异步读取（文件/管道/串口）
+        BOOL result = ReadFile(
+            handle,
+            context->buffer.data(),
+            static_cast<DWORD>(context->buffer.size()),
+            NULL,
+            &context->overlapped
+        );
+        
+        if (!result)
+        {
+            DWORD error = GetLastError();
+            if (error != ERROR_IO_PENDING)
+            {
+                // 读取失败
+                ReturnContext(std::move(context));
+                return false;
+            }
+        }
+    }
+    
+    // 异步读取已启动，上下文将在完成时被处理
+    context.release(); // 释放所有权，由完成端口管理
+||||||| .r19984
+    // TODO: 实现异步读取
+=======
+    if (!m_running.load() || handle == INVALID_HANDLE_VALUE)
+        return false;
+    
+    // 获取上下文
+    auto context = GetContext();
+    if (!context)
+        return false;
+    
+    // 设置上下文
+    context->operation = IOOperation::Read;
+    context->handle = handle;
+    context->buffer = buffer; // 复制缓冲区结构
+    context->callback = callback;
+    context->worker = this;
+    
+    // 确保缓冲区有数据空间
+    if (context->buffer.empty())
+        context->buffer.resize(4096); // 默认缓冲区大小
+    
+    // 投递异步读取操作
+    BOOL result = ReadFile(
+        handle,
+        context->buffer.data(),
+        static_cast<DWORD>(context->buffer.size()),
+        NULL,
+        &context->overlapped
+    );
+    
+    DWORD error = GetLastError();
+    if (!result && error != ERROR_IO_PENDING)
+    {
+        // 操作失败
+        ReturnContext(std::move(context));
+        return false;
+    }
+    
+    // 如果操作同步完成，也需要处理
+    if (result)
+    {
+        // 同步完成，但仍然通过IOCP处理
+        // 这里不需要额外处理，因为IOCP会处理所有完成
+    }
+    
+    context.release(); // 转移所有权给工作线程
+>>>>>>> .r19995
+    return true;
+}
+
+bool IOWorker::AsyncWrite(HANDLE handle, const std::vector<uint8_t>& data, IOCompletionCallback callback)
+{
+<<<<<<< .mine
+    if (!m_running.load() || handle == INVALID_HANDLE_VALUE || data.empty())
+        return false;
+    
+    // 获取IO上下文
+    auto context = GetContext();
+    if (!context)
+        return false;
+    
+    // 将句柄关联到完成端口
+    HANDLE port = CreateIoCompletionPort(handle, m_completionPort, 
+                                        reinterpret_cast<ULONG_PTR>(handle), 0);
+    if (port == NULL)
+    {
+        ReturnContext(std::move(context));
+        return false;
+    }
+    
+    // 设置上下文
+    context->operation = IOOperation::Write;
+    context->handle = handle;
+    context->buffer = data; // 复制数据确保异步操作期间数据有效
+    context->callback = callback;
+    context->worker = this;
+    
+    // 检查是否为套接字句柄
+    if (IsSocketHandle(handle))
+    {
+        // 使用套接字异步写入
+        if (!AsyncSocketWrite(context.get(), data))
+        {
+            ReturnContext(std::move(context));
+            return false;
+        }
+    }
+    else
+    {
+        // 发起异步写入（文件/管道/串口）
+        BOOL result = WriteFile(
+            handle,
+            context->buffer.data(),
+            static_cast<DWORD>(context->buffer.size()),
+            NULL,
+            &context->overlapped
+        );
+        
+        if (!result)
+        {
+            DWORD error = GetLastError();
+            if (error != ERROR_IO_PENDING)
+            {
+                // 写入失败
+                ReturnContext(std::move(context));
+                return false;
+            }
+        }
+    }
+    
+    // 异步写入已启动，上下文将在完成时被处理
+    context.release(); // 释放所有权，由完成端口管理
+||||||| .r19984
+    // TODO: 实现异步写入
+=======
+    if (!m_running.load() || handle == INVALID_HANDLE_VALUE || data.empty())
+        return false;
+    
+    // 获取上下文
+    auto context = GetContext();
+    if (!context)
+        return false;
+    
+    // 设置上下文
+    context->operation = IOOperation::Write;
+    context->handle = handle;
+    context->buffer = data; // 复制要写入的数据
+    context->callback = callback;
+    context->worker = this;
+    
+    // 投递异步写入操作
+    BOOL result = WriteFile(
+        handle,
+        context->buffer.data(),
+        static_cast<DWORD>(context->buffer.size()),
+        NULL,
+        &context->overlapped
+    );
+    
+    DWORD error = GetLastError();
+    if (!result && error != ERROR_IO_PENDING)
+    {
+        // 操作失败
+        ReturnContext(std::move(context));
+        return false;
+    }
+    
+    // 如果操作同步完成，也需要处理
+    if (result)
+    {
+        // 同步完成，但仍然通过IOCP处理
+        // 这里不需要额外处理，因为IOCP会处理所有完成
+    }
+    
+    context.release(); // 转移所有权给工作线程
+>>>>>>> .r19995
+    return true;
+}
+
+void IOWorker::SetGlobalCallback(IOCompletionCallback callback)
+{
+    m_globalCallback = callback;
+}
+
+void IOWorker::SetThreadCount(int count)
+{
+    if (!m_running.load() && count > 0)
+        m_threadCount = count;
+}
+
+void IOWorker::SetTimeout(DWORD timeoutMs)
+{
+    m_timeoutMs = timeoutMs;
+}
+
+void IOWorker::WorkerThreadFunc()
+{
+    // TODO: 实现工作线程逻辑
+    while (m_running.load())
+    {
+        DWORD bytesTransferred = 0;
+        ULONG_PTR completionKey = 0;
+        LPOVERLAPPED overlapped = NULL;
+        
+        BOOL result = GetQueuedCompletionStatus(
+            m_completionPort,
+            &bytesTransferred,
+            &completionKey,
+            &overlapped,
+            m_timeoutMs
+        );
+        
+        if (!m_running.load())
+            break;
+        
+        if (overlapped == NULL)
+            continue;
+        
+        // 处理I/O完成
+        IOContext* context = CONTAINING_RECORD(overlapped, IOContext, overlapped);
+        DWORD errorCode = result ? ERROR_SUCCESS : GetLastError();
+        
+        // 创建结果并调用回调
+        IOResult ioResult;
+        ioResult.operation = context->operation;
+        ioResult.success = (errorCode == ERROR_SUCCESS);
+        ioResult.bytesTransferred = bytesTransferred;
+        ioResult.errorCode = errorCode;
+        ioResult.data = std::move(context->buffer);
+        
+        // 调用回调
+        if (context->callback)
+            context->callback(ioResult);
+        else if (m_globalCallback)
+            m_globalCallback(ioResult);
+        
+        // 返回上下文到池中
+        std::unique_ptr<IOContext> contextPtr(context);
+        ReturnContext(std::move(contextPtr));
+    }
+}
+
+std::unique_ptr<IOWorker::IOContext> IOWorker::GetContext()
+{
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    if (!m_contextPool.empty())
+    {
+        auto context = std::move(m_contextPool.front());
+        m_contextPool.pop();
+        return context;
+    }
+    
+    return std::make_unique<IOContext>();
+}
+
+void IOWorker::ReturnContext(std::unique_ptr<IOContext> context)
+{
+    if (!context)
+        return;
+    
+    // 重置上下文
+    ZeroMemory(&context->overlapped, sizeof(context->overlapped));
+    context->operation = IOOperation::Read;
+    context->handle = INVALID_HANDLE_VALUE;
+    context->buffer.clear();
+    context->callback = nullptr;
+    context->worker = nullptr;
+    
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    m_contextPool.push(std::move(context));
+}
+
+<<<<<<< .mine
+void IOWorker::HandleIOCompletion(IOContext* context, DWORD bytesTransferred, DWORD errorCode)
+{
+    if (!context)
+        return;
+    
+    IOResult result;
+    result.operation = context->operation;
+    result.success = (errorCode == ERROR_SUCCESS);
+    result.bytesTransferred = bytesTransferred;
+    result.errorCode = errorCode;
+    result.data = std::move(context->buffer);
+    
+    // 调用回调
+    if (context->callback)
+        context->callback(result);
+    else if (m_globalCallback)
+        m_globalCallback(result);
+    
+    // 返回上下文到池中
+    ReturnContext(std::unique_ptr<IOContext>(context));
+}
+
+bool IOWorker::IsSocketHandle(HANDLE handle) const
+{
+    // 尝试获取套接字选项来检查是否为套接字句柄
+    int optval;
+    int optlen = sizeof(optval);
+    SOCKET socket = reinterpret_cast<SOCKET>(handle);
+    
+    // 使用getsockopt检查是否为有效套接字
+    return (getsockopt(socket, SOL_SOCKET, SO_TYPE, reinterpret_cast<char*>(&optval), &optlen) == 0);
+}
+
+bool IOWorker::AsyncSocketRead(IOContext* context)
+{
+    SOCKET socket = reinterpret_cast<SOCKET>(context->handle);
+    
+    // 准备WSARecv参数
+    WSABUF wsaBuf;
+    wsaBuf.buf = reinterpret_cast<char*>(context->buffer.data());
+    wsaBuf.len = static_cast<ULONG>(context->buffer.size());
+    
+    DWORD flags = 0;
+    DWORD bytesReceived = 0;
+    
+    // 发起异步套接字读取
+    int result = WSARecv(
+        socket,
+        &wsaBuf,
+        1,
+        &bytesReceived,
+        &flags,
+        &context->overlapped,
+        NULL
+    );
+    
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        if (error != WSA_IO_PENDING)
+        {
+            // 读取失败
+            return false;
+        }
+    }
+    
+    return true;
+}
+
+bool IOWorker::AsyncSocketWrite(IOContext* context, const std::vector<uint8_t>& data)
+{
+    SOCKET socket = reinterpret_cast<SOCKET>(context->handle);
+    
+    // 准备WSASend参数
+    WSABUF wsaBuf;
+    wsaBuf.buf = const_cast<char*>(reinterpret_cast<const char*>(data.data()));
+    wsaBuf.len = static_cast<ULONG>(data.size());
+    
+    DWORD bytesSent = 0;
+    
+    // 发起异步套接字写入
+    int result = WSASend(
+        socket,
+        &wsaBuf,
+        1,
+        &bytesSent,
+        0,
+        &context->overlapped,
+        NULL
+    );
+    
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        if (error != WSA_IO_PENDING)
+        {
+            // 写入失败
+            return false;
+        }
+    }
+    
+    return true;
+}||||||| .r19984
+void IOWorker::HandleIOCompletion(IOContext* context, DWORD bytesTransferred, DWORD errorCode)
+{
+    if (!context)
+        return;
+    
+    IOResult result;
+    result.operation = context->operation;
+    result.success = (errorCode == ERROR_SUCCESS);
+    result.bytesTransferred = bytesTransferred;
+    result.errorCode = errorCode;
+    result.data = std::move(context->buffer);
+    
+    // 调用回调
+    if (context->callback)
+        context->callback(result);
+    else if (m_globalCallback)
+        m_globalCallback(result);
+    
+    // 返回上下文到池中
+    ReturnContext(std::unique_ptr<IOContext>(context));
+}=======
+>>>>>>> .r19995

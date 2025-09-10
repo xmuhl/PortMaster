@@ -1,0 +1,139 @@
+﻿#include "pch.h"
+#include "LptSpoolerTransport.h"
+
+LptSpoolerTransport::LptSpoolerTransport()
+    : m_hPrinter(NULL)
+    , m_jobId(0)
+{
+    m_state = TRANSPORT_CLOSED;
+}
+
+LptSpoolerTransport::~LptSpoolerTransport()
+{
+    Close();
+}
+
+bool LptSpoolerTransport::Open(const TransportConfig& config)
+{
+    // TODO: 瀹炵幇LPT鎵撳紑閫昏緫
+    m_config = config;
+    m_printerName = "LPT1:";
+    NotifyStateChanged(TRANSPORT_OPEN, "LPT宸叉墦寮€");
+    return true;
+}
+
+void LptSpoolerTransport::Close()
+{
+    // TODO: 瀹炵幇LPT鍏抽棴閫昏緫
+    NotifyStateChanged(TRANSPORT_CLOSED, "LPT宸插叧闂?");
+}
+
+bool LptSpoolerTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState LptSpoolerTransport::GetState() const
+{
+    return m_state;
+}
+
+bool LptSpoolerTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig LptSpoolerTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t LptSpoolerTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t LptSpoolerTransport::Write(const uint8_t* data, size_t length)
+{
+    // TODO: 瀹炵幇LPT鍐欏叆
+    return length;
+}
+
+size_t LptSpoolerTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    // LPT閫氬父涓嶆敮鎸佽鍙栵紝杩斿洖鎵撳嵃鏈虹姸鎬佷俊鎭?    data.clear();
+    return 0;
+}
+
+size_t LptSpoolerTransport::Available() const
+{
+    return 0;
+}
+
+std::string LptSpoolerTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string LptSpoolerTransport::GetPortName() const
+{
+    return m_printerName;
+}
+
+std::string LptSpoolerTransport::GetTransportType() const
+{
+    return "LPT";
+}
+
+void LptSpoolerTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void LptSpoolerTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool LptSpoolerTransport::Flush()
+{
+    return true;
+}
+
+bool LptSpoolerTransport::ClearBuffers()
+{
+    return true;
+}
+
+std::vector<std::string> LptSpoolerTransport::EnumeratePrinters()
+{
+    std::vector<std::string> printers;
+    // TODO: 瀹炵幇鎵撳嵃鏈烘灇涓?    printers.push_back("LPT1:");
+    printers.push_back("LPT2:");
+    return printers;
+}
+
+bool LptSpoolerTransport::GetPrinterStatus(std::string& status)
+{
+    // TODO: 瀹炵幇鎵撳嵃鏈虹姸鎬佹煡璇?    status = "Ready";
+    return true;
+}
+
+bool LptSpoolerTransport::StartRawPrintJob()
+{
+    // TODO: 瀹炵幇RAW鎵撳嵃浣滀笟鍚姩
+    return true;
+}
+
+bool LptSpoolerTransport::EndPrintJob()
+{
+    // TODO: 瀹炵幇鎵撳嵃浣滀笟缁撴潫
+    return true;
+}
+
+std::string LptSpoolerTransport::GetPrinterErrorString(DWORD error) const
+{
+    // TODO: 瀹炵幇鎵撳嵃鏈洪敊璇俊鎭浆鎹?
+    return "Unknown printer error";
+}

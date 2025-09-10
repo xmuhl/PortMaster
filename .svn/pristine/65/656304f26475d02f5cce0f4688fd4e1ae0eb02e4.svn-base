@@ -1,0 +1,105 @@
+#pragma once
+
+#include "afxdialogex.h"
+#include "resource.h"
+#include <vector>
+#include <string>
+
+// 日志级别枚举
+enum class LogLevel
+{
+    Debug = 0,
+    Info = 1,
+    Warning = 2,
+    Error = 3
+};
+
+// 日志条目结构
+struct LogEntry
+{
+    SYSTEMTIME timestamp;
+    LogLevel level;
+    CString category;
+    CString message;
+    
+    LogEntry(LogLevel lvl, const CString& cat, const CString& msg)
+        : level(lvl), category(cat), message(msg)
+    {
+        GetLocalTime(&timestamp);
+    }
+};
+
+// 专用日志窗口对话框
+class CLogWindowDialog : public CDialogEx
+{
+    DECLARE_DYNAMIC(CLogWindowDialog)
+
+public:
+    CLogWindowDialog(CWnd* pParent = nullptr);
+    virtual ~CLogWindowDialog();
+
+    enum { IDD = IDD_LOG_WINDOW };
+
+    // 日志添加方法
+    void AddLog(LogLevel level, const CString& category, const CString& message);
+    void AddDebugLog(const CString& message);
+    void AddInfoLog(const CString& message);
+    void AddWarningLog(const CString& message);
+    void AddErrorLog(const CString& message);
+    
+    // 状态更新方法
+    void UpdateConnectionStatus(const CString& status);
+    void UpdateProtocolStatus(const CString& status);
+    void UpdateTransferStats(const CString& stats);
+
+protected:
+    virtual void DoDataExchange(CDataExchange* pDX) override;
+    virtual BOOL OnInitDialog() override;
+
+    DECLARE_MESSAGE_MAP()
+
+public:
+    afx_msg void OnBnClickedClearLog();
+    afx_msg void OnBnClickedSaveLog();
+    afx_msg void OnBnClickedFilterLevel();
+    afx_msg void OnBnClickedAutoScroll();
+    afx_msg void OnClose();
+
+private:
+    // 控件变量
+    CListCtrl m_ctrlLogList;
+    CComboBox m_ctrlFilterLevel;
+    CButton m_ctrlAutoScroll;
+    CButton m_ctrlClearBtn;
+    CButton m_ctrlSaveBtn;
+    CStatic m_ctrlConnectionStatus;
+    CStatic m_ctrlProtocolStatus;
+    CStatic m_ctrlTransferStats;
+
+    // 日志数据
+    std::vector<LogEntry> m_logEntries;
+    LogLevel m_filterLevel;
+    bool m_autoScroll;
+    
+    // 初始化和更新方法
+    void InitializeControls();
+    void InitializeLogList();
+    void UpdateLogDisplay();
+    void RefreshLogList();
+    void ScrollToBottom();
+    
+    // 日志格式化方法
+    CString FormatLogEntry(const LogEntry& entry);
+    CString FormatTimestamp(const SYSTEMTIME& time);
+    CString GetLevelString(LogLevel level);
+    COLORREF GetLevelColor(LogLevel level);
+    int GetLevelIcon(LogLevel level);
+    
+    // 文件操作方法
+    bool SaveLogToFile(const CString& filePath);
+    CString GetDefaultLogFileName();
+    
+    // SOLID-S: 单一职责 - 专门负责日志显示和管理
+    void ApplyLogFilter();
+    void SetLogListColors();
+};

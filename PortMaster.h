@@ -1,0 +1,25 @@
+﻿#pragma execution_character_set("utf-8")
+#pragma once
+
+#ifndef __AFXWIN_H__
+	#error "鍦ㄥ寘鍚鏂囦欢涔嬪墠鍖呭惈 'pch.h' 浠ョ敓鎴?PCH"
+#endif
+
+#include "resource.h"		// 涓荤鍙?
+// CPortMasterApp:
+// 鏈夊叧姝ょ被鐨勫疄鐜帮紝璇峰弬闃?PortMaster.cpp
+//
+
+class CPortMasterApp : public CWinApp
+{
+public:
+	CPortMasterApp();
+
+// 閲嶅啓
+public:
+	virtual BOOL InitInstance();
+
+// 瀹炵幇
+
+	DECLARE_MESSAGE_MAP()
+};

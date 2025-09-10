@@ -1,0 +1,362 @@
+﻿#include "pch.h"
+#include "RingBuffer.h"
+#include <algorithm>
+#include <cstring>
+
+RingBuffer::RingBuffer(size_t initialSize)
+    : m_buffer(initialSize)
+    , m_readPos(0)
+    , m_writePos(0)
+    , m_dataSize(0)
+    , m_autoExpand(true)
+    , m_maxSize(1024 * 1024) // 默认最大1MB
+{
+}
+
+RingBuffer::~RingBuffer()
+{
+}
+
+size_t RingBuffer::Write(const uint8_t* data, size_t length)
+{
+    if (!data || length == 0)
+        return 0;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 检查是否需要扩展
+    if (m_autoExpand && (FreeSpace() < length))
+    {
+        if (!ExpandIfNeeded(m_dataSize + length))
+        {
+            // 扩展失败，只写入可用空间
+            length = FreeSpace();
+            if (length == 0)
+                return 0;
+        }
+    }
+    
+    // 限制写入长度为可用空间
+    length = std::min(length, FreeSpace());
+    if (length == 0)
+        return 0;
+    
+    size_t bytesWritten = 0;
+    size_t bufferSize = m_buffer.size();
+    
+    while (bytesWritten < length)
+    {
+        size_t contiguousSpace = GetContiguousWriteSize();
+        size_t chunkSize = std::min(length - bytesWritten, contiguousSpace);
+        
+        if (chunkSize == 0)
+            break;
+        
+        std::memcpy(&m_buffer[m_writePos], data + bytesWritten, chunkSize);
+        AdvanceWritePos(chunkSize);
+        bytesWritten += chunkSize;
+    }
+    
+    m_dataSize += bytesWritten;
+    return bytesWritten;
+}
+
+size_t RingBuffer::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t RingBuffer::Read(uint8_t* buffer, size_t maxLength)
+{
+    if (!buffer || maxLength == 0)
+        return 0;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 限制读取长度为可用数据
+    size_t length = std::min(maxLength, Available());
+    if (length == 0)
+        return 0;
+    
+    size_t bytesRead = 0;
+    
+    while (bytesRead < length)
+    {
+        size_t contiguousData = GetContiguousReadSize();
+        size_t chunkSize = std::min(length - bytesRead, contiguousData);
+        
+        if (chunkSize == 0)
+            break;
+        
+        std::memcpy(buffer + bytesRead, &m_buffer[m_readPos], chunkSize);
+        AdvanceReadPos(chunkSize);
+        bytesRead += chunkSize;
+    }
+    
+    m_dataSize -= bytesRead;
+    return bytesRead;
+}
+
+size_t RingBuffer::Read(std::vector<uint8_t>& buffer, size_t maxLength)
+{
+    buffer.resize(maxLength);
+    size_t bytesRead = Read(buffer.data(), maxLength);
+    buffer.resize(bytesRead);
+    return bytesRead;
+}
+
+size_t RingBuffer::Available() const
+{
+    return m_dataSize.load();
+}
+
+size_t RingBuffer::FreeSpace() const
+{
+    return m_buffer.size() - Available();
+}
+
+size_t RingBuffer::Capacity() const
+{
+    return m_buffer.size();
+}
+
+bool RingBuffer::IsEmpty() const
+{
+    return Available() == 0;
+}
+
+bool RingBuffer::IsFull() const
+{
+    return Available() == Capacity();
+}
+
+void RingBuffer::Clear()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_readPos = m_writePos = 0;
+    m_dataSize = 0;
+}
+
+bool RingBuffer::Resize(size_t newSize)
+{
+    if (newSize == 0)
+        return false;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (newSize < m_dataSize)
+        return false; // 新大小不能小于已有数据
+    
+    std::vector<uint8_t> newBuffer(newSize);
+    
+    // 将数据重新组织到新缓冲区
+    if (m_dataSize > 0)
+    {
+        size_t bytesRead = 0;
+        size_t currentDataSize = m_dataSize;
+        
+        while (bytesRead < currentDataSize)
+        {
+            size_t contiguousData = GetContiguousReadSize();
+            size_t chunkSize = std::min(currentDataSize - bytesRead, contiguousData);
+            
+            std::memcpy(&newBuffer[bytesRead], &m_buffer[m_readPos], chunkSize);
+            AdvanceReadPos(chunkSize);
+            bytesRead += chunkSize;
+        }
+        
+        // 重置指针
+        m_readPos = 0;
+        m_writePos = currentDataSize;
+    }
+    else
+    {
+        m_readPos = m_writePos = 0;
+    }
+    
+    m_buffer = std::move(newBuffer);
+    return true;
+}
+
+void RingBuffer::SetAutoExpand(bool enable, size_t maxSize)
+{
+    m_autoExpand = enable;
+    if (maxSize > 0)
+        m_maxSize = maxSize;
+}
+
+uint8_t RingBuffer::Peek(size_t offset) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (offset >= Available())
+        return 0;
+    
+    size_t pos = (m_readPos + offset) % m_buffer.size();
+    return m_buffer[pos];
+}
+
+size_t RingBuffer::Peek(uint8_t* buffer, size_t length, size_t offset) const
+{
+    if (!buffer || length == 0)
+        return 0;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (offset >= Available())
+        return 0;
+    
+    // 限制读取长度
+    length = std::min(length, Available() - offset);
+    if (length == 0)
+        return 0;
+    
+    size_t bytesRead = 0;
+    size_t currentPos = (m_readPos + offset) % m_buffer.size();
+    
+    while (bytesRead < length)
+    {
+        size_t toEnd = m_buffer.size() - currentPos;
+        size_t chunkSize = std::min(length - bytesRead, toEnd);
+        
+        std::memcpy(buffer + bytesRead, &m_buffer[currentPos], chunkSize);
+        bytesRead += chunkSize;
+        currentPos = (currentPos + chunkSize) % m_buffer.size();
+    }
+    
+    return bytesRead;
+}
+
+size_t RingBuffer::Skip(size_t length)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    size_t actualSkip = std::min(length, Available());
+    if (actualSkip == 0)
+        return 0;
+    
+    m_readPos = (m_readPos + actualSkip) % m_buffer.size();
+    m_dataSize -= actualSkip;
+    return actualSkip;
+}
+
+size_t RingBuffer::Find(uint8_t byte, size_t startOffset) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (startOffset >= Available())
+        return std::string::npos;
+    
+    size_t searchLength = Available() - startOffset;
+    size_t currentPos = (m_readPos + startOffset) % m_buffer.size();
+    
+    for (size_t i = 0; i < searchLength; ++i)
+    {
+        if (m_buffer[currentPos] == byte)
+            return startOffset + i;
+        
+        currentPos = (currentPos + 1) % m_buffer.size();
+    }
+    
+    return std::string::npos;
+}
+
+size_t RingBuffer::Find(const uint8_t* pattern, size_t patternLength, size_t startOffset) const
+{
+    if (!pattern || patternLength == 0)
+        return std::string::npos;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (startOffset + patternLength > Available())
+        return std::string::npos;
+    
+    size_t searchLength = Available() - startOffset - patternLength + 1;
+    
+    for (size_t i = 0; i < searchLength; ++i)
+    {
+        bool found = true;
+        for (size_t j = 0; j < patternLength; ++j)
+        {
+            size_t pos = (m_readPos + startOffset + i + j) % m_buffer.size();
+            if (m_buffer[pos] != pattern[j])
+            {
+                found = false;
+                break;
+            }
+        }
+        
+        if (found)
+            return startOffset + i;
+    }
+    
+    return std::string::npos;
+}
+
+bool RingBuffer::ExpandIfNeeded(size_t requiredSize)
+{
+    if (requiredSize <= m_buffer.size())
+        return true;
+    
+    if (requiredSize > m_maxSize)
+        return false; // 超过最大大小限制
+    
+    // 计算新大小（以2的幂扩展）
+    size_t newSize = m_buffer.size();
+    while (newSize < requiredSize && newSize < m_maxSize)
+    {
+        newSize *= 2;
+    }
+    
+    if (newSize > m_maxSize)
+        newSize = m_maxSize;
+    
+    return Resize(newSize);
+}
+
+size_t RingBuffer::GetContiguousWriteSize() const
+{
+    if (IsFull())
+        return 0;
+    
+    if (m_writePos >= m_readPos)
+    {
+        // 写位置在读位置之后
+        if (Available() == 0)
+            return m_buffer.size() - m_writePos; // 空缓冲区
+        else
+            return m_buffer.size() - m_writePos; // 到缓冲区末尾的空间
+    }
+    else
+    {
+        // 写位置在读位置之前
+        return m_readPos - m_writePos;
+    }
+}
+
+size_t RingBuffer::GetContiguousReadSize() const
+{
+    if (IsEmpty())
+        return 0;
+    
+    if (m_writePos > m_readPos)
+    {
+        // 写位置在读位置之后
+        return m_writePos - m_readPos;
+    }
+    else
+    {
+        // 写位置在读位置之前（绕行）
+        return m_buffer.size() - m_readPos;
+    }
+}
+
+void RingBuffer::AdvanceWritePos(size_t length)
+{
+    m_writePos = (m_writePos + length) % m_buffer.size();
+}
+
+void RingBuffer::AdvanceReadPos(size_t length)
+{
+    m_readPos = (m_readPos + length) % m_buffer.size();
+}

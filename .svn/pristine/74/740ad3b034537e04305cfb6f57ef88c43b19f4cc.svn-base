@@ -1,0 +1,264 @@
+﻿#include "pch.h"
+#include "IOWorker.h"
+
+IOWorker::IOWorker()
+    : m_running(false)
+    , m_completionPort(NULL)
+    , m_threadCount(2)
+    , m_timeoutMs(INFINITE)
+{
+}
+
+IOWorker::~IOWorker()
+{
+    Stop();
+}
+
+bool IOWorker::Start()
+{
+    if (m_running.load())
+        return true;
+    
+    // 创建完成端口
+    m_completionPort = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, m_threadCount);
+    if (m_completionPort == NULL)
+        return false;
+    
+    // 启动工作线程
+    m_running = true;
+    m_workerThreads.reserve(m_threadCount);
+    
+    for (int i = 0; i < m_threadCount; i++)
+    {
+        m_workerThreads.emplace_back(&IOWorker::WorkerThreadFunc, this);
+    }
+    
+    return true;
+}
+
+void IOWorker::Stop()
+{
+    if (!m_running.load())
+        return;
+    
+    m_running = false;
+    
+    // 通知工作线程退出
+    for (int i = 0; i < m_threadCount; i++)
+    {
+        PostQueuedCompletionStatus(m_completionPort, 0, 0, NULL);
+    }
+    
+    // 等待线程结束
+    for (auto& thread : m_workerThreads)
+    {
+        if (thread.joinable())
+            thread.join();
+    }
+    m_workerThreads.clear();
+    
+    // 关闭完成端口
+    if (m_completionPort != NULL)
+    {
+        CloseHandle(m_completionPort);
+        m_completionPort = NULL;
+    }
+    
+    // 清理上下文池
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    while (!m_contextPool.empty())
+        m_contextPool.pop();
+}
+
+bool IOWorker::IsRunning() const
+{
+    return m_running.load();
+}
+
+bool IOWorker::AsyncRead(HANDLE handle, std::vector<uint8_t>& buffer, IOCompletionCallback callback)
+{
+    if (!m_running.load() || handle == INVALID_HANDLE_VALUE)
+        return false;
+    
+    // 获取上下文
+    auto context = GetContext();
+    if (!context)
+        return false;
+    
+    // 设置上下文
+    context->operation = IOOperation::Read;
+    context->handle = handle;
+    context->buffer = buffer; // 复制缓冲区结构
+    context->callback = callback;
+    context->worker = this;
+    
+    // 确保缓冲区有数据空间
+    if (context->buffer.empty())
+        context->buffer.resize(4096); // 默认缓冲区大小
+    
+    // 投递异步读取操作
+    BOOL result = ReadFile(
+        handle,
+        context->buffer.data(),
+        static_cast<DWORD>(context->buffer.size()),
+        NULL,
+        &context->overlapped
+    );
+    
+    DWORD error = GetLastError();
+    if (!result && error != ERROR_IO_PENDING)
+    {
+        // 操作失败
+        ReturnContext(std::move(context));
+        return false;
+    }
+    
+    // 如果操作同步完成，也需要处理
+    if (result)
+    {
+        // 同步完成，但仍然通过IOCP处理
+        // 这里不需要额外处理，因为IOCP会处理所有完成
+    }
+    
+    context.release(); // 转移所有权给工作线程
+    return true;
+}
+
+bool IOWorker::AsyncWrite(HANDLE handle, const std::vector<uint8_t>& data, IOCompletionCallback callback)
+{
+    if (!m_running.load() || handle == INVALID_HANDLE_VALUE || data.empty())
+        return false;
+    
+    // 获取上下文
+    auto context = GetContext();
+    if (!context)
+        return false;
+    
+    // 设置上下文
+    context->operation = IOOperation::Write;
+    context->handle = handle;
+    context->buffer = data; // 复制要写入的数据
+    context->callback = callback;
+    context->worker = this;
+    
+    // 投递异步写入操作
+    BOOL result = WriteFile(
+        handle,
+        context->buffer.data(),
+        static_cast<DWORD>(context->buffer.size()),
+        NULL,
+        &context->overlapped
+    );
+    
+    DWORD error = GetLastError();
+    if (!result && error != ERROR_IO_PENDING)
+    {
+        // 操作失败
+        ReturnContext(std::move(context));
+        return false;
+    }
+    
+    // 如果操作同步完成，也需要处理
+    if (result)
+    {
+        // 同步完成，但仍然通过IOCP处理
+        // 这里不需要额外处理，因为IOCP会处理所有完成
+    }
+    
+    context.release(); // 转移所有权给工作线程
+    return true;
+}
+
+void IOWorker::SetGlobalCallback(IOCompletionCallback callback)
+{
+    m_globalCallback = callback;
+}
+
+void IOWorker::SetThreadCount(int count)
+{
+    if (!m_running.load() && count > 0)
+        m_threadCount = count;
+}
+
+void IOWorker::SetTimeout(DWORD timeoutMs)
+{
+    m_timeoutMs = timeoutMs;
+}
+
+void IOWorker::WorkerThreadFunc()
+{
+    // TODO: 实现工作线程逻辑
+    while (m_running.load())
+    {
+        DWORD bytesTransferred = 0;
+        ULONG_PTR completionKey = 0;
+        LPOVERLAPPED overlapped = NULL;
+        
+        BOOL result = GetQueuedCompletionStatus(
+            m_completionPort,
+            &bytesTransferred,
+            &completionKey,
+            &overlapped,
+            m_timeoutMs
+        );
+        
+        if (!m_running.load())
+            break;
+        
+        if (overlapped == NULL)
+            continue;
+        
+        // 处理I/O完成
+        IOContext* context = CONTAINING_RECORD(overlapped, IOContext, overlapped);
+        DWORD errorCode = result ? ERROR_SUCCESS : GetLastError();
+        
+        // 创建结果并调用回调
+        IOResult ioResult;
+        ioResult.operation = context->operation;
+        ioResult.success = (errorCode == ERROR_SUCCESS);
+        ioResult.bytesTransferred = bytesTransferred;
+        ioResult.errorCode = errorCode;
+        ioResult.data = std::move(context->buffer);
+        
+        // 调用回调
+        if (context->callback)
+            context->callback(ioResult);
+        else if (m_globalCallback)
+            m_globalCallback(ioResult);
+        
+        // 返回上下文到池中
+        std::unique_ptr<IOContext> contextPtr(context);
+        ReturnContext(std::move(contextPtr));
+    }
+}
+
+std::unique_ptr<IOWorker::IOContext> IOWorker::GetContext()
+{
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    if (!m_contextPool.empty())
+    {
+        auto context = std::move(m_contextPool.front());
+        m_contextPool.pop();
+        return context;
+    }
+    
+    return std::make_unique<IOContext>();
+}
+
+void IOWorker::ReturnContext(std::unique_ptr<IOContext> context)
+{
+    if (!context)
+        return;
+    
+    // 重置上下文
+    ZeroMemory(&context->overlapped, sizeof(context->overlapped));
+    context->operation = IOOperation::Read;
+    context->handle = INVALID_HANDLE_VALUE;
+    context->buffer.clear();
+    context->callback = nullptr;
+    context->worker = nullptr;
+    
+    std::lock_guard<std::mutex> lock(m_contextMutex);
+    m_contextPool.push(std::move(context));
+}
+

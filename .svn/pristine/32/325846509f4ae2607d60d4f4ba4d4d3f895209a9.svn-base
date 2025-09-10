@@ -1,0 +1,1091 @@
+﻿#pragma execution_character_set("utf-8")
+#include "pch.h"
+#include "SerialTransport.h"
+#include <setupapi.h>
+#include <devguid.h>
+#include <sstream>
+#include <algorithm>
+
+#pragma comment(lib, "setupapi.lib")
+
+SerialTransport::SerialTransport()
+    : m_hComm(INVALID_HANDLE_VALUE)
+    , m_continuousReading(false)
+{
+    m_state = TRANSPORT_CLOSED;
+    m_readBuffer.resize(4096); // 默认读取缓冲区大小
+    
+    // 创建共享的IOWorker实例
+    m_ioWorker = std::make_shared<IOWorker>();
+    m_readBuffer.reserve(4096);  // 预分配读缓冲区
+}
+
+SerialTransport::~SerialTransport()
+{
+    Close();
+}
+
+bool SerialTransport::Open(const TransportConfig& config)
+{
+<<<<<<< .mine
+    if (m_state != TRANSPORT_CLOSED)
+    {
+        SetLastError("串口已打开或正在操作中");
+        return false;
+    }
+    
+||||||| .r19984
+    // TODO: 瀹炵幇涓插彛鎵撳紑閫昏緫
+=======
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_state == TRANSPORT_OPEN)
+    {
+        SetLastError("串口已经打开");
+        return false;
+    }
+    
+>>>>>>> .r19995
+    m_config = config;
+<<<<<<< .mine
+    
+    // 根据配置确定串口名称
+    m_portName = !config.ipAddress.empty() ? config.ipAddress : "COM1";
+    
+    NotifyStateChanged(TRANSPORT_OPENING, "正在打开串口 " + m_portName);
+    
+    // 打开串口设备
+    m_hComm = CreateFileA(
+        m_portName.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0,                           // 不共享
+        NULL,                        // 默认安全属性
+        OPEN_EXISTING,               // 必须已存在
+        FILE_FLAG_OVERLAPPED,        // 异步I/O
+        NULL                         // 无模板文件
+    );
+    
+    if (m_hComm == INVALID_HANDLE_VALUE)
+    {
+        DWORD error = ::GetLastError();
+        SetLastError("无法打开串口 " + m_portName + "，错误代码：" + std::to_string(error));
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 配置串口参数
+    DCB dcb = {0};
+    dcb.DCBlength = sizeof(DCB);
+    
+    // 获取当前配置
+    if (!GetCommState(m_hComm, &dcb))
+    {
+        SetLastError("获取串口状态失败");
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 设置串口参数
+    dcb.BaudRate = config.baudRate;
+    dcb.ByteSize = config.dataBits;
+    dcb.Parity = config.parity;      // 0=NOPARITY, 1=ODDPARITY, 2=EVENPARITY
+    dcb.StopBits = (config.stopBits == 1) ? ONESTOPBIT : TWOSTOPBITS;
+    
+    // 流控制设置
+    dcb.fBinary = TRUE;
+    dcb.fParity = (config.parity != 0);
+    dcb.fOutxCtsFlow = FALSE;
+    dcb.fOutxDsrFlow = FALSE;
+    dcb.fDtrControl = DTR_CONTROL_ENABLE;
+    dcb.fDsrSensitivity = FALSE;
+    dcb.fTXContinueOnXoff = FALSE;
+    dcb.fOutX = FALSE;
+    dcb.fInX = FALSE;
+    dcb.fErrorChar = FALSE;
+    dcb.fNull = FALSE;
+    dcb.fRtsControl = RTS_CONTROL_ENABLE;
+    dcb.fAbortOnError = FALSE;
+    
+    if (!SetCommState(m_hComm, &dcb))
+    {
+        SetLastError("设置串口参数失败");
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 设置超时
+    COMMTIMEOUTS timeouts = {0};
+    timeouts.ReadIntervalTimeout = 50;
+    timeouts.ReadTotalTimeoutConstant = config.readTimeoutMs;
+    timeouts.ReadTotalTimeoutMultiplier = 0;
+    timeouts.WriteTotalTimeoutConstant = config.writeTimeoutMs;
+    timeouts.WriteTotalTimeoutMultiplier = 0;
+    
+    if (!SetCommTimeouts(m_hComm, &timeouts))
+    {
+        SetLastError("设置串口超时失败");
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 创建事件对象用于异步I/O
+    m_readOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    m_writeOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    
+    if (!m_readOverlapped.hEvent || !m_writeOverlapped.hEvent)
+    {
+        SetLastError("创建I/O事件失败");
+        Close();
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 清空缓冲区
+    PurgeComm(m_hComm, PURGE_RXCLEAR | PURGE_TXCLEAR);
+    
+    // 启动IOWorker
+    if (!m_ioWorker->Start())
+    {
+        SetLastError("启动IOWorker失败");
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 开始连续异步读取
+    StartContinuousReading();
+    
+    NotifyStateChanged(TRANSPORT_OPEN, "串口 " + m_portName + " 打开成功");
+||||||| .r19984
+    m_portName = "COM1"; // 涓存椂
+    NotifyStateChanged(TRANSPORT_OPEN, "涓插彛宸叉墦寮€");
+=======
+    NotifyStateChanged(TRANSPORT_OPENING, "正在打开串口...");
+    
+    // 构造串口设备名称
+    if (m_portName.empty())
+    {
+        m_portName = "COM1";  // 默认使用COM1
+    }
+    
+    std::string deviceName = "\\\\.\\" + m_portName;
+    
+    // 打开串口设备
+    m_hComm = CreateFileA(
+        deviceName.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0,                    // 不共享
+        NULL,                 // 默认安全属性
+        OPEN_EXISTING,        // 设备必须存在
+        FILE_FLAG_OVERLAPPED, // 异步I/O
+        NULL
+    );
+    
+    if (m_hComm == INVALID_HANDLE_VALUE)
+    {
+        DWORD winError = ::GetLastError();
+        SetLastError("打开串口失败: " + GetSystemErrorString(winError));
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 配置串口参数
+    if (!ConfigurePort())
+    {
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+        NotifyStateChanged(TRANSPORT_ERROR, "串口配置失败");
+        return false;
+    }
+    
+    // 设置异步I/O
+    if (!SetupOverlapped())
+    {
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+        NotifyStateChanged(TRANSPORT_ERROR, "异步I/O设置失败");
+        return false;
+    }
+    
+    // 启动读取线程
+    m_stopRead = false;
+    m_readThread = std::thread(&SerialTransport::ReadThreadFunc, this);
+    
+    NotifyStateChanged(TRANSPORT_OPEN, "串口 " + m_portName + " 已打开");
+>>>>>>> .r19995
+    return true;
+}
+
+void SerialTransport::Close()
+{
+<<<<<<< .mine
+    if (m_state == TRANSPORT_CLOSED)
+        return;
+    
+    NotifyStateChanged(TRANSPORT_CLOSING, "正在关闭串口");
+    
+    // 停止连续异步读取
+    StopContinuousReading();
+    
+    // 停止并清理IOWorker
+    if (m_ioWorker)
+    {
+        m_ioWorker->Stop();
+    }
+    
+    // 关闭事件对象
+    if (m_readOverlapped.hEvent)
+    {
+        CloseHandle(m_readOverlapped.hEvent);
+        m_readOverlapped.hEvent = NULL;
+    }
+    
+    if (m_writeOverlapped.hEvent)
+    {
+        CloseHandle(m_writeOverlapped.hEvent);
+        m_writeOverlapped.hEvent = NULL;
+    }
+    
+    // 关闭串口句柄
+    if (m_hComm != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+    }
+    
+    NotifyStateChanged(TRANSPORT_CLOSED, "串口已关闭");
+||||||| .r19984
+    // TODO: 瀹炵幇涓插彛鍏抽棴閫昏緫
+    NotifyStateChanged(TRANSPORT_CLOSED, "涓插彛宸插叧闂?");
+=======
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_state == TRANSPORT_CLOSED)
+        return;
+        
+    NotifyStateChanged(TRANSPORT_CLOSING, "正在关闭串口...");
+    
+    // 停止读取线程
+    m_stopRead = true;
+    if (m_readThread.joinable())
+    {
+        // 取消挂起的I/O操作
+        if (m_hComm != INVALID_HANDLE_VALUE)
+        {
+            CancelIo(m_hComm);
+        }
+        m_readThread.join();
+    }
+    
+    // 清理异步I/O资源
+    CleanupOverlapped();
+    
+    // 关闭串口句柄
+    if (m_hComm != INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(m_hComm);
+        m_hComm = INVALID_HANDLE_VALUE;
+    }
+    
+    NotifyStateChanged(TRANSPORT_CLOSED, "串口已关闭");
+>>>>>>> .r19995
+}
+
+bool SerialTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState SerialTransport::GetState() const
+{
+    return m_state;
+}
+
+bool SerialTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig SerialTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t SerialTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t SerialTransport::Write(const uint8_t* data, size_t length)
+{
+<<<<<<< .mine
+    if (!IsOpen() || !data || length == 0)
+    {
+        return 0;
+    }
+    
+    // 使用IOWorker进行异步写入，但同步等待结果
+    std::vector<uint8_t> writeData(data, data + length);
+    
+    // 用于同步等待的事件和结果
+    HANDLE writeCompleteEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (!writeCompleteEvent)
+    {
+        SetLastError("创建写入完成事件失败");
+        return 0;
+    }
+    
+    size_t bytesWritten = 0;
+    bool writeSuccess = false;
+    std::string writeError;
+    
+    // 异步写入回调
+    auto writeCallback = [&](const IOResult& result) {
+        writeSuccess = result.success;
+        bytesWritten = result.bytesTransferred;
+        if (!result.success)
+        {
+            writeError = "异步写入失败：" + std::to_string(result.errorCode);
+        }
+        SetEvent(writeCompleteEvent);
+    };
+    
+    // 发起异步写入
+    if (!m_ioWorker->AsyncWrite(m_hComm, writeData, writeCallback))
+    {
+        CloseHandle(writeCompleteEvent);
+        SetLastError("发起异步写入失败");
+        return 0;
+    }
+    
+    // 等待写入完成
+    DWORD waitResult = WaitForSingleObject(writeCompleteEvent, 
+                                         m_config.writeTimeoutMs > 0 ? m_config.writeTimeoutMs : 5000);
+    CloseHandle(writeCompleteEvent);
+    
+    if (waitResult == WAIT_OBJECT_0)
+    {
+        if (writeSuccess)
+        {
+            return bytesWritten;
+        }
+        else
+        {
+            SetLastError(writeError);
+            return 0;
+        }
+    }
+    else if (waitResult == WAIT_TIMEOUT)
+    {
+        SetLastError("写入操作超时");
+        return 0;
+    }
+    else
+    {
+        SetLastError("等待写入完成失败");
+        return 0;
+    }
+||||||| .r19984
+    // TODO: 瀹炵幇涓插彛鍐欏叆
+    return length;
+=======
+    if (m_state != TRANSPORT_OPEN || m_hComm == INVALID_HANDLE_VALUE)
+    {
+        SetLastError("串口未打开");
+        return 0;
+    }
+    
+    if (data == nullptr || length == 0)
+        return 0;
+    
+    OVERLAPPED writeOverlapped = {0};
+    writeOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (writeOverlapped.hEvent == NULL)
+    {
+        SetLastError("创建写事件失败");
+        return 0;
+    }
+    
+    DWORD bytesWritten = 0;
+    BOOL result = WriteFile(m_hComm, data, (DWORD)length, &bytesWritten, &writeOverlapped);
+    
+    if (!result)
+    {
+        DWORD winError = ::GetLastError();
+        if (winError == ERROR_IO_PENDING)
+        {
+            // 等待写操作完成
+            DWORD waitResult = WaitForSingleObject(writeOverlapped.hEvent, m_config.writeTimeoutMs);
+            if (waitResult == WAIT_OBJECT_0)
+            {
+                GetOverlappedResult(m_hComm, &writeOverlapped, &bytesWritten, FALSE);
+            }
+            else
+            {
+                CancelIo(m_hComm);
+                SetLastError("写超时");
+                bytesWritten = 0;
+            }
+        }
+        else
+        {
+            SetLastError("写失败: " + GetSystemErrorString(winError));
+            bytesWritten = 0;
+        }
+    }
+    
+    CloseHandle(writeOverlapped.hEvent);
+    return bytesWritten;
+>>>>>>> .r19995
+}
+
+size_t SerialTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+<<<<<<< .mine
+    if (!IsOpen())
+    {
+        data.clear();
+        return 0;
+    }
+    
+    // 对于串口，我们主要依赖ReadThreadProc进行连续读取
+    // 这个方法可以用于同步读取剩余数据
+    data.clear();
+    
+    if (maxLength == 0)
+        maxLength = 4096;
+    
+    std::vector<uint8_t> buffer(maxLength);
+    DWORD bytesRead = 0;
+    OVERLAPPED overlapped = {0};
+    overlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    
+    if (!overlapped.hEvent)
+    {
+        return 0;
+    }
+    
+    BOOL result = ReadFile(m_hComm, buffer.data(), static_cast<DWORD>(maxLength), &bytesRead, &overlapped);
+    
+    if (!result)
+    {
+        DWORD error = ::GetLastError();
+        if (error == ERROR_IO_PENDING)
+        {
+            // 等待读取完成，使用较短的超时
+            DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 100);
+            if (waitResult == WAIT_OBJECT_0)
+            {
+                GetOverlappedResult(m_hComm, &overlapped, &bytesRead, FALSE);
+            }
+            else
+            {
+                CancelIo(m_hComm);
+                bytesRead = 0;
+            }
+        }
+        else
+        {
+            bytesRead = 0;
+        }
+    }
+    
+    CloseHandle(overlapped.hEvent);
+    
+    if (bytesRead > 0)
+    {
+        data.assign(buffer.begin(), buffer.begin() + bytesRead);
+    }
+    
+    return static_cast<size_t>(bytesRead);
+||||||| .r19984
+    // TODO: 瀹炵幇涓插彛璇诲彇
+    data.clear();
+    return 0;
+=======
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_readBuffer.empty())
+    {
+        data.clear();
+        return 0;
+    }
+    
+    size_t bytesToRead = maxLength > 0 ? std::min(maxLength, m_readBuffer.size()) : m_readBuffer.size();
+    
+    data.assign(m_readBuffer.begin(), m_readBuffer.begin() + bytesToRead);
+    m_readBuffer.erase(m_readBuffer.begin(), m_readBuffer.begin() + bytesToRead);
+    
+    return bytesToRead;
+>>>>>>> .r19995
+}
+
+size_t SerialTransport::Available() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_readBuffer.size();
+}
+
+std::string SerialTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string SerialTransport::GetPortName() const
+{
+    return m_portName;
+}
+
+std::string SerialTransport::GetTransportType() const
+{
+    return "Serial";
+}
+
+void SerialTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void SerialTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+void SerialTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+        m_dataCallback(data);
+}
+
+void SerialTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+        m_stateCallback(state, message);
+}
+
+void SerialTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}
+
+bool SerialTransport::Flush()
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+    {
+        SetLastError("串口未打开");
+        return false;
+    }
+    
+    // 刷新发送缓冲区，确保数据发送完成
+    if (!FlushFileBuffers(m_hComm))
+    {
+        SetLastError("刷新失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    return true;
+}
+
+bool SerialTransport::ClearBuffers()
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+    {
+        SetLastError("串口未打开");
+        return false;
+    }
+    
+    // 清空发送和接收缓冲区
+    if (!PurgeComm(m_hComm, PURGE_TXCLEAR | PURGE_RXCLEAR))
+    {
+        SetLastError("清空缓冲区失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    // 清空内部读取缓冲区
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_readBuffer.clear();
+    }
+    
+    return true;
+}
+
+std::vector<std::string> SerialTransport::EnumeratePorts()
+{
+    std::vector<std::string> ports;
+    
+    // 方法1：使用QueryDosDevice枚举所有串口设备
+    char deviceNames[65536];
+    DWORD result = QueryDosDeviceA(NULL, deviceNames, sizeof(deviceNames));
+    if (result != 0)
+    {
+        char* device = deviceNames;
+        while (*device)
+        {
+            // 检查是否是COM端口
+            if (strncmp(device, "COM", 3) == 0 && strlen(device) <= 8)
+            {
+                // 验证端口是否可访问
+                std::string devicePath = "\\\\.\\" + std::string(device);
+                HANDLE hPort = CreateFileA(devicePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                    0, NULL, OPEN_EXISTING, 0, NULL);
+                if (hPort != INVALID_HANDLE_VALUE)
+                {
+                    CloseHandle(hPort);
+                    ports.push_back(device);
+                }
+            }
+            device += strlen(device) + 1;
+        }
+    }
+    
+    // 方法2：如果上述方法失败，使用传统方法测试COM1-COM256
+    if (ports.empty())
+    {
+        for (int i = 1; i <= 256; i++)
+        {
+            std::string portName = "COM" + std::to_string(i);
+            std::string devicePath = "\\\\.\\" + portName;
+            
+            HANDLE hPort = CreateFileA(devicePath.c_str(), GENERIC_READ | GENERIC_WRITE,
+                0, NULL, OPEN_EXISTING, 0, NULL);
+            if (hPort != INVALID_HANDLE_VALUE)
+            {
+                CloseHandle(hPort);
+                ports.push_back(portName);
+            }
+        }
+    }
+    
+    // 按端口号排序
+    std::sort(ports.begin(), ports.end(), [](const std::string& a, const std::string& b) {
+        int numA = atoi(a.c_str() + 3);  // 跳过"COM"
+        int numB = atoi(b.c_str() + 3);
+        return numA < numB;
+    });
+    
+    return ports;
+}
+
+void SerialTransport::SetPortName(const std::string& portName)
+{
+    if (m_state == TRANSPORT_OPEN)
+    {
+        SetLastError("无法在连接打开时更改端口名称");
+        return;
+    }
+    m_portName = portName;
+}
+
+bool SerialTransport::SetDTR(bool enable)
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+    {
+        SetLastError("串口未打开");
+        return false;
+    }
+    
+    DWORD function = enable ? SETDTR : CLRDTR;
+    if (!EscapeCommFunction(m_hComm, function))
+    {
+        SetLastError("DTR控制失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    return true;
+}
+
+bool SerialTransport::SetRTS(bool enable)
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+    {
+        SetLastError("串口未打开");
+        return false;
+    }
+    
+    DWORD function = enable ? SETRTS : CLRRTS;
+    if (!EscapeCommFunction(m_hComm, function))
+    {
+        SetLastError("RTS控制失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    return true;
+}
+
+bool SerialTransport::GetCTS() const
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+        return false;
+    
+    DWORD status;
+    if (!GetCommModemStatus(m_hComm, &status))
+        return false;
+    
+    return (status & MS_CTS_ON) != 0;
+}
+
+bool SerialTransport::GetDSR() const
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+        return false;
+    
+    DWORD status;
+    if (!GetCommModemStatus(m_hComm, &status))
+        return false;
+    
+    return (status & MS_DSR_ON) != 0;
+}
+
+bool SerialTransport::ConfigurePort()
+{
+    if (m_hComm == INVALID_HANDLE_VALUE)
+        return false;
+    
+    // 获取当前串口配置
+    DCB dcb = {0};
+    dcb.DCBlength = sizeof(DCB);
+    if (!GetCommState(m_hComm, &dcb))
+    {
+        SetLastError("获取串口配置失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    // 设置串口参数
+    dcb.BaudRate = m_config.baudRate;
+    dcb.ByteSize = m_config.dataBits;
+    dcb.Parity = m_config.parity;
+    dcb.StopBits = (m_config.stopBits == 1) ? ONESTOPBIT : TWOSTOPBITS;
+    
+    // 设置流控制
+    dcb.fBinary = TRUE;
+    dcb.fParity = (m_config.parity != 0);
+    dcb.fOutxCtsFlow = FALSE;
+    dcb.fOutxDsrFlow = FALSE;
+    dcb.fDtrControl = DTR_CONTROL_ENABLE;
+    dcb.fDsrSensitivity = FALSE;
+    dcb.fTXContinueOnXoff = TRUE;
+    dcb.fOutX = FALSE;
+    dcb.fInX = FALSE;
+    dcb.fErrorChar = FALSE;
+    dcb.fNull = FALSE;
+    dcb.fRtsControl = RTS_CONTROL_ENABLE;
+    dcb.fAbortOnError = FALSE;
+    
+    // 应用配置
+    if (!SetCommState(m_hComm, &dcb))
+    {
+        SetLastError("设置串口配置失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    // 设置超时参数
+    COMMTIMEOUTS timeouts = {0};
+    timeouts.ReadIntervalTimeout = 50;
+    timeouts.ReadTotalTimeoutMultiplier = 0;
+    timeouts.ReadTotalTimeoutConstant = m_config.readTimeoutMs;
+    timeouts.WriteTotalTimeoutMultiplier = 0;
+    timeouts.WriteTotalTimeoutConstant = m_config.writeTimeoutMs;
+    
+    if (!SetCommTimeouts(m_hComm, &timeouts))
+    {
+        SetLastError("设置超时参数失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    // 设置缓冲区大小
+    if (!SetupComm(m_hComm, static_cast<DWORD>(m_config.rxBufferSize), static_cast<DWORD>(m_config.txBufferSize)))
+    {
+        SetLastError("设置缓冲区失败: " + GetSystemErrorString(::GetLastError()));
+        return false;
+    }
+    
+    // 清空缓冲区
+    PurgeComm(m_hComm, PURGE_TXCLEAR | PURGE_RXCLEAR);
+    
+    return true;
+}
+
+<<<<<<< .mine
+||||||| .r19984
+void SerialTransport::ReadThreadFunc()
+{
+    // TODO: 瀹炵幇璇诲彇绾跨▼
+}
+=======
+void SerialTransport::ReadThreadFunc()
+{
+    const size_t BUFFER_SIZE = 1024;
+    std::vector<uint8_t> tempBuffer(BUFFER_SIZE);
+    
+    OVERLAPPED readOverlapped = {0};
+    readOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (readOverlapped.hEvent == NULL)
+    {
+        SetLastError("创建读事件失败");
+        return;
+    }
+    
+    while (!m_stopRead && m_hComm != INVALID_HANDLE_VALUE)
+    {
+        DWORD bytesRead = 0;
+        ResetEvent(readOverlapped.hEvent);
+        
+        // 异步读取数据
+        BOOL result = ReadFile(m_hComm, tempBuffer.data(), BUFFER_SIZE, &bytesRead, &readOverlapped);
+        
+        if (result)
+        {
+            // 立即完成
+            if (bytesRead > 0)
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                m_readBuffer.insert(m_readBuffer.end(), tempBuffer.begin(), tempBuffer.begin() + bytesRead);
+                
+                // 通知数据到达
+                std::vector<uint8_t> receivedData(tempBuffer.begin(), tempBuffer.begin() + bytesRead);
+                NotifyDataReceived(receivedData);
+            }
+        }
+        else
+        {
+            DWORD winError = ::GetLastError();
+            if (winError == ERROR_IO_PENDING)
+            {
+                // 等待读操作完成或超时
+                DWORD waitResult = WaitForSingleObject(readOverlapped.hEvent, 100);
+                if (waitResult == WAIT_OBJECT_0)
+                {
+                    if (GetOverlappedResult(m_hComm, &readOverlapped, &bytesRead, FALSE))
+                    {
+                        if (bytesRead > 0)
+                        {
+                            std::lock_guard<std::mutex> lock(m_mutex);
+                            m_readBuffer.insert(m_readBuffer.end(), tempBuffer.begin(), tempBuffer.begin() + bytesRead);
+                            
+                            // 通知数据到达
+                            std::vector<uint8_t> receivedData(tempBuffer.begin(), tempBuffer.begin() + bytesRead);
+                            NotifyDataReceived(receivedData);
+                        }
+                    }
+                }
+                else if (waitResult == WAIT_TIMEOUT)
+                {
+                    // 超时，继续循环
+                    continue;
+                }
+                else
+                {
+                    // 其他错误
+                    break;
+                }
+            }
+            else
+            {
+                // 读取错误
+                SetLastError("读取失败: " + GetSystemErrorString(winError));
+                break;
+            }
+        }
+        
+        // 短暂休息避免占用过多CPU
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    
+    CloseHandle(readOverlapped.hEvent);
+}
+>>>>>>> .r19995
+
+bool SerialTransport::SetupOverlapped()
+{
+<<<<<<< .mine
+    // 初始化OVERLAPPED结构
+    ZeroMemory(&m_readOverlapped, sizeof(m_readOverlapped));
+    ZeroMemory(&m_writeOverlapped, sizeof(m_writeOverlapped));
+    
+    // 创建事件对象
+    m_readOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    m_writeOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    
+    return (m_readOverlapped.hEvent != NULL && m_writeOverlapped.hEvent != NULL);
+||||||| .r19984
+    // TODO: 瀹炵幇閲嶅彔I/O璁剧疆
+    return true;
+=======
+    // 创建读事件
+    m_readOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (m_readOverlapped.hEvent == NULL)
+    {
+        SetLastError("创建读重叠事件失败");
+        return false;
+    }
+    
+    // 创建写事件
+    m_writeOverlapped.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
+    if (m_writeOverlapped.hEvent == NULL)
+    {
+        SetLastError("创建写重叠事件失败");
+        CloseHandle(m_readOverlapped.hEvent);
+        m_readOverlapped.hEvent = NULL;
+        return false;
+    }
+    
+    return true;
+>>>>>>> .r19995
+}
+
+void SerialTransport::CleanupOverlapped()
+{
+<<<<<<< .mine
+    // 清理事件对象
+    if (m_readOverlapped.hEvent)
+    {
+        CloseHandle(m_readOverlapped.hEvent);
+        m_readOverlapped.hEvent = NULL;
+    }
+    
+    if (m_writeOverlapped.hEvent)
+    {
+        CloseHandle(m_writeOverlapped.hEvent);
+        m_writeOverlapped.hEvent = NULL;
+    }
+||||||| .r19984
+    // TODO: 娓呯悊閲嶅彔I/O
+=======
+    if (m_readOverlapped.hEvent != NULL)
+    {
+        CloseHandle(m_readOverlapped.hEvent);
+        m_readOverlapped.hEvent = NULL;
+    }
+    
+    if (m_writeOverlapped.hEvent != NULL)
+    {
+        CloseHandle(m_writeOverlapped.hEvent);
+        m_writeOverlapped.hEvent = NULL;
+    }
+    
+    ZeroMemory(&m_readOverlapped, sizeof(m_readOverlapped));
+    ZeroMemory(&m_writeOverlapped, sizeof(m_writeOverlapped));
+>>>>>>> .r19995
+}
+
+std::string SerialTransport::GetSystemErrorString(DWORD error) const
+{
+    // TODO: 瀹炵幇Windows閿欒淇℃伅杞崲
+    // 实现Windows错误信息转换
+    LPSTR buffer = nullptr;
+    size_t size = FormatMessageA(
+        FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+        NULL, error, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&buffer, 0, NULL);
+    
+    if (size == 0) {
+        return "Unknown error (code: " + std::to_string(error) + ")";
+    }
+    
+    std::string result(buffer, size);
+    LocalFree(buffer);
+    
+    // 移除末尾的换行符
+    if (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+        result.pop_back();
+        if (!result.empty() && result.back() == '\r') {
+            result.pop_back();
+        }
+    }
+    
+    return result + " (code: " + std::to_string(error) + ")";
+}
+
+void SerialTransport::StartContinuousReading()
+{
+    if (!IsOpen() || !m_ioWorker || m_continuousReading.load())
+        return;
+
+    m_continuousReading = true;
+    
+    // 准备读取缓冲区
+    m_readBuffer.resize(4096);
+    
+    // 发起第一次异步读取
+    m_ioWorker->AsyncRead(m_hComm, m_readBuffer, 
+        [this](const IOResult& result) { OnReadCompleted(result); });
+}
+
+void SerialTransport::StopContinuousReading()
+{
+    m_continuousReading = false;
+    
+    // 取消所有待处理的I/O操作
+    if (m_hComm != INVALID_HANDLE_VALUE)
+    {
+        CancelIo(m_hComm);
+    }
+}
+
+void SerialTransport::OnReadCompleted(const IOResult& result)
+{
+    if (!m_continuousReading.load() || !IsOpen())
+        return;
+        
+    if (result.success && result.bytesTransferred > 0)
+    {
+        // 通知数据接收
+        std::vector<uint8_t> receivedData(result.data.begin(), 
+                                         result.data.begin() + result.bytesTransferred);
+        NotifyDataReceived(receivedData);
+    }
+    else if (!result.success && result.errorCode != ERROR_OPERATION_ABORTED)
+    {
+        // 处理读取错误（除了操作取消）
+        SetLastError("异步读取失败：" + std::to_string(result.errorCode));
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return;
+    }
+    
+    // 如果仍在连续读取模式，发起下一次异步读取
+    if (m_continuousReading.load() && IsOpen())
+    {
+        m_ioWorker->AsyncRead(m_hComm, m_readBuffer, 
+            [this](const IOResult& result) { OnReadCompleted(result); });
+    }
+}
+
+void SerialTransport::OnWriteCompleted(const IOResult& result)
+{
+    if (!result.success)
+    {
+        SetLastError("异步写入失败：" + std::to_string(result.errorCode));
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+    }
+}
+
+void SerialTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+    {
+        m_dataCallback(data);
+    }
+}
+
+void SerialTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+    {
+        m_stateCallback(state, message);
+    }
+}
+
+void SerialTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}

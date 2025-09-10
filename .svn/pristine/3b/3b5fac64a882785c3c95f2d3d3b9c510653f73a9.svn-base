@@ -1,0 +1,180 @@
+﻿#include "pch.h"
+#include "LoopbackTransport.h"
+#include <random>
+
+LoopbackTransport::LoopbackTransport()
+    : m_stopThread(false)
+{
+    m_state = TRANSPORT_CLOSED;
+}
+
+LoopbackTransport::~LoopbackTransport()
+{
+    Close();
+}
+
+bool LoopbackTransport::Open(const TransportConfig& config)
+{
+    m_config = config;
+    NotifyStateChanged(TRANSPORT_OPEN, "鍥炵幆宸叉墦寮€");
+    return true;
+}
+
+void LoopbackTransport::Close()
+{
+    NotifyStateChanged(TRANSPORT_CLOSED, "鍥炵幆宸插叧闂?");
+}
+
+bool LoopbackTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState LoopbackTransport::GetState() const
+{
+    return m_state;
+}
+
+bool LoopbackTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig LoopbackTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t LoopbackTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t LoopbackTransport::Write(const uint8_t* data, size_t length)
+{
+    // TODO: 瀹炵幇鍥炵幆鍐欏叆锛堢洿鎺ュ洖鐜埌璇诲彇闃熷垪锛?    std::lock_guard<std::mutex> lock(m_mutex);
+    std::vector<uint8_t> loopbackData(data, data + length);
+    m_dataQueue.push(loopbackData);
+    return length;
+}
+
+size_t LoopbackTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_dataQueue.empty())
+    {
+        data.clear();
+        return 0;
+    }
+    
+    data = m_dataQueue.front();
+    m_dataQueue.pop();
+    return data.size();
+}
+
+size_t LoopbackTransport::Available() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_dataQueue.size();
+}
+
+std::string LoopbackTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string LoopbackTransport::GetPortName() const
+{
+    return "Loopback";
+}
+
+std::string LoopbackTransport::GetTransportType() const
+{
+    return "Loopback";
+}
+
+void LoopbackTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void LoopbackTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool LoopbackTransport::Flush()
+{
+    return true;
+}
+
+bool LoopbackTransport::ClearBuffers()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    while (!m_dataQueue.empty())
+        m_dataQueue.pop();
+    return true;
+}
+
+void LoopbackTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+        m_dataCallback(data);
+}
+
+void LoopbackTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+        m_stateCallback(state, message);
+}
+
+void LoopbackTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}
+
+void LoopbackTransport::SimulateError(const std::string& error)
+{
+    SetLastError(error);
+    NotifyStateChanged(TRANSPORT_ERROR, error);
+}
+
+void LoopbackTransport::LoopbackThreadFunc()
+{
+    // TODO: 瀹炵幇鍥炵幆绾跨▼閫昏緫
+    while (!m_stopThread)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_dataQueue.empty() && m_dataCallback)
+        {
+            auto data = m_dataQueue.front();
+            m_dataQueue.pop();
+            
+            // 妯℃嫙寤惰繜
+            if (m_delayMs > 0)
+                std::this_thread::sleep_for(std::chrono::milliseconds(m_delayMs));
+            
+            // 妯℃嫙閿欒
+            if (!ShouldSimulateError())
+            {
+                m_dataCallback(data);
+            }
+        }
+    }
+}
+
+bool LoopbackTransport::ShouldSimulateError()
+{
+    if (m_errorRate <= 0.0)
+        return false;
+    
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_real_distribution<> dis(0.0, 1.0);
+    
+    return dis(gen) < m_errorRate;
+}

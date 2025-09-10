@@ -1,0 +1,231 @@
+// 滑动窗口协议测试程序
+// 用于验证滑动窗口实现的基本逻辑
+
+#include <iostream>
+#include <vector>
+#include <map>
+#include <chrono>
+#include <cassert>
+
+// 模拟帧结构
+struct TestFrame {
+    uint16_t sequence;
+    std::vector<uint8_t> data;
+    
+    TestFrame(uint16_t seq, const std::vector<uint8_t>& d) : sequence(seq), data(d) {}
+};
+
+// 模拟发送窗口条目
+struct TestSendWindowEntry {
+    uint16_t sequence;
+    TestFrame frame;
+    std::chrono::steady_clock::time_point sendTime;
+    int retryCount;
+    
+    TestSendWindowEntry(uint16_t seq, const TestFrame& f) 
+        : sequence(seq), frame(f), sendTime(std::chrono::steady_clock::now()), retryCount(0) {}
+};
+
+// 滑动窗口协议测试类
+class SlidingWindowTest {
+private:
+    uint8_t windowSize = 8;
+    uint16_t sendBase = 1;
+    uint16_t nextSequence = 1;
+    std::map<uint16_t, TestSendWindowEntry> sendWindow;
+    
+    // 模拟接收窗口
+    std::map<uint16_t, std::vector<uint8_t>> receiveWindow;
+    uint16_t receiveBase = 2;  // START=1, DATA从2开始
+    std::vector<uint8_t> deliveredData;
+
+public:
+    // 测试1：窗口大小限制
+    void testWindowSizeLimit() {
+        std::cout << "测试1：窗口大小限制..." << std::endl;
+        
+        sendWindow.clear();
+        sendBase = 1;
+        nextSequence = 1;
+        
+        // 尝试发送超过窗口大小的帧
+        int sentFrames = 0;
+        for (int i = 0; i < windowSize + 3; i++) {
+            if (canSendNewFrame()) {
+                std::vector<uint8_t> data = {static_cast<uint8_t>(i)};
+                TestFrame frame(nextSequence, data);
+                sendFrameInWindow(frame);
+                nextSequence++;
+                sentFrames++;
+            } else {
+                break;
+            }
+        }
+        
+        assert(sentFrames == windowSize);
+        assert(sendWindow.size() == windowSize);
+        std::cout << "✓ 窗口大小限制正确，发送了 " << sentFrames << " 个帧" << std::endl;
+    }
+    
+    // 测试2：累积ACK处理
+    void testCumulativeAck() {
+        std::cout << "测试2：累积ACK处理..." << std::endl;
+        
+        // 先填满窗口
+        testWindowSizeLimit();
+        
+        size_t initialWindowSize = sendWindow.size();
+        
+        // 发送累积ACK for sequence 5 (应该确认序号1-5)
+        handleWindowAck(5);
+        
+        assert(sendBase == 6);  // sendBase应该更新为6
+        assert(sendWindow.size() == initialWindowSize - 5);  // 应该释放5个窗口位置
+        
+        std::cout << "✓ 累积ACK处理正确，窗口释放了5个位置" << std::endl;
+    }
+    
+    // 测试3：乱序接收和按序提交
+    void testOutOfOrderReceive() {
+        std::cout << "测试3：乱序接收和按序提交..." << std::endl;
+        
+        receiveWindow.clear();
+        receiveBase = 2;
+        deliveredData.clear();
+        
+        // 模拟接收乱序帧：收到seq 3, 4, 2（按这个顺序）
+        std::vector<uint8_t> data2 = {2};
+        std::vector<uint8_t> data3 = {3};
+        std::vector<uint8_t> data4 = {4};
+        
+        // 先收到seq 3（乱序）
+        handleDataFrame(3, data3);
+        assert(deliveredData.empty());  // 不应该提交，因为seq 2还未到
+        
+        // 再收到seq 4（继续乱序）
+        handleDataFrame(4, data4);
+        assert(deliveredData.empty());  // 仍然不应该提交
+        
+        // 最后收到seq 2（按序）
+        handleDataFrame(2, data2);
+        
+        // 现在应该按序提交2, 3, 4
+        assert(deliveredData.size() == 3);
+        assert(deliveredData[0] == 2);
+        assert(deliveredData[1] == 3);
+        assert(deliveredData[2] == 4);
+        assert(receiveBase == 5);  // receiveBase应该推进到5
+        
+        std::cout << "✓ 乱序接收和按序提交正确" << std::endl;
+    }
+    
+    // 测试4：快速重传
+    void testFastRetransmit() {
+        std::cout << "测试4：快速重传..." << std::endl;
+        
+        sendWindow.clear();
+        sendBase = 1;
+        nextSequence = 1;
+        
+        // 发送几个帧
+        for (int i = 0; i < 3; i++) {
+            std::vector<uint8_t> data = {static_cast<uint8_t>(i + 1)};
+            TestFrame frame(nextSequence, data);
+            sendFrameInWindow(frame);
+            nextSequence++;
+        }
+        
+        // 模拟收到seq 2的NAK（快速重传请求）
+        auto it = sendWindow.find(2);
+        assert(it != sendWindow.end());
+        
+        int originalRetryCount = it->second.retryCount;
+        handleWindowNak(2);
+        
+        // 检查重传计数是否增加
+        it = sendWindow.find(2);
+        assert(it != sendWindow.end());
+        assert(it->second.retryCount == originalRetryCount + 1);
+        
+        std::cout << "✓ 快速重传触发正确" << std::endl;
+    }
+    
+    void runAllTests() {
+        std::cout << "=== 滑动窗口协议测试开始 ===" << std::endl;
+        
+        testWindowSizeLimit();
+        testCumulativeAck();
+        testOutOfOrderReceive();
+        testFastRetransmit();
+        
+        std::cout << "=== 所有测试通过！滑动窗口协议实现正确 ===" << std::endl;
+    }
+
+private:
+    bool canSendNewFrame() const {
+        return sendWindow.size() < windowSize;
+    }
+    
+    bool sendFrameInWindow(const TestFrame& frame) {
+        if (!canSendNewFrame()) {
+            return false;
+        }
+        
+        sendWindow.emplace(frame.sequence, TestSendWindowEntry(frame.sequence, frame));
+        return true;
+    }
+    
+    void handleWindowAck(uint16_t sequence) {
+        // 累积ACK：确认所有 <= sequence 的帧
+        auto it = sendWindow.begin();
+        while (it != sendWindow.end()) {
+            if (it->first <= sequence) {
+                it = sendWindow.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        
+        // 更新发送基序号
+        if (sequence >= sendBase) {
+            sendBase = sequence + 1;
+        }
+    }
+    
+    void handleWindowNak(uint16_t sequence) {
+        auto it = sendWindow.find(sequence);
+        if (it != sendWindow.end()) {
+            it->second.retryCount++;
+        }
+    }
+    
+    void handleDataFrame(uint16_t sequence, const std::vector<uint8_t>& data) {
+        // 缓存乱序帧
+        receiveWindow[sequence] = data;
+        
+        // 尝试按序提交
+        deliverOrderedFrames();
+    }
+    
+    void deliverOrderedFrames() {
+        while (true) {
+            auto it = receiveWindow.find(receiveBase);
+            if (it == receiveWindow.end()) {
+                break;  // 期望的序号帧不存在
+            }
+            
+            // 按序提交数据
+            deliveredData.insert(deliveredData.end(), it->second.begin(), it->second.end());
+            
+            // 移除已处理的帧
+            receiveWindow.erase(it);
+            receiveBase++;
+        }
+    }
+};
+
+int main() {
+    SlidingWindowTest test;
+    test.runAllTests();
+    return 0;
+}

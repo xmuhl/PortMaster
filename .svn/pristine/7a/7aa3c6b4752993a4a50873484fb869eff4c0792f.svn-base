@@ -1,0 +1,19 @@
+﻿#pragma once
+
+#include "ITransport.h"
+#include "LptSpoolerTransport.h"
+
+// USB鎵撳嵃鏈轰紶杈撶被锛堢户鎵縇PT Spooler瀹炵幇锛?class UsbPrinterTransport : public LptSpoolerTransport
+{
+public:
+    UsbPrinterTransport();
+    virtual ~UsbPrinterTransport();
+
+    virtual std::string GetTransportType() const override;
+
+    // USB 鐗规湁鍔熻兘
+    static std::vector<std::string> EnumerateUsbPrinters();
+
+private:
+    bool IsUsbPrinter(const std::string& printerName) const;
+};

@@ -1,0 +1,220 @@
+﻿#include "pch.h"
+#include "ReliableChannel.h"
+
+ReliableChannel::ReliableChannel(std::shared_ptr<ITransport> transport)
+    : m_transport(transport)
+    , m_state(RELIABLE_IDLE)
+    , m_active(false)
+    , m_receivingEnabled(false)
+    , m_sendOffset(0)
+    , m_sendSequence(0)
+    , m_retryCount(0)
+    , m_expectedSequence(0)
+    , m_stopThread(false)
+{
+    // 璁剧疆浼犺緭灞傚洖璋?    if (m_transport)
+    {
+        m_transport->SetDataReceivedCallback(
+            [this](const std::vector<uint8_t>& data) {
+                OnDataReceived(data);
+            }
+        );
+    }
+}
+
+ReliableChannel::~ReliableChannel()
+{
+    Stop();
+}
+
+bool ReliableChannel::Start()
+{
+    if (m_active.load())
+        return true;
+    
+    m_active = true;
+    m_stopThread = false;
+    m_protocolThread = std::thread(&ReliableChannel::ProtocolThreadFunc, this);
+    
+    return true;
+}
+
+void ReliableChannel::Stop()
+{
+    if (!m_active.load())
+        return;
+    
+    m_active = false;
+    m_stopThread = true;
+    m_protocolCV.notify_all();
+    
+    if (m_protocolThread.joinable())
+        m_protocolThread.join();
+}
+
+bool ReliableChannel::IsActive() const
+{
+    return m_active.load();
+}
+
+bool ReliableChannel::SendData(const std::vector<uint8_t>& data)
+{
+    // TODO: 瀹炵幇鏁版嵁鍙戦€?    return true;
+}
+
+bool ReliableChannel::SendFile(const std::string& filePath)
+{
+    // TODO: 瀹炵幇鏂囦欢鍙戦€?    return true;
+}
+
+bool ReliableChannel::SendFile(const std::string& filename, const std::vector<uint8_t>& fileData)
+{
+    // TODO: 瀹炵幇鏂囦欢鏁版嵁鍙戦€?    return true;
+}
+
+void ReliableChannel::EnableReceiving(bool enable)
+{
+    m_receivingEnabled = enable;
+}
+
+bool ReliableChannel::IsReceivingEnabled() const
+{
+    return m_receivingEnabled.load();
+}
+
+ReliableState ReliableChannel::GetState() const
+{
+    return m_state.load();
+}
+
+TransferStats ReliableChannel::GetStats() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_stats;
+}
+
+std::string ReliableChannel::GetLastError() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_lastError;
+}
+
+void ReliableChannel::ProtocolThreadFunc()
+{
+    // TODO: 瀹炵幇鍗忚绾跨▼
+    while (!m_stopThread)
+    {
+        std::unique_lock<std::mutex> lock(m_mutex);
+        m_protocolCV.wait_for(lock, std::chrono::milliseconds(100));
+        
+        // 澶勭悊鍗忚鐘舵€佹満
+        // TODO: 瀹炵幇鐘舵€佹満閫昏緫
+    }
+}
+
+void ReliableChannel::OnDataReceived(const std::vector<uint8_t>& data)
+{
+    // TODO: 瀹炵幇鏁版嵁鎺ユ敹澶勭悊
+}
+
+void ReliableChannel::ProcessReceivedData()
+{
+    // TODO: 瀹炵幇鎺ユ敹鏁版嵁澶勭悊
+}
+
+void ReliableChannel::ProcessReceivedFrame(const Frame& frame)
+{
+    // TODO: 瀹炵幇甯у鐞?}
+
+void ReliableChannel::HandleSending()
+{
+    // TODO: 瀹炵幇鍙戦€佺姸鎬佹満
+}
+
+void ReliableChannel::SendStartFrame()
+{
+    // TODO: 瀹炵幇鍙戦€丼TART甯?}
+
+void ReliableChannel::SendDataFrame()
+{
+    // TODO: 瀹炵幇鍙戦€佹暟鎹抚
+}
+
+void ReliableChannel::SendEndFrame()
+{
+    // TODO: 瀹炵幇鍙戦€丒ND甯?}
+
+bool ReliableChannel::WaitForAck(uint16_t sequence)
+{
+    // TODO: 瀹炵幇ACK绛夊緟
+    return true;
+}
+
+void ReliableChannel::HandleReceiving()
+{
+    // TODO: 瀹炵幇鎺ユ敹鐘舵€佹満
+}
+
+void ReliableChannel::SendAck(uint16_t sequence)
+{
+    // TODO: 瀹炵幇鍙戦€丄CK
+}
+
+void ReliableChannel::SendNak(uint16_t sequence)
+{
+    // TODO: 瀹炵幇鍙戦€丯AK
+}
+
+void ReliableChannel::CompleteReceive()
+{
+    // TODO: 瀹炵幇鎺ユ敹瀹屾垚
+}
+
+void ReliableChannel::AbortReceive(const std::string& reason)
+{
+    // TODO: 瀹炵幇鎺ユ敹涓
+}
+
+void ReliableChannel::SetState(ReliableState state)
+{
+    m_state = state;
+}
+
+void ReliableChannel::SetError(const std::string& error)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_lastError = error;
+}
+
+void ReliableChannel::UpdateProgress()
+{
+    // TODO: 瀹炵幇杩涘害鏇存柊
+    if (m_progressCallback)
+    {
+        m_progressCallback(m_stats);
+    }
+}
+
+void ReliableChannel::NotifyCompletion(bool success, const std::string& message)
+{
+    if (m_completionCallback)
+    {
+        m_completionCallback(success, message);
+    }
+}
+
+std::string ReliableChannel::GenerateUniqueFilename(const std::string& originalName)
+{
+    // TODO: 瀹炵幇鍞竴鏂囦欢鍚嶇敓鎴?    return originalName;
+}
+
+bool ReliableChannel::SaveReceivedFile()
+{
+    // TODO: 瀹炵幇鏂囦欢淇濆瓨
+    return true;
+}
+
+bool ReliableChannel::SendFrame(const Frame& frame)
+{
+    // TODO: 瀹炵幇甯у彂閫?    return true;
+}

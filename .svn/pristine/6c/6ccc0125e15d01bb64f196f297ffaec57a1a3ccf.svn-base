@@ -1,0 +1,221 @@
+﻿#pragma execution_character_set("utf-8")
+#include "pch.h"
+#include "UsbPrinterTransport.h"
+#include <winspool.h>
+#include <setupapi.h>
+#include <devguid.h>
+#include <algorithm>
+
+#pragma comment(lib, "setupapi.lib")
+
+UsbPrinterTransport::UsbPrinterTransport()
+{
+}
+
+UsbPrinterTransport::~UsbPrinterTransport()
+{
+}
+
+std::string UsbPrinterTransport::GetTransportType() const
+{
+    return "USB Printer";
+}
+
+std::vector<std::string> UsbPrinterTransport::EnumerateUsbPrinters()
+{
+    std::vector<std::string> usbPrinters;
+    
+    // 获取所有打印机
+    DWORD bytesNeeded = 0;
+    DWORD numPrinters = 0;
+    
+    // 第一次调用获取需要的缓冲区大小
+    EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, NULL, 0, &bytesNeeded, &numPrinters);
+    
+    if (bytesNeeded > 0)
+    {
+        std::vector<BYTE> buffer(bytesNeeded);
+        PRINTER_INFO_2A* printerInfo = reinterpret_cast<PRINTER_INFO_2A*>(buffer.data());
+        
+        // 第二次调用获取打印机信息
+        if (EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer.data(), bytesNeeded, &bytesNeeded, &numPrinters))
+        {
+            for (DWORD i = 0; i < numPrinters; i++)
+            {
+                if (printerInfo[i].pPrinterName && printerInfo[i].pPortName)
+                {
+                    std::string printerName = printerInfo[i].pPrinterName;
+                    std::string portName = printerInfo[i].pPortName;
+                    
+                    // 检查是否是USB打印机
+                    if (IsUsbPrinter(portName) || IsUsbPrinter(printerName))
+                    {
+                        usbPrinters.push_back(printerName);
+                    }
+                }
+            }
+        }
+    }
+    
+    // 如果没有找到USB打印机，返回一个虚拟的用于测试
+    if (usbPrinters.empty())
+    {
+        // 注意：这只是为了测试，实际使用时如果没有USB打印机应该返回空列表
+        // usbPrinters.push_back("USB Virtual Printer");
+    }
+    
+    return usbPrinters;
+}
+
+bool UsbPrinterTransport::IsUsbPrinter(const std::string& printerName)
+{
+    // 将字符串转换为大写以便比较
+    std::string upperName = printerName;
+    std::transform(upperName.begin(), upperName.end(), upperName.begin(), ::toupper);
+    
+    // 检查常见的USB打印机端口和名称模式
+    const std::vector<std::string> usbPatterns = {
+        "USB",          // 直接包含USB
+        "USB001",       // USB端口格式
+        "USB002", 
+        "USB003",
+        "DOT4_",        // DOT4协议通常用于USB
+        "WSD-",         // Web Services for Devices (通常USB连接)
+        "\\\\",         // 网络打印机路径 (某些USB打印机也会显示为网络路径)
+    };
+    
+    // 检查是否匹配任何USB模式
+    for (const std::string& pattern : usbPatterns)
+    {
+        if (upperName.find(pattern) != std::string::npos)
+        {
+            return true;
+        }
+    }
+    
+    // 检查是否是典型的并口或串口(排除这些)
+    const std::vector<std::string> nonUsbPatterns = {
+        "LPT1:", "LPT2:", "LPT3:",
+        "COM1:", "COM2:", "COM3:", "COM4:",
+        "FILE:", "NUL:"
+    };
+    
+    for (const std::string& pattern : nonUsbPatterns)
+    {
+        if (upperName.find(pattern) != std::string::npos)
+        {
+            return false;
+        }
+    }
+    
+    // 如果不确定，但包含某些关键词，则假设是USB
+    return (upperName.find("PRINTER") != std::string::npos && 
+            upperName.find("PORT") != std::string::npos);
+}
+
+bool UsbPrinterTransport::Open(const TransportConfig& config)
+{
+    if (m_state == TRANSPORT_OPEN)
+    {
+        SetLastError("USB打印机已经打开");
+        return false;
+    }
+    
+    NotifyStateChanged(TRANSPORT_OPENING, "正在检测USB打印机设备...");
+    
+    // 首先枚举所有可用的USB打印机
+    std::vector<std::string> usbPrinters = EnumerateUsbPrinters();
+    
+    if (usbPrinters.empty())
+    {
+        SetLastError("未检测到任何USB打印机设备");
+        NotifyStateChanged(TRANSPORT_ERROR, "没有发现USB打印机设备");
+        return false;
+    }
+    
+    // 检查是否有真实的物理USB打印机设备连接
+    bool hasPhysicalDevice = false;
+    std::string availableDevice;
+    
+    for (const std::string& printerName : usbPrinters)
+    {
+        if (VerifyUsbPrinterDevice(printerName))
+        {
+            hasPhysicalDevice = true;
+            availableDevice = printerName;
+            break;
+        }
+    }
+    
+    if (!hasPhysicalDevice)
+    {
+        SetLastError("USB打印机设备已安装但未连接物理设备");
+        NotifyStateChanged(TRANSPORT_ERROR, "USB打印机离线或未连接");
+        return false;
+    }
+    
+    // 设置打印机名称为检测到的可用设备
+    SetPrinterName(availableDevice);
+    
+    // 调用父类的打开方法
+    bool result = LptSpoolerTransport::Open(config);
+    
+    if (result)
+    {
+        NotifyStateChanged(TRANSPORT_OPEN, "USB打印机设备连接成功: " + availableDevice);
+    }
+    
+    return result;
+}
+
+bool UsbPrinterTransport::VerifyUsbPrinterDevice(const std::string& printerName)
+{
+    // 尝试打开打印机获取详细信息
+    HANDLE hPrinter = NULL;
+    PRINTER_DEFAULTSA printerDefaults = {0};
+    printerDefaults.pDatatype = "RAW";
+    printerDefaults.DesiredAccess = PRINTER_ACCESS_USE;
+    
+    if (!OpenPrinterA(const_cast<char*>(printerName.c_str()), &hPrinter, &printerDefaults))
+    {
+        return false;
+    }
+    
+    // 获取打印机状态
+    DWORD bytesNeeded = 0;
+    PRINTER_INFO_2A* printerInfo = nullptr;
+    
+    // 第一次调用获取需要的缓冲区大小
+    GetPrinterA(hPrinter, 2, NULL, 0, &bytesNeeded);
+    
+    if (bytesNeeded > 0)
+    {
+        std::vector<BYTE> buffer(bytesNeeded);
+        printerInfo = reinterpret_cast<PRINTER_INFO_2A*>(buffer.data());
+        
+        // 第二次调用获取打印机信息
+        if (GetPrinterA(hPrinter, 2, buffer.data(), bytesNeeded, &bytesNeeded))
+        {
+            // 检查打印机状态 - 确保不是离线、错误或暂停状态
+            DWORD status = printerInfo->Status;
+            bool isOnlineAndReady = !(status & (PRINTER_STATUS_OFFLINE | 
+                                               PRINTER_STATUS_ERROR | 
+                                               PRINTER_STATUS_PAUSED |
+                                               PRINTER_STATUS_PAPER_OUT |
+                                               PRINTER_STATUS_NO_TONER |
+                                               PRINTER_STATUS_OUT_OF_MEMORY));
+            
+            // 检查端口名称是否真的是USB端口
+            std::string portName = printerInfo->pPortName ? printerInfo->pPortName : "";
+            bool isRealUsbPort = IsUsbPrinter(portName);
+            
+            ClosePrinter(hPrinter);
+            
+            // 只有当打印机在线且端口是真正的USB端口时才认为是有效设备
+            return isOnlineAndReady && isRealUsbPort;
+        }
+    }
+    
+    ClosePrinter(hPrinter);
+    return false;
+}

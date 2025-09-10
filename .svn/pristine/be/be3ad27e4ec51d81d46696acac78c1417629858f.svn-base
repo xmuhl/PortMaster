@@ -1,0 +1,39 @@
+﻿#pragma once
+
+#include "ITransport.h"
+#include "LptSpoolerTransport.h"
+
+// USB鎵撳嵃鏈轰紶杈撶被锛堢户鎵縇PT Spooler瀹炵幇锛?
+class UsbPrinterTransport : public LptSpoolerTransport
+{
+public:
+    // SOLID-S: 安全缓冲区大小常量
+    static constexpr size_t DEVICE_DESC_MAX_SIZE = 1024;     // 设备描述最大长度
+    static constexpr size_t HARDWARE_ID_MAX_SIZE = 2048;     // 硬件ID最大长度
+    static constexpr size_t SAFETY_BUFFER_MARGIN = 64;       // 安全边距
+    
+    UsbPrinterTransport();
+    virtual ~UsbPrinterTransport();
+
+    // 重写基类方法
+    virtual bool Open(const TransportConfig& config) override;
+    virtual std::string GetTransportType() const override;
+<<<<<<< .mine
+    virtual std::string GetPortName() const override;
+||||||| .r19984
+=======
+    
+    // 重写连接方法以实现真实的USB设备检测
+    virtual bool Open(const TransportConfig& config) override;
+>>>>>>> .r19995
+
+    // USB 特有功能
+    static std::vector<std::string> EnumerateUsbPrinters();
+    static bool IsUsbPort(const std::string& portName);
+    static std::string GetUsbDeviceId(const std::string& portName);
+
+private:
+    static bool IsUsbPrinter(const std::string& printerName);
+    bool VerifyUsbPrinterDevice(const std::string& printerName);
+    static void EnumerateUsbPrinterDevices(std::vector<std::string>& devices);
+};

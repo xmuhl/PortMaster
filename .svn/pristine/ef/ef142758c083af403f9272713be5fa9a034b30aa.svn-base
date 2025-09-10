@@ -1,0 +1,40 @@
+﻿#pragma once
+
+#include <vector>
+#include <string>
+
+// 鏁版嵁鏍煎紡鍖栧伐鍏风被
+class DataFormatter
+{
+public:
+    // 瀛楄妭鏁扮粍杞崄鍏繘鍒跺瓧绗︿覆
+    static std::string BytesToHex(const std::vector<uint8_t>& data, bool addSpaces = true);
+    static std::string BytesToHex(const uint8_t* data, size_t length, bool addSpaces = true);
+    
+    // 鍗佸叚杩涘埗瀛楃涓茶浆瀛楄妭鏁扮粍
+    static std::vector<uint8_t> HexToBytes(const std::string& hex);
+    
+    // 瀛楄妭鏁扮粍杞彲鏄剧ず鏂囨湰锛堥潪鎵撳嵃瀛楃鐢ㄧ偣鍙蜂唬鏇匡級
+    static std::string BytesToText(const std::vector<uint8_t>& data);
+    static std::string BytesToText(const uint8_t* data, size_t length);
+    
+    // 鏂囨湰杞瓧鑺傛暟缁勶紙UTF-8缂栫爜锛?    static std::vector<uint8_t> TextToBytes(const std::string& text);
+    
+    // 楠岃瘉鍗佸叚杩涘埗瀛楃涓叉牸寮?    static bool IsValidHex(const std::string& hex);
+    
+    // 鏍煎紡鍖栧崄鍏繘鍒舵樉绀猴紙甯﹀湴鍧€鍜孉SCII鍒楋級
+    static std::string FormatHexDump(const std::vector<uint8_t>& data, int bytesPerLine = 16);
+    
+    // 娓呯悊鍗佸叚杩涘埗杈撳叆锛堢Щ闄ょ┖鏍笺€佹崲琛岀瓑锛?    static std::string CleanHexInput(const std::string& input);
+    
+    // 瀛楃鏄惁涓哄彲鎵撳嵃瀛楃
+    static bool IsPrintable(uint8_t c);
+    
+    // 鍗佸叚杩涘埗瀛楃杞暟鍊?    static int HexCharToValue(char c);
+    
+    // 鏁板€艰浆鍗佸叚杩涘埗瀛楃
+    static char ValueToHexChar(int value);
+
+private:
+    static const char* HEX_CHARS;
+};

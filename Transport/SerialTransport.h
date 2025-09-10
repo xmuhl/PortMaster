@@ -1,0 +1,89 @@
+﻿#pragma once
+
+#include "ITransport.h"
+#include "../Common/IOWorker.h"
+#include "../Common/RAIIHandle.h"
+#include <windows.h>
+#include <thread>
+#include <atomic>
+#include <mutex>
+#include <memory>
+
+class SerialTransport : public ITransport
+{
+public:
+    SerialTransport();
+    virtual ~SerialTransport();
+
+    // ITransport 鎺ュ彛瀹炵幇
+    virtual bool Open(const TransportConfig& config) override;
+    virtual void Close() override;
+    virtual bool IsOpen() const override;
+    virtual TransportState GetState() const override;
+
+    virtual bool Configure(const TransportConfig& config) override;
+    virtual TransportConfig GetConfiguration() const override;
+
+    virtual size_t Write(const std::vector<uint8_t>& data) override;
+    virtual size_t Write(const uint8_t* data, size_t length) override;
+    virtual size_t Read(std::vector<uint8_t>& data, size_t maxLength = 0) override;
+    virtual size_t Available() const override;
+
+    virtual std::string GetLastError() const override;
+    virtual std::string GetPortName() const override;
+    virtual std::string GetTransportType() const override;
+
+    virtual void SetDataReceivedCallback(DataReceivedCallback callback) override;
+    virtual void SetStateChangedCallback(StateChangedCallback callback) override;
+
+    virtual bool Flush() override;
+    virtual bool ClearBuffers() override;
+
+    // 串口特有功能
+    static std::vector<std::string> EnumeratePorts();
+    void SetPortName(const std::string& portName);
+    bool SetDTR(bool enable);
+    bool SetRTS(bool enable);
+    bool GetCTS() const;
+    bool GetDSR() const;
+
+private:
+    RAIIHandle m_hComm;
+    std::string m_portName;
+    TransportConfig m_config;
+    std::string m_lastError;
+    
+    // 异步I/O支持
+    std::shared_ptr<IOWorker> m_ioWorker;
+    std::vector<uint8_t> m_readBuffer;
+    std::atomic<bool> m_continuousReading;
+    
+    // 读取线程支持（传统模式）
+    std::thread m_readThread;
+    std::atomic<bool> m_stopRead;
+    
+    // OVERLAPPED结构支持
+    OVERLAPPED m_readOverlapped;
+    OVERLAPPED m_writeOverlapped;
+    RAIIEvent m_readEvent;
+    RAIIEvent m_writeEvent;
+    
+    mutable std::mutex m_mutex;
+
+    // 内部方法
+    bool ConfigurePort();
+    void StartContinuousReading();
+    void StopContinuousReading();
+    void OnReadCompleted(const IOResult& result);
+    void OnWriteCompleted(const IOResult& result);
+    bool SetupOverlapped();
+    void CleanupOverlapped();
+    void ReadThreadFunc();  // 传统读取线程函数
+    std::string GetSystemErrorString(DWORD error) const;
+
+protected:
+    // 基类纯虚函数实现
+    virtual void NotifyDataReceived(const std::vector<uint8_t>& data) override;
+    virtual void NotifyStateChanged(TransportState state, const std::string& message = "") override;
+    virtual void SetLastError(const std::string& error) override;
+};

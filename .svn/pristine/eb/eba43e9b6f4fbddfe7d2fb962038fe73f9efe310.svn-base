@@ -1,0 +1,233 @@
+﻿#include "pch.h"
+#include "LoopbackTransport.h"
+#include <random>
+
+LoopbackTransport::LoopbackTransport()
+    : m_stopThread(false)
+{
+    m_state = TRANSPORT_CLOSED;
+    // 设置默认延迟为20ms，确保协议正常工作但避免即时冲突
+    m_delayMs = 20;
+}
+
+LoopbackTransport::~LoopbackTransport()
+{
+    Close();
+}
+
+bool LoopbackTransport::Open(const TransportConfig& config)
+{
+    m_config = config;
+    m_stopThread = false;
+    
+    // 启动回环处理线程
+    if (!m_loopbackThread.joinable())
+    {
+        m_loopbackThread = std::thread(&LoopbackTransport::LoopbackThreadFunc, this);
+    }
+    
+    NotifyStateChanged(TRANSPORT_OPEN, "鍥炵幆宸叉墦寮€");
+    return true;
+}
+
+void LoopbackTransport::Close()
+{
+    m_stopThread = true;
+    
+    // 等待线程结束
+    if (m_loopbackThread.joinable())
+    {
+        m_loopbackThread.join();
+    }
+    
+    // 清空队列
+    ClearBuffers();
+    
+    NotifyStateChanged(TRANSPORT_CLOSED, "鍥炵幆宸插叧闂?");
+}
+
+bool LoopbackTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState LoopbackTransport::GetState() const
+{
+    return m_state;
+}
+
+bool LoopbackTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig LoopbackTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t LoopbackTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t LoopbackTransport::Write(const uint8_t* data, size_t length)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    // 创建延迟交付数据
+    DelayedData delayedData;
+    delayedData.data = std::vector<uint8_t>(data, data + length);
+    delayedData.deliveryTime = std::chrono::steady_clock::now() + 
+                               std::chrono::milliseconds(m_delayMs);
+    
+    // 加入延迟队列而不是立即交付
+    m_delayedQueue.push(delayedData);
+    
+    return length;
+}
+
+size_t LoopbackTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_dataQueue.empty())
+    {
+        data.clear();
+        return 0;
+    }
+    
+    // 模拟错误，如果应该产生错误则返回0
+    if (ShouldSimulateError())
+    {
+        data.clear();
+        return 0;
+    }
+    
+    data = m_dataQueue.front();
+    m_dataQueue.pop();
+    return data.size();
+}
+
+size_t LoopbackTransport::Available() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_dataQueue.size();
+}
+
+std::string LoopbackTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string LoopbackTransport::GetPortName() const
+{
+    return "Loopback";
+}
+
+std::string LoopbackTransport::GetTransportType() const
+{
+    return "Loopback";
+}
+
+void LoopbackTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void LoopbackTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool LoopbackTransport::Flush()
+{
+    return true;
+}
+
+bool LoopbackTransport::ClearBuffers()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    while (!m_dataQueue.empty())
+        m_dataQueue.pop();
+    while (!m_delayedQueue.empty())
+        m_delayedQueue.pop();
+    return true;
+}
+
+void LoopbackTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+        m_dataCallback(data);
+}
+
+void LoopbackTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+        m_stateCallback(state, message);
+}
+
+void LoopbackTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}
+
+void LoopbackTransport::SimulateError(const std::string& error)
+{
+    SetLastError(error);
+    NotifyStateChanged(TRANSPORT_ERROR, error);
+}
+
+void LoopbackTransport::LoopbackThreadFunc()
+{
+    while (!m_stopThread)
+    {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        
+        std::unique_lock<std::mutex> lock(m_mutex);
+        
+        // 检查延迟队列中是否有到达交付时间的数据
+        auto now = std::chrono::steady_clock::now();
+        std::vector<std::vector<uint8_t>> readyData;
+        
+        while (!m_delayedQueue.empty())
+        {
+            const auto& delayedData = m_delayedQueue.front();
+            if (delayedData.deliveryTime <= now)
+            {
+                // 延迟时间到达，收集准备交付的数据
+                readyData.push_back(delayedData.data);
+                m_delayedQueue.pop();
+            }
+            else
+            {
+                break;  // 队列是按时间排序的，后续数据肯定还没到时间
+            }
+        }
+        
+        // 释放锁后交付数据，避免回调中的死锁
+        lock.unlock();
+        
+        // 依次交付准备好的数据
+        for (const auto& data : readyData)
+        {
+            if (!ShouldSimulateError() && m_dataCallback)
+            {
+                m_dataCallback(data);
+            }
+        }
+    }
+}
+
+bool LoopbackTransport::ShouldSimulateError()
+{
+    if (m_errorRate <= 0.0)
+        return false;
+    
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_real_distribution<> dis(0.0, 1.0);
+    
+    return dis(gen) < m_errorRate;
+}

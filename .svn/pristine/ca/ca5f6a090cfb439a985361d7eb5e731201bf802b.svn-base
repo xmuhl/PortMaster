@@ -1,0 +1,27 @@
+﻿#include "pch.h"
+#include "UsbPrinterTransport.h"
+
+UsbPrinterTransport::UsbPrinterTransport()
+{
+}
+
+UsbPrinterTransport::~UsbPrinterTransport()
+{
+}
+
+std::string UsbPrinterTransport::GetTransportType() const
+{
+    return "USB Printer";
+}
+
+std::vector<std::string> UsbPrinterTransport::EnumerateUsbPrinters()
+{
+    std::vector<std::string> usbPrinters;
+    // TODO: 瀹炵幇USB鎵撳嵃鏈烘灇涓?    usbPrinters.push_back("USB Printer 1");
+    return usbPrinters;
+}
+
+bool UsbPrinterTransport::IsUsbPrinter(const std::string& printerName) const
+{
+    // TODO: 瀹炵幇USB鎵撳嵃鏈烘娴?    return printerName.find("USB") != std::string::npos;
+}

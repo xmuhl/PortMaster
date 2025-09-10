@@ -1,0 +1,340 @@
+﻿// Microsoft Visual C++ generated resource script.
+//
+#include "resource.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 2 resource.
+//
+#ifndef APSTUDIO_INVOKED
+#include "targetver.h"
+#endif
+#include "afxres.h"
+#include "verrsrc.h"
+
+/////////////////////////////////////////////////////////////////////////////
+#undef APSTUDIO_READONLY_SYMBOLS
+
+/////////////////////////////////////////////////////////////////////////////
+// 中文(简体，中国) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+LANGUAGE LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// TEXTINCLUDE
+//
+
+1 TEXTINCLUDE 
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE 
+BEGIN
+    "#ifndef APSTUDIO_INVOKED\r\n"
+    "#include ""targetver.h""\r\n"
+    "#endif\r\n"
+    "#include ""afxres.h""\r\n"
+    "#include ""verrsrc.h""\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE 
+BEGIN
+    "#define _AFX_NO_SPLITTER_RESOURCES\r\n"
+    "#define _AFX_NO_OLE_RESOURCES\r\n"
+    "#define _AFX_NO_TRACKER_RESOURCES\r\n"
+    "#define _AFX_NO_PROPERTY_RESOURCES\r\n"
+    "\r\n"
+    "#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)\r\n"
+    "LANGUAGE 4, 2\r\n"
+    "#include ""res\\PortMaster.rc2""  // 非 Microsoft Visual C++ 编辑的资源\r\n"
+    "#include ""afxres.rc""      // 标准组件\r\n"
+    "#endif\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+IDI_MAIN_ICON          ICON                    "PortMaster_Icon.ico"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Bitmap
+//
+
+IDB_SPLASH             RCDATA                  "PortMaster_Splash.png"
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Dialog
+//
+
+IDD_ABOUTBOX DIALOGEX 0, 0, 170, 62
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "关于 PortMaster"
+FONT 9, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    ICON            IDI_MAIN_ICON,IDC_STATIC,14,14,21,20
+    LTEXT           "PortMaster（端口大师）",IDC_STATIC,42,14,114,8,SS_NOPREFIX
+    LTEXT           "版本 1.0",IDC_STATIC,42,26,114,8
+    DEFPUSHBUTTON   "确定",IDOK,113,41,50,14,WS_GROUP
+END
+
+IDD_PORTMASTER_DIALOG DIALOGEX 0, 0, 520, 400
+STYLE DS_ABSALIGN | DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU
+EXSTYLE WS_EX_APPWINDOW | WS_EX_ACCEPTFILES
+CAPTION "PortMaster - 端口大师"
+FONT 9, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    GROUPBOX        "端口配置",IDC_STATIC,7,7,200,60
+    LTEXT           "端口类型:",IDC_STATIC,15,22,35,8
+    COMBOBOX        IDC_PORT_TYPE,55,20,70,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "端口列表:",IDC_STATIC,15,42,35,8
+    COMBOBOX        IDC_PORT_LIST,55,40,100,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    PUSHBUTTON      "配置",IDC_CONFIG_BUTTON,165,20,35,14
+    PUSHBUTTON      "连接",IDC_CONNECT_BUTTON,165,40,35,14
+    
+    GROUPBOX        "传输模式",IDC_STATIC,215,7,100,60
+    CONTROL         "可靠传输模式",IDC_RELIABLE_MODE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,225,25,65,10
+    PUSHBUTTON      "断开",IDC_DISCONNECT_BUTTON,255,40,35,14
+    PUSHBUTTON      "测试",IDC_TEST_BUTTON,225,40,25,14
+    
+    GROUPBOX        "数据视图",IDC_STATIC,7,75,308,150
+    LTEXT           "接收区 - 十六进制:",IDC_STATIC,15,90,80,8
+    EDITTEXT        IDC_HEX_VIEW,15,102,140,60,ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "接收区 - 文本:",IDC_STATIC,165,90,60,8
+    EDITTEXT        IDC_TEXT_VIEW,165,102,140,60,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+    
+    LTEXT           "发送区 - 十六进制:",IDC_STATIC,15,170,80,8
+    EDITTEXT        IDC_INPUT_HEX,15,182,140,35,ES_MULTILINE | ES_AUTOVSCROLL | ES_AUTOHSCROLL | WS_VSCROLL | WS_HSCROLL
+    LTEXT           "发送区 - 文本:",IDC_STATIC,165,170,60,8
+    EDITTEXT        IDC_INPUT_TEXT,165,182,140,35,ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL
+    
+    GROUPBOX        "文件传输",IDC_STATIC,325,7,188,218
+    LTEXT           "拖拽文件到此处:",IDC_STATIC,335,25,70,8
+    LTEXT           "",IDC_FILE_DROP_ZONE,335,38,168,60,SS_NOTIFY | SS_SUNKEN | WS_BORDER
+    LTEXT           "传输进度:",IDC_STATIC,335,105,40,8
+    CONTROL         "",IDC_PROGRESS,"msctls_progress32",WS_BORDER,335,118,168,12
+    LTEXT           "状态: 就绪",IDC_STATUS,335,135,168,8
+    LTEXT           "操作日志:",IDC_STATIC,335,150,40,8
+    EDITTEXT        IDC_LOG,335,163,168,55,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+    
+    PUSHBUTTON      "Send",IDC_SEND_BUTTON,15,235,50,20
+    PUSHBUTTON      "Clear",IDC_CLEAR_BUTTON,75,235,50,20
+    PUSHBUTTON      "About...",IDM_ABOUTBOX,450,370,60,20
+    DEFPUSHBUTTON   "Exit",IDCANCEL,400,370,40,20
+END
+
+IDD_SPLASH_DIALOG DIALOGEX 0, 0, 300, 200
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_BORDER
+FONT 9, "MS Shell Dlg", 400, 0, 0x1
+BEGIN
+    LTEXT           "PortMaster",IDC_STATIC,10,10,280,20
+END
+
+IDD_PORT_CONFIG_DIALOG DIALOGEX 0, 0, 400, 300
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "端口配置"
+FONT 9, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    LTEXT           "传输类型:",IDC_STATIC,14,14,35,8
+    COMBOBOX        IDC_TRANSPORT_TYPE,60,12,120,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    
+    GROUPBOX        "串口配置",IDC_SERIAL_GROUP,14,35,180,80
+    LTEXT           "波特率:",IDC_STATIC,24,50,30,8
+    EDITTEXT        IDC_BAUD_RATE,70,48,50,14,ES_AUTOHSCROLL
+    LTEXT           "数据位:",IDC_STATIC,24,70,30,8
+    EDITTEXT        IDC_DATA_BITS,70,68,50,14,ES_AUTOHSCROLL
+    LTEXT           "校验位:",IDC_STATIC,24,90,30,8
+    COMBOBOX        IDC_PARITY,70,88,50,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "停止位:",IDC_STATIC,130,90,30,8
+    COMBOBOX        IDC_STOP_BITS,165,88,25,60,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    
+    GROUPBOX        "网络配置",IDC_NETWORK_GROUP,210,35,180,80
+    LTEXT           "IP地址:",IDC_STATIC,220,50,30,8
+    EDITTEXT        IDC_IP_ADDRESS,260,48,100,14,ES_AUTOHSCROLL
+    LTEXT           "端口:",IDC_STATIC,220,70,25,8
+    EDITTEXT        IDC_PORT,260,68,50,14,ES_AUTOHSCROLL
+    CONTROL         "服务端模式",IDC_IS_SERVER,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,220,90,60,10
+    
+    GROUPBOX        "超时设置",IDC_TIMEOUT_GROUP,14,125,180,80
+    LTEXT           "连接超时(ms):",IDC_STATIC,24,140,50,8
+    EDITTEXT        IDC_CONNECT_TIMEOUT,80,138,50,14,ES_AUTOHSCROLL
+    LTEXT           "读取超时(ms):",IDC_STATIC,24,160,50,8
+    EDITTEXT        IDC_READ_TIMEOUT,80,158,50,14,ES_AUTOHSCROLL
+    LTEXT           "写入超时(ms):",IDC_STATIC,24,180,50,8
+    EDITTEXT        IDC_WRITE_TIMEOUT,80,178,50,14,ES_AUTOHSCROLL
+    
+    GROUPBOX        "缓冲区设置",IDC_BUFFER_GROUP,210,125,180,80
+    LTEXT           "接收缓冲区:",IDC_STATIC,220,140,45,8
+    EDITTEXT        IDC_RX_BUFFER_SIZE,270,138,50,14,ES_AUTOHSCROLL
+    LTEXT           "发送缓冲区:",IDC_STATIC,220,160,45,8
+    EDITTEXT        IDC_TX_BUFFER_SIZE,270,158,50,14,ES_AUTOHSCROLL
+    
+    DEFPUSHBUTTON   "确定",IDOK,290,270,50,14
+    PUSHBUTTON      "取消",IDCANCEL,345,270,50,14
+END
+
+IDD_TEST_WIZARD DIALOGEX 0, 0, 500, 380
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "内置测试向导"
+FONT 9, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    LTEXT           "测试类型:",IDC_STATIC,14,14,35,8
+    COMBOBOX        IDC_TEST_TYPE,60,12,150,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    
+    LTEXT           "传输类型:",IDC_STATIC,220,14,35,8
+    COMBOBOX        IDC_TRANSPORT_TYPE,265,12,100,80,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    
+    GROUPBOX        "测试配置",IDC_STATIC,14,35,470,60
+    EDITTEXT        IDC_TEST_CONFIG,24,50,450,35,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+    
+    GROUPBOX        "测试结果",IDC_STATIC,14,105,470,180
+    EDITTEXT        IDC_TEST_RESULTS,24,120,450,155,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+    
+    LTEXT           "测试进度:",IDC_STATIC,14,295,35,8
+    CONTROL         "",IDC_TEST_PROGRESS,"msctls_progress32",WS_BORDER,60,293,300,14
+    
+    LTEXT           "状态: 就绪",IDC_TEST_STATUS,14,315,350,8
+    
+    PUSHBUTTON      "开始测试",IDC_START_TEST,375,290,50,20
+    PUSHBUTTON      "停止测试",IDC_STOP_TEST,435,290,50,20
+    
+    DEFPUSHBUTTON   "关闭",IDOK,375,350,50,14
+    PUSHBUTTON      "取消",IDCANCEL,435,350,50,14
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version
+//
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,1
+ PRODUCTVERSION 1,0,0,1
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x40004L
+ FILETYPE 0x1L
+ FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404B0"
+        BEGIN
+            VALUE "CompanyName", "端口大师开发团队"
+            VALUE "FileDescription", "PortMaster - 端口大师"
+            VALUE "FileVersion", "1.0.0.1"
+            VALUE "InternalName", "PortMaster.exe"
+            VALUE "LegalCopyright", "Copyright (C) 2024"
+            VALUE "OriginalFilename", "PortMaster.exe"
+            VALUE "ProductName", "PortMaster（端口大师）"
+            VALUE "ProductVersion", "1.0.0.1"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// DESIGNINFO
+//
+
+#ifdef APSTUDIO_INVOKED
+GUIDELINES DESIGNINFO
+BEGIN
+    IDD_ABOUTBOX, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 163
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 55
+    END
+
+    IDD_PORTMASTER_DIALOG, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 513
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 393
+    END
+
+    IDD_SPLASH_DIALOG, DIALOG
+    BEGIN
+        LEFTMARGIN, 7
+        RIGHTMARGIN, 293
+        TOPMARGIN, 7
+        BOTTOMMARGIN, 193
+    END
+END
+#endif    // APSTUDIO_INVOKED
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// AFX_DIALOG_LAYOUT
+//
+
+IDD_PORTMASTER_DIALOG AFX_DIALOG_LAYOUT
+BEGIN
+    0
+END
+
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// String Table
+//
+
+STRINGTABLE
+BEGIN
+    IDS_ABOUTBOX            "&关于 PortMaster..."
+END
+
+#endif    // 中文(简体，中国) resources
+/////////////////////////////////////////////////////////////////////////////
+
+
+
+#ifndef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+//
+// Generated from the TEXTINCLUDE 3 resource.
+//
+#define _AFX_NO_SPLITTER_RESOURCES
+#define _AFX_NO_OLE_RESOURCES
+#define _AFX_NO_TRACKER_RESOURCES
+#define _AFX_NO_PROPERTY_RESOURCES
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
+LANGUAGE 4, 2
+#include "res\PortMaster.rc2"  // 非 Microsoft Visual C++ 编辑的资源
+#include "afxres.rc"      // 标准组件
+#endif
+
+/////////////////////////////////////////////////////////////////////////////
+#endif    // not APSTUDIO_INVOKED

@@ -1,0 +1,500 @@
+﻿#include "pch.h"
+#include "TcpTransport.h"
+
+bool TcpTransport::s_wsaInitialized = false;
+int TcpTransport::s_wsaRefCount = 0;
+
+TcpTransport::TcpTransport()
+    : m_socket(INVALID_SOCKET)
+    , m_listenSocket(INVALID_SOCKET)
+    , m_stopThreads(false)
+{
+    m_state = TRANSPORT_CLOSED;
+}
+
+TcpTransport::~TcpTransport()
+{
+    Close();
+}
+
+bool TcpTransport::Open(const TransportConfig& config)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_state == TRANSPORT_OPEN)
+    {
+        SetLastError("连接已存在");
+        return false;
+    }
+    
+    m_config = config;
+    NotifyStateChanged(TRANSPORT_OPENING, "正在连接TCP...");
+    
+    // 初始化WinSock
+    if (!InitializeWinsock())
+    {
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    // 创建套接字
+    if (!CreateSocket())
+    {
+        CleanupWinsock();
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+        return false;
+    }
+    
+    bool success = false;
+    if (config.isServer)
+    {
+        success = StartServer();
+    }
+    else
+    {
+        success = ConnectClient();
+    }
+    
+    if (success)
+    {
+        m_stopThreads = false;
+        m_readBuffer.resize(m_config.rxBufferSize);
+        
+        // 启动读取线程
+        m_readThread = std::thread(&TcpTransport::ReadThreadFunc, this);
+        
+        NotifyStateChanged(TRANSPORT_OPEN, 
+            config.isServer ? "服务器已启动" : "客户端已连接");
+    }
+    else
+    {
+        CleanupWinsock();
+        NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+    }
+    
+    return success;
+}
+
+void TcpTransport::Close()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_state == TRANSPORT_CLOSED)
+        return;
+    
+    NotifyStateChanged(TRANSPORT_CLOSING, "正在关闭连接...");
+    
+    // 停止线程
+    m_stopThreads = true;
+    
+    // 关闭套接字
+    if (m_socket != INVALID_SOCKET)
+    {
+        closesocket(m_socket);
+        m_socket = INVALID_SOCKET;
+    }
+    
+    if (m_listenSocket != INVALID_SOCKET)
+    {
+        closesocket(m_listenSocket);
+        m_listenSocket = INVALID_SOCKET;
+    }
+    
+    // 等待线程结束
+    if (m_readThread.joinable())
+        m_readThread.join();
+    
+    if (m_acceptThread.joinable())
+        m_acceptThread.join();
+    
+    CleanupWinsock();
+    
+    NotifyStateChanged(TRANSPORT_CLOSED, "TCP连接已关闭");
+}
+
+bool TcpTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState TcpTransport::GetState() const
+{
+    return m_state;
+}
+
+bool TcpTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig TcpTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t TcpTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t TcpTransport::Write(const uint8_t* data, size_t length)
+{
+    if (!IsOpen() || m_socket == INVALID_SOCKET || !data || length == 0)
+        return 0;
+    
+    std::lock_guard<std::mutex> lock(m_mutex);
+    
+    int bytesSent = send(m_socket, (const char*)data, static_cast<int>(length), 0);
+    if (bytesSent == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        SetLastError("发送数据失败: " + GetSocketErrorString(error));
+        
+        if (error == WSAECONNRESET || error == WSAECONNABORTED)
+        {
+            NotifyStateChanged(TRANSPORT_CLOSED, "连接已断开");
+        }
+        return 0;
+    }
+    
+    return static_cast<size_t>(bytesSent);
+}
+
+size_t TcpTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    data.clear();
+    
+    if (!IsOpen() || m_socket == INVALID_SOCKET)
+        return 0;
+    
+    if (maxLength == 0)
+        maxLength = 4096;
+    
+    data.resize(maxLength);
+    
+    int bytesReceived = recv(m_socket, (char*)data.data(), static_cast<int>(maxLength), 0);
+    if (bytesReceived > 0)
+    {
+        data.resize(bytesReceived);
+        return static_cast<size_t>(bytesReceived);
+    }
+    else if (bytesReceived == 0)
+    {
+        NotifyStateChanged(TRANSPORT_CLOSED, "远程连接关闭");
+    }
+    else
+    {
+        int error = WSAGetLastError();
+        if (error != WSAETIMEDOUT && error != WSAEWOULDBLOCK)
+        {
+            SetLastError("接收数据失败: " + GetSocketErrorString(error));
+            if (error == WSAECONNRESET || error == WSAECONNABORTED)
+            {
+                NotifyStateChanged(TRANSPORT_CLOSED, "连接已断开");
+            }
+        }
+    }
+    
+    data.clear();
+    return 0;
+}
+
+size_t TcpTransport::Available() const
+{
+    return 0;
+}
+
+std::string TcpTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string TcpTransport::GetPortName() const
+{
+    return m_config.ipAddress + ":" + std::to_string(m_config.port);
+}
+
+std::string TcpTransport::GetTransportType() const
+{
+    return m_config.isServer ? "TCP Server" : "TCP Client";
+}
+
+void TcpTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void TcpTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool TcpTransport::Flush()
+{
+    return true;
+}
+
+bool TcpTransport::ClearBuffers()
+{
+    return true;
+}
+
+std::string TcpTransport::GetRemoteEndpoint() const
+{
+    return m_remoteEndpoint;
+}
+
+std::string TcpTransport::GetLocalEndpoint() const
+{
+    return "127.0.0.1:" + std::to_string(m_config.port);
+}
+
+bool TcpTransport::InitializeWinsock()
+{
+    if (s_wsaInitialized)
+    {
+        s_wsaRefCount++;
+        return true;
+    }
+    
+    WSADATA wsaData;
+    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
+    if (result != 0)
+    {
+        SetLastError("初始化WinSock失败: 错误代码 " + std::to_string(result));
+        return false;
+    }
+    
+    s_wsaInitialized = true;
+    s_wsaRefCount = 1;
+    return true;
+}
+
+void TcpTransport::CleanupWinsock()
+{
+    if (!s_wsaInitialized)
+        return;
+    
+    s_wsaRefCount--;
+    if (s_wsaRefCount <= 0)
+    {
+        WSACleanup();
+        s_wsaInitialized = false;
+        s_wsaRefCount = 0;
+    }
+}
+
+bool TcpTransport::CreateSocket()
+{
+    m_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (m_socket == INVALID_SOCKET)
+    {
+        int error = WSAGetLastError();
+        SetLastError("创建套接字失败: 错误代码 " + std::to_string(error));
+        return false;
+    }
+    
+    // 设置套接字选项
+    int optval = 1;
+    setsockopt(m_socket, SOL_SOCKET, SO_REUSEADDR, (char*)&optval, sizeof(optval));
+    
+    // 设置超时
+    DWORD timeout = m_config.readTimeoutMs;
+    setsockopt(m_socket, SOL_SOCKET, SO_RCVTIMEO, (char*)&timeout, sizeof(timeout));
+    
+    timeout = m_config.writeTimeoutMs;
+    setsockopt(m_socket, SOL_SOCKET, SO_SNDTIMEO, (char*)&timeout, sizeof(timeout));
+    
+    return true;
+}
+
+bool TcpTransport::ConnectClient()
+{
+    sockaddr_in serverAddr = {};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(static_cast<u_short>(m_config.port));
+    
+    // 解析IP地址
+    int result = inet_pton(AF_INET, m_config.ipAddress.c_str(), &serverAddr.sin_addr);
+    if (result <= 0)
+    {
+        SetLastError("无效的IP地址: " + m_config.ipAddress);
+        return false;
+    }
+    
+    // 连接到服务器
+    result = connect(m_socket, (sockaddr*)&serverAddr, sizeof(serverAddr));
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        SetLastError("连接服务器失败: " + GetSocketErrorString(error));
+        return false;
+    }
+    
+    // 获取远程端点信息
+    m_remoteEndpoint = m_config.ipAddress + ":" + std::to_string(m_config.port);
+    
+    return true;
+}
+
+bool TcpTransport::StartServer()
+{
+    // 使用监听套接字
+    m_listenSocket = m_socket;
+    m_socket = INVALID_SOCKET; // 稍后由accept创建
+    
+    sockaddr_in serverAddr = {};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(static_cast<u_short>(m_config.port));
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+    
+    // 绑定地址
+    int result = bind(m_listenSocket, (sockaddr*)&serverAddr, sizeof(serverAddr));
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        SetLastError("绑定地址失败: " + GetSocketErrorString(error));
+        return false;
+    }
+    
+    // 开始监听
+    result = listen(m_listenSocket, SOMAXCONN);
+    if (result == SOCKET_ERROR)
+    {
+        int error = WSAGetLastError();
+        SetLastError("监听失败: " + GetSocketErrorString(error));
+        return false;
+    }
+    
+    // 启动接受连接线程
+    m_acceptThread = std::thread(&TcpTransport::AcceptThreadFunc, this);
+    
+    return true;
+}
+
+void TcpTransport::ReadThreadFunc()
+{
+    while (!m_stopThreads && m_socket != INVALID_SOCKET)
+    {
+        int bytesReceived = recv(m_socket, (char*)m_readBuffer.data(), 
+                                static_cast<int>(m_readBuffer.size()), 0);
+        
+        if (bytesReceived > 0)
+        {
+            // 数据接收成功
+            std::vector<uint8_t> data(m_readBuffer.begin(), 
+                                    m_readBuffer.begin() + bytesReceived);
+            NotifyDataReceived(data);
+        }
+        else if (bytesReceived == 0)
+        {
+            // 连接关闭
+            NotifyStateChanged(TRANSPORT_CLOSED, "远程连接关闭");
+            break;
+        }
+        else
+        {
+            int error = WSAGetLastError();
+            if (error == WSAETIMEDOUT)
+            {
+                // 超时是正常的，继续
+                continue;
+            }
+            else if (error != WSAECONNRESET && !m_stopThreads)
+            {
+                // 其他错误
+                SetLastError("接收数据错误: " + GetSocketErrorString(error));
+                NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+            }
+            break;
+        }
+    }
+}
+
+void TcpTransport::AcceptThreadFunc()
+{
+    while (!m_stopThreads && m_listenSocket != INVALID_SOCKET)
+    {
+        sockaddr_in clientAddr = {};
+        int addrLen = sizeof(clientAddr);
+        
+        SOCKET clientSocket = accept(m_listenSocket, (sockaddr*)&clientAddr, &addrLen);
+        
+        if (clientSocket == INVALID_SOCKET)
+        {
+            int error = WSAGetLastError();
+            if (error != WSAEINTR && !m_stopThreads)
+            {
+                SetLastError("接受连接失败: " + GetSocketErrorString(error));
+                NotifyStateChanged(TRANSPORT_ERROR, m_lastError);
+            }
+            break;
+        }
+        
+        // 如果已经有连接，关闭新的连接（简单实现，一次只支持一个连接）
+        if (m_socket != INVALID_SOCKET)
+        {
+            closesocket(clientSocket);
+            continue;
+        }
+        
+        // 保存客户端连接
+        m_socket = clientSocket;
+        
+        // 获取客户端信息
+        char clientIP[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &clientAddr.sin_addr, clientIP, INET_ADDRSTRLEN);
+        m_remoteEndpoint = std::string(clientIP) + ":" + std::to_string(ntohs(clientAddr.sin_port));
+        
+        // 通知连接建立
+        NotifyStateChanged(TRANSPORT_OPEN, "客户端已连接: " + m_remoteEndpoint);
+        
+        // 注意: 读取线程已经在Open中启动，这里不需要重复启动
+        break; // 简单实现，一次只处理一个连接
+    }
+}
+
+std::string TcpTransport::GetSocketErrorString(int error) const
+{
+    switch (error)
+    {
+    case WSAECONNREFUSED:
+        return "连接被拒绝";
+    case WSAETIMEDOUT:
+        return "连接超时";
+    case WSAENETUNREACH:
+        return "网络不可达";
+    case WSAEHOSTUNREACH:
+        return "主机不可达";
+    case WSAECONNRESET:
+        return "连接被重置";
+    case WSAECONNABORTED:
+        return "连接被中止";
+    case WSAEADDRINUSE:
+        return "地址已被使用";
+    case WSAEADDRNOTAVAIL:
+        return "地址不可用";
+    default:
+        return "套接字错误 " + std::to_string(error);
+    }
+}
+
+// SOLID-L: 里氏替换原则 - 实现ITransport抽象方法
+void TcpTransport::NotifyDataReceived(const std::vector<uint8_t>& data)
+{
+    if (m_dataCallback)
+        m_dataCallback(data);
+}
+
+void TcpTransport::NotifyStateChanged(TransportState state, const std::string& message)
+{
+    m_state = state;
+    if (m_stateCallback)
+        m_stateCallback(state, message);
+}
+
+void TcpTransport::SetLastError(const std::string& error)
+{
+    m_lastError = error;
+}

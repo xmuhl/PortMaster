@@ -1,0 +1,92 @@
+﻿#pragma once
+
+#include "afxdialogex.h"
+#include "Transport/ITransport.h"
+
+// 娴嬭瘯鍚戝瀵硅瘽妗?class CTestWizardDialog : public CDialogEx
+{
+	DECLARE_DYNAMIC(CTestWizardDialog)
+
+public:
+	CTestWizardDialog(CWnd* pParent = nullptr);
+	virtual ~CTestWizardDialog();
+
+	enum { IDD = IDD_TEST_WIZARD };
+
+protected:
+	virtual void DoDataExchange(CDataExchange* pDX) override;
+	virtual BOOL OnInitDialog() override;
+
+	DECLARE_MESSAGE_MAP()
+
+public:
+	afx_msg void OnBnClickedStartTest();
+	afx_msg void OnBnClickedStopTest();
+	afx_msg void OnCbnSelchangeTestType();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	
+private:
+	// 鎺т欢鍙橀噺
+	CComboBox m_ctrlTestType;
+	CComboBox m_ctrlTransportType;
+	CEdit m_ctrlTestConfig;
+	CEdit m_ctrlTestResults;
+	CProgressCtrl m_ctrlTestProgress;
+	CButton m_ctrlStartBtn;
+	CButton m_ctrlStopBtn;
+	CStatic m_ctrlStatusText;
+
+	// 娴嬭瘯鐘舵€?	bool m_bTesting;
+	int m_nCurrentTest;
+	int m_nTotalTests;
+	UINT_PTR m_nTimer;
+	
+	// 娴嬭瘯绫诲瀷鏋氫妇
+	enum TestType
+	{
+		TEST_LOOPBACK = 0,      // 鍥炵幆娴嬭瘯
+		TEST_SERIAL_BASIC,      // 涓插彛鍩虹娴嬭瘯
+		TEST_SERIAL_STRESS,     // 涓插彛鍘嬪姏娴嬭瘯
+		TEST_NETWORK_BASIC,     // 缃戠粶鍩虹娴嬭瘯
+		TEST_NETWORK_STRESS,    // 缃戠粶鍘嬪姏娴嬭瘯
+		TEST_PROTOCOL_RELIABLE, // 鍙潬鍗忚娴嬭瘯
+		TEST_ALL_COMPREHENSIVE  // 缁煎悎娴嬭瘯
+	};
+
+	// 娴嬭瘯缁撴灉缁撴瀯
+	struct TestResult
+	{
+		CString testName;
+		bool passed;
+		CString details;
+		DWORD duration; // 姣
+	};
+
+	std::vector<TestResult> m_testResults;
+
+	// 鍒濆鍖栧嚱鏁?	void InitializeControls();
+	void UpdateControlStates();
+	void UpdateTestProgress();
+	
+	// 娴嬭瘯鎵ц鍑芥暟
+	void StartTesting();
+	void StopTesting();
+	void ExecuteNextTest();
+	void CompleteTest();
+	
+	// 鍏蜂綋娴嬭瘯鏂规硶
+	bool ExecuteLoopbackTest();
+	bool ExecuteSerialBasicTest();
+	bool ExecuteSerialStressTest();
+	bool ExecuteNetworkBasicTest();
+	bool ExecuteNetworkStressTest();
+	bool ExecuteProtocolReliableTest();
+	bool ExecuteComprehensiveTest();
+	
+	// 杈呭姪鏂规硶
+	void AppendTestResult(const CString& message);
+	void LogTestResult(const CString& testName, bool passed, const CString& details, DWORD duration);
+	CString FormatTestSummary();
+	std::vector<uint8_t> GenerateTestData(size_t size, bool pattern = true);
+	bool CompareData(const std::vector<uint8_t>& sent, const std::vector<uint8_t>& received);
+};

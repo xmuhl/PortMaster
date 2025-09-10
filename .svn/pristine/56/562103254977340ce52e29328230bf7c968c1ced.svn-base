@@ -1,0 +1,8 @@
+﻿#include "pch.h"
+#include "ReliableChannel.h"
+
+bool ReliableChannel::SendFrame(const Frame& frame)
+{
+    // TODO: 实现帧发送
+    return true;
+}

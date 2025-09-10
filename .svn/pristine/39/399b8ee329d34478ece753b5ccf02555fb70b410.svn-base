@@ -1,0 +1,142 @@
+﻿#include "pch.h"
+#include "RingBuffer.h"
+#include <algorithm>
+
+RingBuffer::RingBuffer(size_t initialSize)
+    : m_buffer(initialSize)
+    , m_readPos(0)
+    , m_writePos(0)
+    , m_dataSize(0)
+    , m_autoExpand(true)
+    , m_maxSize(1024 * 1024) // 榛樿鏈€澶?MB
+{
+}
+
+RingBuffer::~RingBuffer()
+{
+}
+
+size_t RingBuffer::Write(const uint8_t* data, size_t length)
+{
+    // TODO: 瀹炵幇鏁版嵁鍐欏叆
+    return length;
+}
+
+size_t RingBuffer::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t RingBuffer::Read(uint8_t* buffer, size_t maxLength)
+{
+    // TODO: 瀹炵幇鏁版嵁璇诲彇
+    return 0;
+}
+
+size_t RingBuffer::Read(std::vector<uint8_t>& buffer, size_t maxLength)
+{
+    buffer.resize(maxLength);
+    size_t bytesRead = Read(buffer.data(), maxLength);
+    buffer.resize(bytesRead);
+    return bytesRead;
+}
+
+size_t RingBuffer::Available() const
+{
+    return m_dataSize.load();
+}
+
+size_t RingBuffer::FreeSpace() const
+{
+    return m_buffer.size() - Available();
+}
+
+size_t RingBuffer::Capacity() const
+{
+    return m_buffer.size();
+}
+
+bool RingBuffer::IsEmpty() const
+{
+    return Available() == 0;
+}
+
+bool RingBuffer::IsFull() const
+{
+    return Available() == Capacity();
+}
+
+void RingBuffer::Clear()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_readPos = m_writePos = 0;
+    m_dataSize = 0;
+}
+
+bool RingBuffer::Resize(size_t newSize)
+{
+    // TODO: 瀹炵幇缂撳啿鍖哄ぇ灏忚皟鏁?    return true;
+}
+
+void RingBuffer::SetAutoExpand(bool enable, size_t maxSize)
+{
+    m_autoExpand = enable;
+    if (maxSize > 0)
+        m_maxSize = maxSize;
+}
+
+uint8_t RingBuffer::Peek(size_t offset) const
+{
+    // TODO: 瀹炵幇鏁版嵁棰勮
+    return 0;
+}
+
+size_t RingBuffer::Peek(uint8_t* buffer, size_t length, size_t offset) const
+{
+    // TODO: 瀹炵幇鏁版嵁棰勮
+    return 0;
+}
+
+size_t RingBuffer::Skip(size_t length)
+{
+    // TODO: 瀹炵幇鏁版嵁璺宠繃
+    return 0;
+}
+
+size_t RingBuffer::Find(uint8_t byte, size_t startOffset) const
+{
+    // TODO: 瀹炵幇瀛楄妭鏌ユ壘
+    return std::string::npos;
+}
+
+size_t RingBuffer::Find(const uint8_t* pattern, size_t patternLength, size_t startOffset) const
+{
+    // TODO: 瀹炵幇妯″紡鏌ユ壘
+    return std::string::npos;
+}
+
+bool RingBuffer::ExpandIfNeeded(size_t requiredSize)
+{
+    // TODO: 瀹炵幇鑷姩鎵╁睍
+    return true;
+}
+
+size_t RingBuffer::GetContiguousWriteSize() const
+{
+    // TODO: 瀹炵幇杩炵画鍐欏叆澶у皬璁＄畻
+    return 0;
+}
+
+size_t RingBuffer::GetContiguousReadSize() const
+{
+    // TODO: 瀹炵幇杩炵画璇诲彇澶у皬璁＄畻
+    return 0;
+}
+
+void RingBuffer::AdvanceWritePos(size_t length)
+{
+    // TODO: 瀹炵幇鍐欐寚閽堟帹杩?}
+
+void RingBuffer::AdvanceReadPos(size_t length)
+{
+    // TODO: 瀹炵幇璇绘寚閽堟帹杩?}

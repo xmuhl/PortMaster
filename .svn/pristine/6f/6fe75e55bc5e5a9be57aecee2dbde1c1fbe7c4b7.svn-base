@@ -1,0 +1,158 @@
+﻿#include "pch.h"
+#include "UdpTransport.h"
+
+bool UdpTransport::s_wsaInitialized = false;
+int UdpTransport::s_wsaRefCount = 0;
+
+UdpTransport::UdpTransport()
+    : m_socket(INVALID_SOCKET)
+    , m_hasRemoteAddr(false)
+    , m_stopRead(false)
+{
+    m_state = TRANSPORT_CLOSED;
+    ZeroMemory(&m_localAddr, sizeof(m_localAddr));
+    ZeroMemory(&m_remoteAddr, sizeof(m_remoteAddr));
+}
+
+UdpTransport::~UdpTransport()
+{
+    Close();
+}
+
+bool UdpTransport::Open(const TransportConfig& config)
+{
+    // TODO: 瀹炵幇UDP鎵撳紑閫昏緫
+    m_config = config;
+    NotifyStateChanged(TRANSPORT_OPEN, "UDP宸叉墦寮€");
+    return true;
+}
+
+void UdpTransport::Close()
+{
+    // TODO: 瀹炵幇UDP鍏抽棴閫昏緫
+    NotifyStateChanged(TRANSPORT_CLOSED, "UDP宸插叧闂?");
+}
+
+bool UdpTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState UdpTransport::GetState() const
+{
+    return m_state;
+}
+
+bool UdpTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig UdpTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t UdpTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t UdpTransport::Write(const uint8_t* data, size_t length)
+{
+    // TODO: 瀹炵幇UDP鍐欏叆
+    return length;
+}
+
+size_t UdpTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    // TODO: 瀹炵幇UDP璇诲彇
+    data.clear();
+    return 0;
+}
+
+size_t UdpTransport::Available() const
+{
+    return 0;
+}
+
+std::string UdpTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string UdpTransport::GetPortName() const
+{
+    return "UDP:" + std::to_string(m_config.port);
+}
+
+std::string UdpTransport::GetTransportType() const
+{
+    return "UDP";
+}
+
+void UdpTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void UdpTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool UdpTransport::Flush()
+{
+    return true;
+}
+
+bool UdpTransport::ClearBuffers()
+{
+    return true;
+}
+
+bool UdpTransport::SetRemoteEndpoint(const std::string& address, int port)
+{
+    // TODO: 瀹炵幇杩滅绔偣璁剧疆
+    return true;
+}
+
+std::string UdpTransport::GetRemoteEndpoint() const
+{
+    // TODO: 瀹炵幇杩滅绔偣鑾峰彇
+    return "127.0.0.1:8080";
+}
+
+std::string UdpTransport::GetLocalEndpoint() const
+{
+    return "127.0.0.1:" + std::to_string(m_config.port);
+}
+
+bool UdpTransport::InitializeWinsock()
+{
+    // TODO: 实现Winsock初始化
+    return true;
+}
+
+void UdpTransport::CleanupWinsock()
+{
+    // TODO: 瀹炵幇Winsock娓呯悊
+}
+
+bool UdpTransport::CreateSocket()
+{
+    // TODO: 实现套接字创建
+    return true;
+}
+
+void UdpTransport::ReadThreadFunc()
+{
+    // TODO: 瀹炵幇璇诲彇绾跨▼
+}
+
+std::string UdpTransport::GetSocketErrorString(int error) const
+{
+    // TODO: 实现套接字错误信息转换
+    return "Socket error";
+}

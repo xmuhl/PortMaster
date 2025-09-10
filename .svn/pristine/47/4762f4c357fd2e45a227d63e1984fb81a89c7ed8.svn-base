@@ -1,0 +1,1281 @@
+﻿#include "pch.h"
+#include "framework.h"
+#include "PortMaster.h"
+#include "PortMasterDlg.h"
+#include "PortConfigDialog.h"
+#include "TestWizardDialog.h"
+#include "afxdialogex.h"
+#include <fstream>
+
+extern void WriteDebugLog(const char* message);
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+// 用于应用程序"关于"菜单项的 CAboutDlg 对话框
+class CAboutDlg : public CDialogEx
+{
+public:
+	CAboutDlg();
+
+// 对话框数据
+#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_ABOUTBOX };
+#endif
+
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV 支持
+
+// 实现
+protected:
+	DECLARE_MESSAGE_MAP()
+};
+
+CAboutDlg::CAboutDlg() : CDialogEx(IDD_ABOUTBOX)
+{
+}
+
+void CAboutDlg::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+}
+
+BEGIN_MESSAGE_MAP(CAboutDlg, CDialogEx)
+END_MESSAGE_MAP()
+
+// CPortMasterDlg 对话框
+CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent)
+	, m_bConnected(false)
+	, m_bReliableMode(false)
+	, m_bTransmitting(false)
+	, m_transmissionProgress(0)
+	, m_transmissionTimer(0)
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数开始");
+	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
+	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数完成");
+}
+
+void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
+{
+	WriteDebugLog("[DEBUG] DoDataExchange: 开始数据交换");
+	CDialogEx::DoDataExchange(pDX);
+	WriteDebugLog("[DEBUG] DoDataExchange: CDialogEx::DoDataExchange 完成");
+
+	// 逐个绑定控件，并记录调试信息
+	try {
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PORT_TYPE");
+		DDX_Control(pDX, IDC_PORT_TYPE, m_ctrlPortType);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PORT_LIST");
+		DDX_Control(pDX, IDC_PORT_LIST, m_ctrlPortList);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_BAUD_RATE");
+		DDX_Control(pDX, IDC_BAUD_RATE, m_ctrlBaudRate);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_DATA_BITS");
+		DDX_Control(pDX, IDC_DATA_BITS, m_ctrlDataBits);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_STOP_BITS");
+		DDX_Control(pDX, IDC_STOP_BITS, m_ctrlStopBits);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PARITY");
+		DDX_Control(pDX, IDC_PARITY, m_ctrlParity);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CONNECT_BUTTON");
+		DDX_Control(pDX, IDC_CONNECT_BUTTON, m_ctrlConnectBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_DISCONNECT_BUTTON");
+		DDX_Control(pDX, IDC_DISCONNECT_BUTTON, m_ctrlDisconnectBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CONFIG_BUTTON");
+		DDX_Control(pDX, IDC_CONFIG_BUTTON, m_ctrlConfigBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_TEST_BUTTON");
+		DDX_Control(pDX, IDC_TEST_BUTTON, m_ctrlTestBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_SEND_BUTTON");
+		DDX_Control(pDX, IDC_SEND_BUTTON, m_ctrlSendBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CLEAR_BUTTON");
+		DDX_Control(pDX, IDC_CLEAR_BUTTON, m_ctrlClearBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_LOAD_FILE_BUTTON");
+		DDX_Control(pDX, IDC_LOAD_FILE_BUTTON, m_ctrlLoadFileBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_SAVE_FILE_BUTTON");
+		DDX_Control(pDX, IDC_SAVE_FILE_BUTTON, m_ctrlSaveFileBtn);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_RELIABLE_MODE");
+		DDX_Control(pDX, IDC_RELIABLE_MODE, m_ctrlReliableMode);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_INPUT_HEX");
+		DDX_Control(pDX, IDC_INPUT_HEX, m_ctrlInputHex);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_INPUT_TEXT");
+		DDX_Control(pDX, IDC_INPUT_TEXT, m_ctrlInputText);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_HEX_VIEW");
+		DDX_Control(pDX, IDC_HEX_VIEW, m_ctrlHexView);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_TEXT_VIEW");
+		DDX_Control(pDX, IDC_TEXT_VIEW, m_ctrlTextView);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_LOG");
+		DDX_Control(pDX, IDC_LOG, m_ctrlLog);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PROGRESS");
+		DDX_Control(pDX, IDC_PROGRESS, m_ctrlProgress);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_STATUS");
+		DDX_Control(pDX, IDC_STATUS, m_ctrlStatus);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_FILE_DROP_ZONE");
+		DDX_Control(pDX, IDC_FILE_DROP_ZONE, m_ctrlFileDropZone);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CONNECTION_STATUS");
+		DDX_Control(pDX, IDC_CONNECTION_STATUS, m_ctrlConnectionStatus);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_PROTOCOL_STATUS");
+		DDX_Control(pDX, IDC_PROTOCOL_STATUS, m_ctrlProtocolStatus);
+		
+		WriteDebugLog("[DEBUG] DoDataExchange: 所有控件绑定完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] DoDataExchange: 控件绑定过程中出现异常");
+		throw;
+	}
+}
+
+BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
+	ON_WM_SYSCOMMAND()
+	ON_WM_PAINT()
+	ON_WM_QUERYDRAGICON()
+	ON_BN_CLICKED(IDC_CONNECT_BUTTON, &CPortMasterDlg::OnBnClickedConnect)
+	ON_BN_CLICKED(IDC_DISCONNECT_BUTTON, &CPortMasterDlg::OnBnClickedDisconnect)
+	ON_BN_CLICKED(IDC_SEND_BUTTON, &CPortMasterDlg::OnBnClickedSend)
+	ON_BN_CLICKED(IDC_CLEAR_BUTTON, &CPortMasterDlg::OnBnClickedClear)
+	ON_BN_CLICKED(IDC_CONFIG_BUTTON, &CPortMasterDlg::OnBnClickedConfig)
+	ON_BN_CLICKED(IDC_TEST_BUTTON, &CPortMasterDlg::OnBnClickedTest)
+	ON_BN_CLICKED(IDC_LOAD_FILE_BUTTON, &CPortMasterDlg::OnBnClickedLoadFile)
+	ON_BN_CLICKED(IDC_SAVE_FILE_BUTTON, &CPortMasterDlg::OnBnClickedSaveFile)
+	ON_CBN_SELCHANGE(IDC_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangePortType)
+	ON_BN_CLICKED(IDC_RELIABLE_MODE, &CPortMasterDlg::OnBnClickedReliableMode)
+	ON_WM_DROPFILES()
+	ON_WM_SIZE()
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+// CPortMasterDlg 消息处理程序
+
+BOOL CPortMasterDlg::OnInitDialog()
+{
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始初始化主对话框");
+	
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤1 - 调用CDialogEx::OnInitDialog");
+	
+	// 现在应该可以安全调用，因为已经修复了DDX绑定和资源定义
+	if (!CDialogEx::OnInitDialog()) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: CDialogEx::OnInitDialog失败");
+		return FALSE;
+	}
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: CDialogEx::OnInitDialog成功完成");
+	
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤2 - 开始初始化复杂对象");
+	try {
+		// 现在在控件已经正确绑定后初始化复杂对象
+		InitializeTransportObjects();
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 复杂对象初始化完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 复杂对象初始化失败");
+		return FALSE;
+	}
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3 - 开始设置系统菜单");
+	// 将"关于..."菜单项添加到系统菜单中。
+	// IDM_ABOUTBOX 必须在系统命令范围内。
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.1 - 检查IDM_ABOUTBOX常量");
+	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
+	ASSERT(IDM_ABOUTBOX < 0xF000);
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.2 - IDM_ABOUTBOX常量检查完成");
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.3 - 获取系统菜单");
+	CMenu* pSysMenu = GetSystemMenu(FALSE);
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.4 - 系统菜单获取完成");
+	if (pSysMenu != nullptr)
+	{
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.5 - 系统菜单有效，开始加载字符串");
+		BOOL bNameValid;
+		CString strAboutMenu;
+		bNameValid = strAboutMenu.LoadString(IDS_ABOUTBOX);
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.6 - 字符串加载完成");
+		ASSERT(bNameValid);
+		if (!strAboutMenu.IsEmpty())
+		{
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.7 - 添加菜单项");
+			pSysMenu->AppendMenu(MF_SEPARATOR);
+			pSysMenu->AppendMenu(MF_STRING, IDM_ABOUTBOX, strAboutMenu);
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3.8 - 菜单项添加完成");
+		}
+	}
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤3 - 系统菜单设置完成");
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 设置对话框图标");
+		// 设置此对话框的图标。当应用程序主窗口不是对话框时，框架将自动
+		//  执行此操作
+		SetIcon(m_hIcon, TRUE);			// 设置大图标
+		SetIcon(m_hIcon, FALSE);		// 设置小图标
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 对话框图标设置完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 设置图标异常");
+	}
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始初始化控件");
+		// 初始化控件
+		InitializeControls();
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 控件初始化完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 初始化控件异常");
+		return FALSE;
+	}
+
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 启用拖放功能");
+		// 启用拖放
+		DragAcceptFiles(TRUE);
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 拖放功能启用完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 启用拖放功能异常");
+	}
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 主对话框初始化完成");
+	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
+}
+
+void CPortMasterDlg::OnSysCommand(UINT nID, LPARAM lParam)
+{
+	if ((nID & 0xFFF0) == IDM_ABOUTBOX)
+	{
+		CAboutDlg dlgAbout;
+		dlgAbout.DoModal();
+	}
+	else
+	{
+		CDialogEx::OnSysCommand(nID, lParam);
+	}
+}
+
+// 如果向对话框添加最小化按钮，则需要下面的代码
+//  来绘制该图标。对于使用文档/视图模型的 MFC 应用程序，
+//  这将由框架自动完成。
+
+void CPortMasterDlg::OnPaint()
+{
+	if (IsIconic())
+	{
+		CPaintDC dc(this); // 用于绘制的设备上下文
+
+		SendMessage(WM_ICONERASEBKGND, reinterpret_cast<WPARAM>(dc.GetSafeHdc()), 0);
+
+		// 使图标在工作区矩形中居中
+		int cxIcon = GetSystemMetrics(SM_CXICON);
+		int cyIcon = GetSystemMetrics(SM_CYICON);
+		CRect rect;
+		GetClientRect(&rect);
+		int x = (rect.Width() - cxIcon + 1) / 2;
+		int y = (rect.Height() - cyIcon + 1) / 2;
+
+		// 绘制图标
+		dc.DrawIcon(x, y, m_hIcon);
+	}
+	else
+	{
+		CDialogEx::OnPaint();
+	}
+}
+
+//当用户拖动最小化窗口时系统调用此函数取得光标
+//显示。
+HCURSOR CPortMasterDlg::OnQueryDragIcon()
+{
+	return static_cast<HCURSOR>(m_hIcon);
+}
+
+void CPortMasterDlg::InitializeControls()
+{
+	WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始初始化控件");
+	
+	try {
+		// 初始化端口类型下拉框
+		m_ctrlPortType.AddString(L"串口");
+		m_ctrlPortType.AddString(L"并口");
+		m_ctrlPortType.AddString(L"USB打印机");
+		m_ctrlPortType.AddString(L"TCP客户端");
+		m_ctrlPortType.AddString(L"TCP服务端");
+		m_ctrlPortType.AddString(L"UDP");
+		m_ctrlPortType.AddString(L"本地回环");
+		m_ctrlPortType.SetCurSel(6); // 默认选择本地回环
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 端口类型下拉框初始化完成");
+
+		// 初始化波特率下拉框
+		m_ctrlBaudRate.AddString(L"9600");
+		m_ctrlBaudRate.AddString(L"19200");
+		m_ctrlBaudRate.AddString(L"38400");
+		m_ctrlBaudRate.AddString(L"57600");
+		m_ctrlBaudRate.AddString(L"115200");
+		m_ctrlBaudRate.SetCurSel(0);
+
+		// 初始化数据位下拉框
+		m_ctrlDataBits.AddString(L"5");
+		m_ctrlDataBits.AddString(L"6");
+		m_ctrlDataBits.AddString(L"7");
+		m_ctrlDataBits.AddString(L"8");
+		m_ctrlDataBits.SetCurSel(3);
+
+		// 初始化停止位下拉框
+		m_ctrlStopBits.AddString(L"1");
+		m_ctrlStopBits.AddString(L"1.5");
+		m_ctrlStopBits.AddString(L"2");
+		m_ctrlStopBits.SetCurSel(0);
+
+		// 初始化校验位下拉框
+		m_ctrlParity.AddString(L"None");
+		m_ctrlParity.AddString(L"Odd");
+		m_ctrlParity.AddString(L"Even");
+		m_ctrlParity.AddString(L"Mark");
+		m_ctrlParity.AddString(L"Space");
+		m_ctrlParity.SetCurSel(0);
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 下拉框初始化完成");
+
+		// 更新端口列表
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始更新端口列表");
+		UpdatePortList();
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 端口列表更新完成");
+	
+		// 更新按钮状态
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始更新按钮状态");
+		UpdateButtonStates();
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 按钮状态更新完成");
+
+		// 设置文件拖放区域提示文本
+		m_ctrlFileDropZone.SetWindowText(L"拖拽文件到此处进行传输");
+
+		// 初始化状态显示
+		m_ctrlStatus.SetWindowText(L"状态: 就绪");
+		m_ctrlConnectionStatus.SetWindowText(L"未连接");
+		m_ctrlProtocolStatus.SetWindowText(L"空闲");
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 设置状态显示完成");
+		
+		// 添加初始化日志
+		AppendLog(L"PortMaster 初始化完成");
+		AppendLog(L"现代化界面已启用");
+		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 控件初始化完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::InitializeControls: 控件初始化异常");
+		throw;
+	}
+}
+
+void CPortMasterDlg::InitializeTransportObjects()
+{
+	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeTransportObjects: 开始初始化传输对象");
+	
+	// 初始化传输层和可靠通道
+	m_transport = std::make_shared<LoopbackTransport>();
+	m_reliableChannel = std::make_shared<ReliableChannel>(m_transport);
+	
+	// 设置可靠通道回调 - 现在控件已经正确绑定，可以安全访问
+	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
+		// 更新进度显示
+		if (stats.totalBytes > 0)
+		{
+			int progress = static_cast<int>((stats.transferredBytes * 100) / stats.totalBytes);
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(progress);
+			}
+			
+			CString statusText;
+			statusText.Format(L"状态: 传输中 (%.1f%%, %zu/%zu 字节)", 
+				stats.GetProgress() * 100, stats.transferredBytes, stats.totalBytes);
+			if (IsWindow(m_ctrlStatus.GetSafeHwnd())) {
+				m_ctrlStatus.SetWindowText(statusText);
+			}
+		}
+	});
+	
+	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
+		// 传输完成回调
+		CString msg = CA2W(message.c_str());
+		AppendLog(msg);
+		
+		if (success)
+		{
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(0);
+			}
+			if (IsWindow(m_ctrlStatus.GetSafeHwnd())) {
+				m_ctrlStatus.SetWindowText(L"状态: 传输完成");
+			}
+		}
+		else
+		{
+			if (IsWindow(m_ctrlStatus.GetSafeHwnd())) {
+				m_ctrlStatus.SetWindowText(L"状态: 传输失败");
+			}
+		}
+		
+		m_bTransmitting = false;
+	});
+	
+	m_reliableChannel->SetFileReceivedCallback([this](const std::string& filename, const std::vector<uint8_t>& data) {
+		// 文件接收完成回调
+		CString msg;
+		msg.Format(L"接收到文件: %s (%zu 字节)", CA2W(filename.c_str()), data.size());
+		AppendLog(msg);
+		
+		// 在数据视图中显示接收到的内容
+		DisplayReceivedData(data);
+	});
+	
+	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeTransportObjects: 传输对象初始化完成");
+}
+
+void CPortMasterDlg::UpdatePortList()
+{
+	m_ctrlPortList.ResetContent();
+	
+	int portType = m_ctrlPortType.GetCurSel();
+	switch (portType)
+	{
+	case 0: // 串口
+		// 枚举串口 - 简单示例
+		for (int i = 1; i <= 16; i++)
+		{
+			CString portName;
+			portName.Format(L"COM%d", i);
+			m_ctrlPortList.AddString(portName);
+		}
+		break;
+	case 1: // 并口
+		m_ctrlPortList.AddString(L"LPT1");
+		m_ctrlPortList.AddString(L"LPT2");
+		break;
+	case 2: // USB打印机
+		m_ctrlPortList.AddString(L"USB打印机1");
+		break;
+	case 3: // TCP客户端
+		m_ctrlPortList.AddString(L"127.0.0.1:8080");
+		break;
+	case 4: // TCP服务端
+		m_ctrlPortList.AddString(L"监听端口:8080");
+		break;
+	case 5: // UDP
+		m_ctrlPortList.AddString(L"UDP:8080");
+		break;
+	case 6: // 本地回环
+		m_ctrlPortList.AddString(L"本地回环");
+		break;
+	}
+	
+	if (m_ctrlPortList.GetCount() > 0)
+		m_ctrlPortList.SetCurSel(0);
+}
+
+void CPortMasterDlg::UpdateButtonStates()
+{
+	// 更新在DoDataExchange中实际绑定的控件
+	m_ctrlConnectBtn.EnableWindow(!m_bConnected);
+	m_ctrlDisconnectBtn.EnableWindow(m_bConnected);
+	
+	// 发送按钮只有在连接且未传输时可用
+	m_ctrlSendBtn.EnableWindow(m_bConnected && !m_bTransmitting);
+	
+	// 文件操作按钮状态管理
+	m_ctrlLoadFileBtn.EnableWindow(!m_bTransmitting);
+	m_ctrlSaveFileBtn.EnableWindow(TRUE);
+	
+	// 清除按钮始终可用
+	m_ctrlClearBtn.EnableWindow(TRUE);
+	
+	// 更新连接状态显示
+	m_ctrlConnectionStatus.SetWindowText(m_bConnected ? L"已连接" : L"未连接");
+	
+	// 更新协议状态显示
+	if (m_reliableChannel)
+	{
+		ReliableState state = m_reliableChannel->GetState();
+		CString stateText;
+		switch (state)
+		{
+		case RELIABLE_IDLE: stateText = L"空闲"; break;
+		case RELIABLE_STARTING: stateText = L"开始传输"; break;
+		case RELIABLE_SENDING: stateText = L"传输中"; break;
+		case RELIABLE_ENDING: stateText = L"结束传输"; break;
+		case RELIABLE_RECEIVING: stateText = L"接收中"; break;
+		case RELIABLE_DONE: stateText = L"完成"; break;
+		case RELIABLE_FAILED: stateText = L"失败"; break;
+		default: stateText = L"未知"; break;
+		}
+		m_ctrlProtocolStatus.SetWindowText(stateText);
+	}
+	
+	// 更新状态栏显示
+	CString statusText;
+	if (m_bTransmitting)
+	{
+		statusText = L"状态: 传输中";
+	}
+	else if (m_bConnected)
+	{
+		statusText = L"状态: 已连接";
+		if (m_bReliableMode)
+			statusText += L" (可靠模式)";
+	}
+	else
+	{
+		statusText = L"状态: 就绪";
+	}
+	m_ctrlStatus.SetWindowText(statusText);
+}
+
+void CPortMasterDlg::AppendLog(const CString& message)
+{
+	CString timeStamp;
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	timeStamp.Format(L"[%02d:%02d:%02d] ", st.wHour, st.wMinute, st.wSecond);
+	
+	CString log;
+	m_ctrlLog.GetWindowText(log);
+	log += timeStamp + message + L"\r\n";
+	m_ctrlLog.SetWindowText(log);
+	
+	// 滚动到底部
+	m_ctrlLog.LineScroll(m_ctrlLog.GetLineCount());
+}
+
+void CPortMasterDlg::AppendHexData(const BYTE* data, size_t length, bool incoming)
+{
+	CString hexStr;
+	CString prefix = incoming ? L"<< " : L">> ";
+	
+	for (size_t i = 0; i < length; i++)
+	{
+		CString temp;
+		temp.Format(L"%02X ", data[i]);
+		hexStr += temp;
+	}
+	
+	CString currentHex;
+	m_ctrlHexView.GetWindowText(currentHex);
+	currentHex += prefix + hexStr + L"\r\n";
+	m_ctrlHexView.SetWindowText(currentHex);
+	
+	// 滚动到底部
+	m_ctrlHexView.LineScroll(m_ctrlHexView.GetLineCount());
+}
+
+void CPortMasterDlg::AppendTextData(const CString& text, bool incoming)
+{
+	CString prefix = incoming ? L"<< " : L">> ";
+	
+	CString currentText;
+	m_ctrlTextView.GetWindowText(currentText);
+	currentText += prefix + text + L"\r\n";
+	m_ctrlTextView.SetWindowText(currentText);
+	
+	// 滚动到底部
+	m_ctrlTextView.LineScroll(m_ctrlTextView.GetLineCount());
+}
+
+// 按钮事件处理
+void CPortMasterDlg::OnBnClickedConnect()
+{
+	if (m_reliableChannel && m_reliableChannel->Start())
+	{
+		m_bConnected = true;
+		UpdateButtonStates();
+		AppendLog(L"连接成功");
+	}
+	else
+	{
+		AppendLog(L"连接失败");
+		CString error = CA2W(m_reliableChannel->GetLastError().c_str());
+		if (!error.IsEmpty())
+		{
+			AppendLog(L"错误: " + error);
+		}
+	}
+}
+
+void CPortMasterDlg::OnBnClickedDisconnect()
+{
+	if (m_reliableChannel)
+	{
+		m_reliableChannel->Stop();
+	}
+	
+	m_bConnected = false;
+	m_bTransmitting = false;
+	UpdateButtonStates();
+	AppendLog(L"已断开连接");
+}
+
+void CPortMasterDlg::OnBnClickedSend()
+{
+	std::vector<uint8_t> dataToSend = GetInputData();
+	
+	if (dataToSend.empty())
+	{
+		AppendLog(L"没有数据可发送");
+		return;
+	}
+	
+	// 检查连接状态
+	if (!m_bConnected)
+	{
+		AppendLog(L"请先连接端口");
+		return;
+	}
+	
+	// 检查是否正在传输中
+	if (m_bTransmitting)
+	{
+		AppendLog(L"正在传输中，请等待完成");
+		return;
+	}
+	
+	if (m_bReliableMode && m_reliableChannel)
+	{
+		// 使用可靠传输模式
+		m_bTransmitting = true;
+		if (m_reliableChannel->SendData(dataToSend))
+		{
+			AppendLog(L"开始可靠传输");
+		}
+		else
+		{
+			m_bTransmitting = false;
+			AppendLog(L"可靠传输启动失败");
+			CString error = CA2W(m_reliableChannel->GetLastError().c_str());
+			if (!error.IsEmpty())
+			{
+				AppendLog(L"错误: " + error);
+			}
+		}
+	}
+	else
+	{
+		// 使用普通传输模式（模拟）
+		StartDataTransmission(dataToSend);
+	}
+}
+
+void CPortMasterDlg::OnBnClickedClear()
+{
+	m_ctrlHexView.SetWindowText(L"");
+	m_ctrlTextView.SetWindowText(L"");
+	m_ctrlInputHex.SetWindowText(L"");
+	m_ctrlInputText.SetWindowText(L"");
+	AppendLog(L"数据视图已清空");
+}
+
+void CPortMasterDlg::OnBnClickedConfig()
+{
+	// 获取当前选择的传输类型
+	int portTypeIndex = m_ctrlPortType.GetCurSel();
+	std::string transportType;
+	switch (portTypeIndex)
+	{
+	case 0: transportType = "Serial"; break;
+	case 1: transportType = "LPT"; break;
+	case 2: transportType = "USB"; break;
+	case 3: transportType = "TCP_Client"; break;
+	case 4: transportType = "TCP_Server"; break;
+	case 5: transportType = "UDP"; break;
+	case 6: transportType = "Loopback"; break;
+	default: transportType = "Serial"; break;
+	}
+	
+	// 创建默认配置
+	TransportConfig config;
+	
+	// 显示配置对话框
+	CPortConfigDialog dlg(transportType, config, this);
+	if (dlg.DoModal() == IDOK)
+	{
+		// 保存配置
+		TransportConfig newConfig = dlg.GetConfig();
+		std::string newTransportType = dlg.GetTransportType();
+		
+		// TODO: 保存到配置管理器
+		AppendLog(L"端口配置已更新");
+	}
+	else
+	{
+		AppendLog(L"取消端口配置");
+	}
+}
+
+void CPortMasterDlg::OnBnClickedTest()
+{
+	AppendLog(L"启动内置测试向导");
+	
+	try
+	{
+		CTestWizardDialog testDlg(this);
+		if (testDlg.DoModal() == IDOK)
+		{
+			AppendLog(L"测试向导完成");
+		}
+		else
+		{
+			AppendLog(L"测试向导已取消");
+		}
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(L"测试向导启动失败: %S", e.what());
+		AppendLog(errorMsg);
+		MessageBox(errorMsg, L"错误", MB_OK | MB_ICONERROR);
+	}
+	catch (...)
+	{
+		AppendLog(L"测试向导启动时发生未知异常");
+		MessageBox(L"测试向导启动时发生未知异常", L"错误", MB_OK | MB_ICONERROR);
+	}
+}
+
+void CPortMasterDlg::OnCbnSelchangePortType()
+{
+	UpdatePortList();
+	AppendLog(L"切换端口类型");
+}
+
+void CPortMasterDlg::OnBnClickedReliableMode()
+{
+	m_bReliableMode = (m_ctrlReliableMode.GetCheck() == BST_CHECKED);
+	UpdateButtonStates();
+	AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
+}
+
+void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
+{
+	WriteDebugLog("[DEBUG] OnDropFiles: 接收到文件拖放事件");
+	
+	try 
+	{
+		UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, NULL, 0);
+		
+		CString countMsg;
+		countMsg.Format(L"检测到 %u 个拖放文件", fileCount);
+		AppendLog(countMsg);
+		WriteDebugLog(CT2A(countMsg));
+		
+		if (fileCount == 0)
+		{
+			AppendLog(L"未检测到有效文件");
+			WriteDebugLog("[WARNING] OnDropFiles: 未检测到有效文件");
+			return;
+		}
+		
+		for (UINT i = 0; i < fileCount; i++)
+		{
+			TCHAR filePath[MAX_PATH];
+			UINT pathLength = DragQueryFile(hDropInfo, i, filePath, MAX_PATH);
+			
+			if (pathLength == 0)
+			{
+				AppendLog(L"无法获取文件路径");
+				WriteDebugLog("[ERROR] OnDropFiles: DragQueryFile 返回路径长度为0");
+				continue;
+			}
+			
+			CString logMsg;
+			logMsg.Format(L"拖放文件: %s", filePath);
+			AppendLog(logMsg);
+			WriteDebugLog(CT2A(logMsg));
+			
+			// 检查文件是否存在
+			DWORD attributes = GetFileAttributes(filePath);
+			if (attributes == INVALID_FILE_ATTRIBUTES)
+			{
+				CString errorMsg;
+				errorMsg.Format(L"文件不存在或无法访问: %s", filePath);
+				AppendLog(errorMsg);
+				WriteDebugLog(CT2A(errorMsg));
+				continue;
+			}
+			
+			// 检查是否为目录
+			if (attributes & FILE_ATTRIBUTE_DIRECTORY)
+			{
+				AppendLog(L"不支持文件夹拖放，请拖放单个文件");
+				WriteDebugLog("[INFO] OnDropFiles: 跳过目录拖放");
+				continue;
+			}
+			
+			// 读取文件内容
+			WriteDebugLog("[INFO] OnDropFiles: 开始加载文件内容");
+			if (LoadFileForTransmission(filePath))
+			{
+				AppendLog(L"文件加载成功，已准备就绪。点击发送按钮开始传输。");
+				WriteDebugLog("[SUCCESS] OnDropFiles: 文件加载成功");
+			}
+			else
+			{
+				AppendLog(L"文件加载失败");
+				WriteDebugLog("[ERROR] OnDropFiles: 文件加载失败");
+			}
+		}
+	}
+	catch (...)
+	{
+		AppendLog(L"文件拖放处理过程中发生异常");
+		WriteDebugLog("[ERROR] OnDropFiles: 处理拖放文件时发生异常");
+	}
+	
+	DragFinish(hDropInfo);
+	CDialogEx::OnDropFiles(hDropInfo);
+	WriteDebugLog("[DEBUG] OnDropFiles: 文件拖放事件处理完成");
+}
+
+void CPortMasterDlg::OnSize(UINT nType, int cx, int cy)
+{
+	CDialogEx::OnSize(nType, cx, cy);
+
+	// TODO: 添加窗口大小调整处理
+}
+
+// 十六进制/文本视图辅助方法实现
+void CPortMasterDlg::ProcessHexInput()
+{
+	CString hexInput;
+	m_ctrlInputHex.GetWindowText(hexInput);
+	
+	if (ValidateHexInput(hexInput))
+	{
+		// 清空文本输入框，避免冲突
+		m_ctrlInputText.SetWindowText(L"");
+	}
+	else if (!hexInput.IsEmpty())
+	{
+		AppendLog(L"十六进制输入格式错误");
+	}
+}
+
+void CPortMasterDlg::ProcessTextInput()
+{
+	CString textInput;
+	m_ctrlInputText.GetWindowText(textInput);
+	
+	if (!textInput.IsEmpty())
+	{
+		// 清空十六进制输入框，避免冲突
+		m_ctrlInputHex.SetWindowText(L"");
+		
+		// 将文本转换为十六进制显示（可选）
+		std::string inputStr = CT2A(textInput, CP_UTF8);
+		std::vector<uint8_t> data = DataFormatter::TextToBytes(inputStr);
+		std::string hexStr = DataFormatter::BytesToHex(data);
+		
+		// 可以选择在十六进制框中显示对应的十六进制值
+		// m_ctrlInputHex.SetWindowText(CA2W(hexStr.c_str()));
+	}
+}
+
+bool CPortMasterDlg::ValidateHexInput(const CString& hexText)
+{
+	if (hexText.IsEmpty())
+		return true;
+	
+	std::string hexStr = CT2A(hexText);
+	return DataFormatter::IsValidHex(hexStr);
+}
+
+std::vector<uint8_t> CPortMasterDlg::GetInputData()
+{
+	CString hexInput, textInput;
+	m_ctrlInputHex.GetWindowText(hexInput);
+	m_ctrlInputText.GetWindowText(textInput);
+	
+	if (!hexInput.IsEmpty())
+	{
+		if (ValidateHexInput(hexInput))
+		{
+			std::string hexStr = CT2A(hexInput);
+			return DataFormatter::HexToBytes(hexStr);
+		}
+		else
+		{
+			AppendLog(L"十六进制格式错误");
+			return std::vector<uint8_t>();
+		}
+	}
+	else if (!textInput.IsEmpty())
+	{
+		std::string textStr = CT2A(textInput, CP_UTF8);
+		return DataFormatter::TextToBytes(textStr);
+	}
+	
+	return std::vector<uint8_t>();
+}
+
+void CPortMasterDlg::DisplayReceivedData(const std::vector<uint8_t>& data)
+{
+	if (data.empty())
+		return;
+	
+	// 更新十六进制视图
+	std::string hexDump = DataFormatter::FormatHexDump(data);
+	CString currentHex;
+	m_ctrlHexView.GetWindowText(currentHex);
+	currentHex += CA2W(hexDump.c_str());
+	m_ctrlHexView.SetWindowText(currentHex);
+	
+	// 更新文本视图
+	std::string textData = DataFormatter::BytesToText(data);
+	CString currentText;
+	m_ctrlTextView.GetWindowText(currentText);
+	currentText += CA2W(textData.c_str());
+	currentText += L"\r\n";
+	m_ctrlTextView.SetWindowText(currentText);
+	
+	// 滚动到底部
+	m_ctrlHexView.LineScroll(m_ctrlHexView.GetLineCount());
+	m_ctrlTextView.LineScroll(m_ctrlTextView.GetLineCount());
+}
+
+bool CPortMasterDlg::LoadFileForTransmission(const CString& filePath)
+{
+	try
+	{
+		HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, 
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		
+		if (hFile == INVALID_HANDLE_VALUE)
+		{
+			CString errorMsg;
+			errorMsg.Format(L"无法打开文件: %s (错误代码: %d)", filePath, GetLastError());
+			AppendLog(errorMsg);
+			return false;
+		}
+		
+		LARGE_INTEGER fileSize;
+		if (!GetFileSizeEx(hFile, &fileSize))
+		{
+			CloseHandle(hFile);
+			AppendLog(L"无法获取文件大小");
+			return false;
+		}
+		
+		// 检查文件大小限制（例如最大10MB）
+		const LONGLONG MAX_FILE_SIZE = 10 * 1024 * 1024;
+		if (fileSize.QuadPart > MAX_FILE_SIZE)
+		{
+			CloseHandle(hFile);
+			CString sizeMsg;
+			sizeMsg.Format(L"文件过大 (%.2f MB), 最大支持10MB", 
+				fileSize.QuadPart / (1024.0 * 1024.0));
+			AppendLog(sizeMsg);
+			return false;
+		}
+		
+		// 分配缓冲区
+		std::vector<uint8_t> fileBuffer(static_cast<size_t>(fileSize.QuadPart));
+		
+		DWORD bytesRead = 0;
+		DWORD totalBytesRead = 0;
+		const DWORD CHUNK_SIZE = 64 * 1024; // 64KB chunks
+		
+		// 获取文件名（不含路径）
+		CString fileName = filePath;
+		int lastSlash = fileName.ReverseFind('\\');
+		if (lastSlash != -1)
+			fileName = fileName.Mid(lastSlash + 1);
+		
+		// 读取文件数据
+		while (totalBytesRead < fileSize.QuadPart)
+		{
+			DWORD chunkSize = std::min(CHUNK_SIZE, 
+				static_cast<DWORD>(fileSize.QuadPart - totalBytesRead));
+			
+			if (!ReadFile(hFile, fileBuffer.data() + totalBytesRead, 
+				chunkSize, &bytesRead, NULL))
+			{
+				CloseHandle(hFile);
+				AppendLog(L"文件读取错误");
+				return false;
+			}
+			
+			totalBytesRead += bytesRead;
+			
+			// 更新文件加载进度显示
+			ShowFileLoadProgress(fileName, static_cast<size_t>(fileSize.QuadPart), totalBytesRead);
+			
+			// 只处理绘制消息以保持UI响应性，避免处理其他可能触发发送的消息
+			MSG msg;
+			while (PeekMessage(&msg, NULL, WM_PAINT, WM_PAINT, PM_REMOVE))
+			{
+				TranslateMessage(&msg);
+				DispatchMessage(&msg);
+			}
+		}
+		
+		CloseHandle(hFile);
+		
+		// 完成文件加载
+		ShowFileLoadProgress(fileName, static_cast<size_t>(fileSize.QuadPart), static_cast<size_t>(fileSize.QuadPart));
+		
+		// 显示文件内容在数据视图中
+		DisplayReceivedData(fileBuffer);
+		
+		CString successMsg;
+		successMsg.Format(L"文件加载完成: %s (%zu 字节)", fileName, fileBuffer.size());
+		AppendLog(successMsg);
+		
+		return true;
+	}
+	catch (...)
+	{
+		AppendLog(L"文件加载时发生异常");
+		return false;
+	}
+}
+
+// 文件加载进度显示（拖放文件时使用）
+void CPortMasterDlg::ShowFileLoadProgress(const CString& filename, size_t totalSize, size_t loaded)
+{
+	// 更新进度条
+	if (totalSize > 0)
+	{
+		int progress = static_cast<int>((loaded * 100) / totalSize);
+		m_ctrlProgress.SetPos(progress);
+	}
+	
+	// 更新状态文本
+	CString statusText;
+	if (loaded >= totalSize)
+	{
+		statusText.Format(L"状态: 文件加载完成 - %s (准备发送)", filename);
+		m_ctrlProgress.SetPos(0); // 重置进度条
+	}
+	else
+	{
+		double progressPercent = totalSize > 0 ? (loaded * 100.0) / totalSize : 0.0;
+		statusText.Format(L"状态: 正在加载 %s (%.1f%%, %zu/%zu 字节)", 
+			filename, progressPercent, loaded, totalSize);
+	}
+	
+	m_ctrlStatus.SetWindowText(statusText);
+}
+
+// 真正的传输进度显示（发送数据时使用）
+void CPortMasterDlg::ShowFileTransmissionProgress(const CString& filename, size_t totalSize, size_t transmitted)
+{
+	// 更新进度条
+	if (totalSize > 0)
+	{
+		int progress = static_cast<int>((transmitted * 100) / totalSize);
+		m_ctrlProgress.SetPos(progress);
+	}
+	
+	// 更新状态文本
+	CString statusText;
+	if (transmitted >= totalSize)
+	{
+		statusText.Format(L"状态: 文件传输完成 - %s", filename);
+		m_ctrlProgress.SetPos(0); // 重置进度条
+	}
+	else
+	{
+		double progressPercent = totalSize > 0 ? (transmitted * 100.0) / totalSize : 0.0;
+		statusText.Format(L"状态: 正在传输 %s (%.1f%%, %zu/%zu 字节)", 
+			filename, progressPercent, transmitted, totalSize);
+	}
+	
+	m_ctrlStatus.SetWindowText(statusText);
+}
+
+// 开始数据传输
+void CPortMasterDlg::StartDataTransmission(const std::vector<uint8_t>& data)
+{
+	if (m_bTransmitting)
+	{
+		AppendLog(L"已有传输正在进行中");
+		return;
+	}
+	
+	m_transmissionData = data;
+	m_transmissionProgress = 0;
+	m_bTransmitting = true;
+	
+	CString logMsg;
+	logMsg.Format(L"开始传输数据 (%zu 字节)", data.size());
+	AppendLog(logMsg);
+	
+	// 启动定时器，模拟分块传输（每100ms传输一块）
+	m_transmissionTimer = SetTimer(1001, 100, NULL);
+	
+	// 显示初始进度
+	if (!data.empty())
+	{
+		ShowFileTransmissionProgress(L"数据传输", data.size(), 0);
+	}
+}
+
+// 定时器处理函数
+void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1001) // 传输定时器
+	{
+		OnTransmissionTimer();
+	}
+	else
+	{
+		CDialogEx::OnTimer(nIDEvent);
+	}
+}
+
+// 传输定时器处理
+void CPortMasterDlg::OnTransmissionTimer()
+{
+	if (!m_bTransmitting || m_transmissionData.empty())
+	{
+		return;
+	}
+	
+	// 模拟分块传输，每次传输512字节
+	const size_t CHUNK_SIZE = 512;
+	size_t remaining = m_transmissionData.size() - m_transmissionProgress;
+	size_t currentChunk = std::min(CHUNK_SIZE, remaining);
+	
+	// 模拟传输延迟和进度更新
+	m_transmissionProgress += currentChunk;
+	
+	// 更新进度显示
+	ShowFileTransmissionProgress(L"数据传输", m_transmissionData.size(), m_transmissionProgress);
+	
+	// 在十六进制视图中显示发送的数据块
+	AppendHexData(m_transmissionData.data() + (m_transmissionProgress - currentChunk), 
+		currentChunk, false);
+	
+	// 检查是否传输完成
+	if (m_transmissionProgress >= m_transmissionData.size())
+	{
+		// 传输完成
+		KillTimer(m_transmissionTimer);
+		m_transmissionTimer = 0;
+		m_bTransmitting = false;
+		
+		AppendLog(L"数据传输完成");
+		
+		// 重置进度条
+		m_ctrlProgress.SetPos(0);
+		m_ctrlStatus.SetWindowText(L"状态: 就绪");
+		
+		// 清空传输数据
+		m_transmissionData.clear();
+		m_transmissionProgress = 0;
+	}
+}
+
+// 文件加载按钮处理
+void CPortMasterDlg::OnBnClickedLoadFile()
+{
+	CFileDialog fileDialog(TRUE, NULL, NULL, 
+		OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT | OFN_ALLOWMULTISELECT,
+		L"所有文件 (*.*)|*.*|文本文件 (*.txt)|*.txt|二进制文件 (*.bin)|*.bin||");
+
+	if (fileDialog.DoModal() == IDOK)
+	{
+		CString filePath = fileDialog.GetPathName();
+		
+		AppendLog(L"选择文件: " + filePath);
+		
+		if (LoadFileForTransmission(filePath))
+		{
+			// 使用可靠传输发送文件
+			if (m_bReliableMode && m_reliableChannel && m_bConnected)
+			{
+				m_bTransmitting = true;
+				std::string filePathStr = CT2A(filePath);
+				
+				if (m_reliableChannel->SendFile(filePathStr))
+				{
+					AppendLog(L"开始可靠文件传输");
+				}
+				else
+				{
+					m_bTransmitting = false;
+					AppendLog(L"文件传输启动失败");
+					CString error = CA2W(m_reliableChannel->GetLastError().c_str());
+					if (!error.IsEmpty())
+					{
+						AppendLog(L"错误: " + error);
+					}
+				}
+			}
+			else
+			{
+				AppendLog(L"文件已加载到输入区域，点击发送按钮开始传输");
+			}
+		}
+	}
+}
+
+// 保存文件按钮处理
+void CPortMasterDlg::OnBnClickedSaveFile()
+{
+	// 获取当前文本输入的内容
+	CString textContent;
+	m_ctrlInputText.GetWindowText(textContent);
+	
+	if (textContent.IsEmpty())
+	{
+		AppendLog(L"没有数据可保存");
+		return;
+	}
+
+	CFileDialog fileDialog(FALSE, L"txt", L"output.txt",
+		OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+		L"文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*||");
+
+	if (fileDialog.DoModal() == IDOK)
+	{
+		CString filePath = fileDialog.GetPathName();
+		
+		try
+		{
+			CStdioFile file;
+			if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText))
+			{
+				file.WriteString(textContent);
+				file.Close();
+				
+				AppendLog(L"文件保存成功: " + filePath);
+			}
+			else
+			{
+				AppendLog(L"文件保存失败: 无法创建文件");
+			}
+		}
+		catch (CFileException* e)
+		{
+			CString errorMsg;
+			errorMsg.Format(L"文件保存失败: 错误代码 %d", e->m_cause);
+			AppendLog(errorMsg);
+			e->Delete();
+		}
+	}
+}

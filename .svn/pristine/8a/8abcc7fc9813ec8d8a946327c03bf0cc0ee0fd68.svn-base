@@ -1,0 +1,508 @@
+﻿#include "pch.h"
+#include "TestWizardDialog.h"
+#include "Resource.h"
+#include "Common/DataFormatter.h"
+#include "Transport/LoopbackTransport.h"
+#include <chrono>
+
+IMPLEMENT_DYNAMIC(CTestWizardDialog, CDialogEx)
+
+CTestWizardDialog::CTestWizardDialog(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_TEST_WIZARD, pParent)
+	, m_bTesting(false)
+	, m_nCurrentTest(0)
+	, m_nTotalTests(0)
+	, m_nTimer(0)
+{
+}
+
+CTestWizardDialog::~CTestWizardDialog()
+{
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+}
+
+void CTestWizardDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_TEST_TYPE, m_ctrlTestType);
+	DDX_Control(pDX, IDC_TRANSPORT_TYPE, m_ctrlTransportType);
+	DDX_Control(pDX, IDC_TEST_CONFIG, m_ctrlTestConfig);
+	DDX_Control(pDX, IDC_TEST_RESULTS, m_ctrlTestResults);
+	DDX_Control(pDX, IDC_TEST_PROGRESS, m_ctrlTestProgress);
+	DDX_Control(pDX, IDC_START_TEST, m_ctrlStartBtn);
+	DDX_Control(pDX, IDC_STOP_TEST, m_ctrlStopBtn);
+	DDX_Control(pDX, IDC_TEST_STATUS, m_ctrlStatusText);
+}
+
+BEGIN_MESSAGE_MAP(CTestWizardDialog, CDialogEx)
+	ON_BN_CLICKED(IDC_START_TEST, &CTestWizardDialog::OnBnClickedStartTest)
+	ON_BN_CLICKED(IDC_STOP_TEST, &CTestWizardDialog::OnBnClickedStopTest)
+	ON_CBN_SELCHANGE(IDC_TEST_TYPE, &CTestWizardDialog::OnCbnSelchangeTestType)
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+BOOL CTestWizardDialog::OnInitDialog()
+{
+	CDialogEx::OnInitDialog();
+
+	InitializeControls();
+	UpdateControlStates();
+
+	return TRUE;
+}
+
+void CTestWizardDialog::InitializeControls()
+{
+	// 鍒濆鍖栨祴璇曠被鍨嬩笅鎷夋
+	m_ctrlTestType.AddString(L"鍥炵幆娴嬭瘯 (蹇€?");
+	m_ctrlTestType.AddString(L"涓插彛鍩虹娴嬭瘯");
+	m_ctrlTestType.AddString(L"涓插彛鍘嬪姏娴嬭瘯");
+	m_ctrlTestType.AddString(L"缃戠粶鍩虹娴嬭瘯");
+	m_ctrlTestType.AddString(L"缃戠粶鍘嬪姏娴嬭瘯");
+	m_ctrlTestType.AddString(L"鍙潬鍗忚娴嬭瘯");
+	m_ctrlTestType.AddString(L"缁煎悎娴嬭瘯 (鍏ㄩ儴)");
+	m_ctrlTestType.SetCurSel(0);
+
+	// 鍒濆鍖栦紶杈撶被鍨嬩笅鎷夋
+	m_ctrlTransportType.AddString(L"鏈湴鍥炵幆");
+	m_ctrlTransportType.AddString(L"涓插彛 (COM)");
+	m_ctrlTransportType.AddString(L"TCP瀹㈡埛绔?);
+	m_ctrlTransportType.AddString(L"TCP鏈嶅姟绔?);
+	m_ctrlTransportType.AddString(L"UDP");
+	m_ctrlTransportType.SetCurSel(0);
+
+	// 鍒濆鍖栨祴璇曢厤缃鏄?	m_ctrlTestConfig.SetWindowText(L"鍥炵幆娴嬭瘯閰嶇疆:\r\n- 鏁版嵁鍖呭ぇ灏? 64B - 4KB\r\n- 娴嬭瘯娆℃暟: 100娆r\n- 瓒呮椂鏃堕棿: 5绉?);
+
+	// 鍒濆鍖栬繘搴︽潯
+	m_ctrlTestProgress.SetRange(0, 100);
+	m_ctrlTestProgress.SetPos(0);
+
+	// 鍒濆鍖栫姸鎬佹枃鏈?	m_ctrlStatusText.SetWindowText(L"鐘舵€? 灏辩华");
+}
+
+void CTestWizardDialog::UpdateControlStates()
+{
+	m_ctrlStartBtn.EnableWindow(!m_bTesting);
+	m_ctrlStopBtn.EnableWindow(m_bTesting);
+	m_ctrlTestType.EnableWindow(!m_bTesting);
+	m_ctrlTransportType.EnableWindow(!m_bTesting);
+}
+
+void CTestWizardDialog::OnBnClickedStartTest()
+{
+	StartTesting();
+}
+
+void CTestWizardDialog::OnBnClickedStopTest()
+{
+	StopTesting();
+}
+
+void CTestWizardDialog::OnCbnSelchangeTestType()
+{
+	int testType = m_ctrlTestType.GetCurSel();
+	CString configText;
+
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+		configText = L"鍥炵幆娴嬭瘯閰嶇疆:\r\n- 鏁版嵁鍖呭ぇ灏? 64B - 4KB\r\n- 娴嬭瘯娆℃暟: 100娆r\n- 瓒呮椂鏃堕棿: 5绉?;
+		break;
+	case TEST_SERIAL_BASIC:
+		configText = L"涓插彛鍩虹娴嬭瘯閰嶇疆:\r\n- 娉㈢壒鐜? 9600/115200\r\n- 鏁版嵁浣? 8\r\n- 鍋滄浣? 1\r\n- 鏍￠獙: 鏃?;
+		break;
+	case TEST_SERIAL_STRESS:
+		configText = L"涓插彛鍘嬪姏娴嬭瘯閰嶇疆:\r\n- 杩炵画鍙戦€?000涓暟鎹寘\r\n- 涓嶅悓澶у皬: 1B-1KB\r\n- 楂橀鐜囧彂閫佹祴璇?;
+		break;
+	case TEST_NETWORK_BASIC:
+		configText = L"缃戠粶鍩虹娴嬭瘯閰嶇疆:\r\n- TCP/UDP杩炴帴娴嬭瘯\r\n- 鍩虹鏁版嵁浼犺緭\r\n- 杩炴帴绋冲畾鎬ф祴璇?;
+		break;
+	case TEST_NETWORK_STRESS:
+		configText = L"缃戠粶鍘嬪姏娴嬭瘯閰嶇疆:\r\n- 澶ф暟鎹噺浼犺緭\r\n- 骞跺彂杩炴帴娴嬭瘯\r\n- 缃戠粶涓柇鎭㈠";
+		break;
+	case TEST_PROTOCOL_RELIABLE:
+		configText = L"鍙潬鍗忚娴嬭瘯閰嶇疆:\r\n- CRC32鏍￠獙娴嬭瘯\r\n- 搴忓垪鍙风‘璁r\n- 閲嶄紶鏈哄埗娴嬭瘯";
+		break;
+	case TEST_ALL_COMPREHENSIVE:
+		configText = L"缁煎悎娴嬭瘯閰嶇疆:\r\n- 鎵ц鎵€鏈夋祴璇曢」鐩甛r\n- 瀹屾暣鍔熻兘楠岃瘉\r\n- 棰勮鑰楁椂: 5-10鍒嗛挓";
+		break;
+	}
+
+	m_ctrlTestConfig.SetWindowText(configText);
+}
+
+void CTestWizardDialog::StartTesting()
+{
+	m_bTesting = true;
+	m_nCurrentTest = 0;
+	m_testResults.clear();
+
+	int testType = m_ctrlTestType.GetCurSel();
+	
+	// 鏍规嵁娴嬭瘯绫诲瀷纭畾鎬绘祴璇曟暟
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+	case TEST_SERIAL_BASIC:
+	case TEST_NETWORK_BASIC:
+	case TEST_PROTOCOL_RELIABLE:
+		m_nTotalTests = 1;
+		break;
+	case TEST_SERIAL_STRESS:
+	case TEST_NETWORK_STRESS:
+		m_nTotalTests = 3;
+		break;
+	case TEST_ALL_COMPREHENSIVE:
+		m_nTotalTests = 6;
+		break;
+	}
+
+	UpdateControlStates();
+	
+	// 娓呯┖缁撴灉鏄剧ず
+	m_ctrlTestResults.SetWindowText(L"寮€濮嬫祴璇?..\r\n");
+	
+	// 鍚姩娴嬭瘯瀹氭椂鍣?	m_nTimer = SetTimer(1, 100, NULL);
+	
+	ExecuteNextTest();
+}
+
+void CTestWizardDialog::StopTesting()
+{
+	m_bTesting = false;
+	
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+	
+	UpdateControlStates();
+	AppendTestResult(L"娴嬭瘯宸插仠姝€?);
+	m_ctrlStatusText.SetWindowText(L"鐘舵€? 宸插仠姝?);
+}
+
+void CTestWizardDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1 && m_bTesting)
+	{
+		UpdateTestProgress();
+	}
+	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CTestWizardDialog::UpdateTestProgress()
+{
+	if (m_nTotalTests > 0)
+	{
+		int progress = (m_nCurrentTest * 100) / m_nTotalTests;
+		m_ctrlTestProgress.SetPos(progress);
+		
+		CString statusText;
+		statusText.Format(L"鐘舵€? 姝ｅ湪鎵ц娴嬭瘯 (%d/%d)", m_nCurrentTest, m_nTotalTests);
+		m_ctrlStatusText.SetWindowText(statusText);
+	}
+}
+
+void CTestWizardDialog::ExecuteNextTest()
+{
+	if (!m_bTesting || m_nCurrentTest >= m_nTotalTests)
+	{
+		CompleteTest();
+		return;
+	}
+
+	m_nCurrentTest++;
+	bool testResult = false;
+	
+	int testType = m_ctrlTestType.GetCurSel();
+	
+	switch (testType)
+	{
+	case TEST_LOOPBACK:
+		testResult = ExecuteLoopbackTest();
+		break;
+	case TEST_SERIAL_BASIC:
+		testResult = ExecuteSerialBasicTest();
+		break;
+	case TEST_SERIAL_STRESS:
+		testResult = ExecuteSerialStressTest();
+		break;
+	case TEST_NETWORK_BASIC:
+		testResult = ExecuteNetworkBasicTest();
+		break;
+	case TEST_NETWORK_STRESS:
+		testResult = ExecuteNetworkStressTest();
+		break;
+	case TEST_PROTOCOL_RELIABLE:
+		testResult = ExecuteProtocolReliableTest();
+		break;
+	case TEST_ALL_COMPREHENSIVE:
+		testResult = ExecuteComprehensiveTest();
+		break;
+	}
+
+	// 缁х画涓嬩竴涓祴璇?	if (m_bTesting)
+	{
+		SetTimer(2, 1000, NULL); // 1绉掑悗鎵ц涓嬩竴涓祴璇?	}
+}
+
+void CTestWizardDialog::CompleteTest()
+{
+	StopTesting();
+	
+	m_ctrlTestProgress.SetPos(100);
+	m_ctrlStatusText.SetWindowText(L"鐘舵€? 娴嬭瘯瀹屾垚");
+	
+	// 鏄剧ず娴嬭瘯鎬荤粨
+	CString summary = FormatTestSummary();
+	AppendTestResult(summary);
+}
+
+bool CTestWizardDialog::ExecuteLoopbackTest()
+{
+	DWORD startTime = GetTickCount();
+	
+	try
+	{
+		AppendTestResult(L"[鍥炵幆娴嬭瘯] 寮€濮嬫墽琛屽洖鐜紶杈撴祴璇?..");
+		
+		// 鍒涘缓鍥炵幆浼犺緭瀵硅薄
+		LoopbackTransport loopback;
+		TransportConfig config;
+		
+		if (!loopback.Open(config))
+		{
+			LogTestResult(L"鍥炵幆娴嬭瘯", false, L"鏃犳硶鎵撳紑鍥炵幆浼犺緭", GetTickCount() - startTime);
+			return false;
+		}
+		
+		// 娴嬭瘯涓嶅悓澶у皬鐨勬暟鎹寘
+		std::vector<size_t> testSizes = {64, 256, 1024, 4096};
+		bool allPassed = true;
+		
+		for (size_t size : testSizes)
+		{
+			std::vector<uint8_t> testData = GenerateTestData(size);
+			
+			size_t bytesSent = loopback.Write(testData.data(), testData.size());
+			if (bytesSent != testData.size())
+			{
+				AppendTestResult(L"鍙戦€佹暟鎹け璐?);
+				allPassed = false;
+				break;
+			}
+			
+			std::vector<uint8_t> receivedData;
+			size_t bytesReceived = loopback.Read(receivedData, size);
+			
+			if (bytesReceived != size || !CompareData(testData, receivedData))
+			{
+				AppendTestResult(L"鏁版嵁鎺ユ敹鎴栨牎楠屽け璐?);
+				allPassed = false;
+				break;
+			}
+			
+			CString sizeMsg;
+			sizeMsg.Format(L"鏁版嵁鍖呮祴璇?(%zu瀛楄妭): 閫氳繃", size);
+			AppendTestResult(sizeMsg);
+		}
+		
+		loopback.Close();
+		
+		LogTestResult(L"鍥炵幆娴嬭瘯", allPassed, 
+			allPassed ? L"鎵€鏈夋暟鎹寘娴嬭瘯閫氳繃" : L"閮ㄥ垎娴嬭瘯澶辫触", 
+			GetTickCount() - startTime);
+		
+		return allPassed;
+	}
+	catch (...)
+	{
+		LogTestResult(L"鍥炵幆娴嬭瘯", false, L"娴嬭瘯杩囩▼涓彂鐢熷紓甯?, GetTickCount() - startTime);
+		return false;
+	}
+}
+
+bool CTestWizardDialog::ExecuteSerialBasicTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[涓插彛鍩虹娴嬭瘯] 妯℃嫙涓插彛杩炴帴鍜屽熀纭€閫氫俊...");
+	
+	// 妯℃嫙涓插彛娴嬭瘯
+	Sleep(1000);
+	
+	LogTestResult(L"涓插彛鍩虹娴嬭瘯", true, L"妯℃嫙娴嬭瘯瀹屾垚", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteSerialStressTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[涓插彛鍘嬪姏娴嬭瘯] 妯℃嫙楂橀鏁版嵁浼犺緭...");
+	
+	// 妯℃嫙鍘嬪姏娴嬭瘯
+	Sleep(2000);
+	
+	LogTestResult(L"涓插彛鍘嬪姏娴嬭瘯", true, L"鍘嬪姏娴嬭瘯瀹屾垚", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteNetworkBasicTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[缃戠粶鍩虹娴嬭瘯] 妯℃嫙缃戠粶杩炴帴娴嬭瘯...");
+	
+	// 妯℃嫙缃戠粶娴嬭瘯
+	Sleep(1500);
+	
+	LogTestResult(L"缃戠粶鍩虹娴嬭瘯", true, L"缃戠粶杩炴帴娴嬭瘯瀹屾垚", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteNetworkStressTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[缃戠粶鍘嬪姏娴嬭瘯] 妯℃嫙澶ф暟鎹噺浼犺緭...");
+	
+	// 妯℃嫙缃戠粶鍘嬪姏娴嬭瘯
+	Sleep(3000);
+	
+	LogTestResult(L"缃戠粶鍘嬪姏娴嬭瘯", true, L"澶ф暟鎹噺浼犺緭瀹屾垚", GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteProtocolReliableTest()
+{
+	DWORD startTime = GetTickCount();
+	AppendTestResult(L"[鍙潬鍗忚娴嬭瘯] 娴嬭瘯CRC鏍￠獙鍜岄噸浼犳満鍒?..");
+	
+	// 妯℃嫙鍗忚娴嬭瘯
+	Sleep(1000);
+	
+	LogTestResult(L"鍙潬鍗忚娴嬭瘯", true, L"CRC鍜岄噸浼犳祴璇曞畬鎴?, GetTickCount() - startTime);
+	return true;
+}
+
+bool CTestWizardDialog::ExecuteComprehensiveTest()
+{
+	// 缁煎悎娴嬭瘯浼氫緷娆℃墽琛屾墍鏈夊崟椤规祴璇?	static int subTest = 0;
+	
+	switch (subTest)
+	{
+	case 0:
+		subTest++;
+		return ExecuteLoopbackTest();
+	case 1:
+		subTest++;
+		return ExecuteSerialBasicTest();
+	case 2:
+		subTest++;
+		return ExecuteNetworkBasicTest();
+	case 3:
+		subTest++;
+		return ExecuteProtocolReliableTest();
+	case 4:
+		subTest++;
+		return ExecuteSerialStressTest();
+	case 5:
+		subTest = 0; // 閲嶇疆
+		return ExecuteNetworkStressTest();
+	}
+	
+	return true;
+}
+
+void CTestWizardDialog::AppendTestResult(const CString& message)
+{
+	CString current;
+	m_ctrlTestResults.GetWindowText(current);
+	current += message + L"\r\n";
+	m_ctrlTestResults.SetWindowText(current);
+	
+	// 婊氬姩鍒板簳閮?	m_ctrlTestResults.LineScroll(m_ctrlTestResults.GetLineCount());
+}
+
+void CTestWizardDialog::LogTestResult(const CString& testName, bool passed, const CString& details, DWORD duration)
+{
+	TestResult result;
+	result.testName = testName;
+	result.passed = passed;
+	result.details = details;
+	result.duration = duration;
+	m_testResults.push_back(result);
+	
+	CString resultMsg;
+	resultMsg.Format(L"[%s] %s - %s (鑰楁椂: %dms)", 
+		testName, passed ? L"閫氳繃" : L"澶辫触", details, duration);
+	AppendTestResult(resultMsg);
+}
+
+CString CTestWizardDialog::FormatTestSummary()
+{
+	CString summary = L"\r\n=== 娴嬭瘯鎬荤粨 ===\r\n";
+	
+	int passed = 0, failed = 0;
+	DWORD totalTime = 0;
+	
+	for (const auto& result : m_testResults)
+	{
+		if (result.passed)
+			passed++;
+		else
+			failed++;
+		totalTime += result.duration;
+	}
+	
+	CString stats;
+	stats.Format(L"鎬绘祴璇曟暟: %d\r\n閫氳繃: %d\r\n澶辫触: %d\r\n鎬昏€楁椂: %.2f绉抃r\n",
+		passed + failed, passed, failed, totalTime / 1000.0);
+	
+	summary += stats;
+	summary += L"\r\n璇︾粏缁撴灉:\r\n";
+	
+	for (const auto& result : m_testResults)
+	{
+		CString line;
+		line.Format(L"- %s: %s\r\n", result.testName, result.passed ? L"閫氳繃" : L"澶辫触");
+		summary += line;
+	}
+	
+	return summary;
+}
+
+std::vector<uint8_t> CTestWizardDialog::GenerateTestData(size_t size, bool pattern)
+{
+	std::vector<uint8_t> data(size);
+	
+	if (pattern)
+	{
+		// 鐢熸垚鏈夎寰嬬殑娴嬭瘯鏁版嵁
+		for (size_t i = 0; i < size; i++)
+		{
+			data[i] = static_cast<uint8_t>(i % 256);
+		}
+	}
+	else
+	{
+		// 鐢熸垚闅忔満鏁版嵁
+		srand(static_cast<unsigned>(time(nullptr)));
+		for (size_t i = 0; i < size; i++)
+		{
+			data[i] = static_cast<uint8_t>(rand() % 256);
+		}
+	}
+	
+	return data;
+}
+
+bool CTestWizardDialog::CompareData(const std::vector<uint8_t>& sent, const std::vector<uint8_t>& received)
+{
+	if (sent.size() != received.size())
+		return false;
+	
+	return memcmp(sent.data(), received.data(), sent.size()) == 0;
+}

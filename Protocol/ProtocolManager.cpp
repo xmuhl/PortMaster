@@ -1,0 +1,467 @@
+﻿#include "pch.h"
+#include "ProtocolManager.h"
+#include "../Transport/SerialTransport.h"
+#include "../Transport/TcpTransport.h"
+#include "../Transport/UdpTransport.h"
+#include "../Transport/LptSpoolerTransport.h"
+#include "../Transport/UsbPrinterTransport.h"
+#include "../Transport/LoopbackTransport.h"
+#include <sstream>
+#include <fstream>
+#include <algorithm>
+
+ProtocolManager::ProtocolManager()
+    : m_nextSessionId(1)
+    , m_deviceManager(std::make_shared<DeviceManager>())
+    , m_configManager(std::make_shared<ConfigManager>())
+{
+    m_configManager->LoadConfig();
+}
+
+ProtocolManager::~ProtocolManager()
+{
+    // 清理所有活跃会话
+    std::lock_guard<std::mutex> lock(m_sessionsMutex);
+    for (auto& pair : m_sessions) {
+        if (pair.second && pair.second->active) {
+            pair.second->active = false;
+        }
+    }
+    m_sessions.clear();
+}
+
+std::string ProtocolManager::CreateSession(const DeviceInfo& device, const ProtocolConfig& config)
+{
+    std::string sessionId = GenerateSessionId();
+    
+    // 创建会话
+    auto session = std::make_shared<ProtocolSession>();
+    session->sessionId = sessionId;
+    session->protocolType = config.type;
+    session->config = config;
+    session->startTime = std::chrono::steady_clock::now();
+    
+    // 创建传输层
+    if (!CreateTransport(device, session->transport)) {
+        return "";
+    }
+    
+    // 根据协议类型初始化协议层
+    if (config.type == ProtocolType::RELIABLE) {
+        if (!InitializeReliableChannel(session)) {
+            return "";
+        }
+    }
+    
+    session->active = true;
+    
+    // 添加到会话列表
+    {
+        std::lock_guard<std::mutex> lock(m_sessionsMutex);
+        m_sessions[sessionId] = session;
+    }
+    
+    return sessionId;
+}
+
+bool ProtocolManager::DestroySession(const std::string& sessionId)
+{
+    std::lock_guard<std::mutex> lock(m_sessionsMutex);
+    
+    auto it = m_sessions.find(sessionId);
+    if (it != m_sessions.end()) {
+        if (it->second && it->second->active) {
+            it->second->active = false;
+        }
+        
+        // 关闭传输层
+        if (it->second->transport && it->second->transport->IsOpen()) {
+            it->second->transport->Close();
+        }
+        
+        m_sessions.erase(it);
+        return true;
+    }
+    
+    return false;
+}
+
+std::shared_ptr<ProtocolSession> ProtocolManager::GetSession(const std::string& sessionId)
+{
+    std::lock_guard<std::mutex> lock(m_sessionsMutex);
+    
+    auto it = m_sessions.find(sessionId);
+    if (it != m_sessions.end()) {
+        return it->second;
+    }
+    
+    return nullptr;
+}
+
+std::vector<std::shared_ptr<ProtocolSession>> ProtocolManager::GetActiveSessions()
+{
+    std::vector<std::shared_ptr<ProtocolSession>> activeSessions;
+    
+    std::lock_guard<std::mutex> lock(m_sessionsMutex);
+    for (const auto& pair : m_sessions) {
+        if (pair.second && pair.second->active) {
+            activeSessions.push_back(pair.second);
+        }
+    }
+    
+    return activeSessions;
+}
+
+bool ProtocolManager::SendData(const std::string& sessionId, const std::vector<uint8_t>& data)
+{
+    auto session = GetSession(sessionId);
+    if (!session || !session->active) {
+        return false;
+    }
+    
+    // 根据协议类型发送数据
+    switch (session->protocolType) {
+        case ProtocolType::RAW:
+            return SendDataRaw(session, data);
+        case ProtocolType::RELIABLE:
+            return SendDataReliable(session, data);
+        case ProtocolType::STREAM:
+            return SendDataStream(session, data);
+        case ProtocolType::PACKET:
+            return SendDataPacket(session, data);
+        default:
+            return false;
+    }
+}
+
+bool ProtocolManager::SendFile(const std::string& sessionId, const std::string& filePath)
+{
+    auto session = GetSession(sessionId);
+    if (!session || !session->active) {
+        return false;
+    }
+    
+    // 读取文件
+    std::ifstream file(filePath, std::ios::binary);
+    if (!file) {
+        if (m_errorHandler) {
+            m_errorHandler(sessionId, "无法打开文件: " + filePath);
+        }
+        return false;
+    }
+    
+    std::vector<uint8_t> fileData(
+        (std::istreambuf_iterator<char>(file)),
+        std::istreambuf_iterator<char>()
+    );
+    
+    // 对于可靠传输，使用文件传输功能
+    if (session->protocolType == ProtocolType::RELIABLE && session->reliableChannel) {
+        return session->reliableChannel->SendFile(filePath);
+    }
+    
+    // 其他协议类型直接发送数据
+    return SendData(sessionId, fileData);
+}
+
+bool ProtocolManager::ReceiveData(const std::string& sessionId, std::vector<uint8_t>& data)
+{
+    auto session = GetSession(sessionId);
+    if (!session || !session->active || !session->transport) {
+        return false;
+    }
+    
+    return session->transport->Read(data) > 0;
+}
+
+bool ProtocolManager::SetProtocolConfig(const std::string& sessionId, const ProtocolConfig& config)
+{
+    auto session = GetSession(sessionId);
+    if (!session) {
+        return false;
+    }
+    
+    session->config = config;
+    
+    // 如果是可靠传输，更新相关配置
+    if (session->reliableChannel && config.type == ProtocolType::RELIABLE) {
+        // TODO: 更新ReliableChannel配置
+    }
+    
+    return true;
+}
+
+ProtocolConfig ProtocolManager::GetProtocolConfig(const std::string& sessionId) const
+{
+    auto session = const_cast<ProtocolManager*>(this)->GetSession(sessionId);
+    if (session) {
+        return session->config;
+    }
+    
+    return ProtocolConfig();
+}
+
+TransferStats ProtocolManager::GetSessionStats(const std::string& sessionId) const
+{
+    auto session = const_cast<ProtocolManager*>(this)->GetSession(sessionId);
+    if (session) {
+        if (session->reliableChannel) {
+            return session->reliableChannel->GetStats();
+        }
+        return session->stats;
+    }
+    
+    return TransferStats();
+}
+
+std::map<std::string, TransferStats> ProtocolManager::GetAllSessionStats() const
+{
+    std::map<std::string, TransferStats> allStats;
+    
+    std::lock_guard<std::mutex> lock(m_sessionsMutex);
+    for (const auto& pair : m_sessions) {
+        if (pair.second) {
+            allStats[pair.first] = GetSessionStats(pair.first);
+        }
+    }
+    
+    return allStats;
+}
+
+void ProtocolManager::SetProgressCallback(ProgressCallback callback)
+{
+    m_progressCallback = callback;
+}
+
+void ProtocolManager::SetCompletionCallback(CompletionCallback callback)
+{
+    m_completionCallback = callback;
+}
+
+void ProtocolManager::SetFileReceivedCallback(FileReceivedCallback callback)
+{
+    m_fileReceivedCallback = callback;
+}
+
+ProtocolType ProtocolManager::DetectProtocol(const std::string& sessionId)
+{
+    auto session = GetSession(sessionId);
+    if (!session || !session->transport) {
+        return ProtocolType::RAW;
+    }
+    
+    // 尝试读取一些数据进行协议检测
+    std::vector<uint8_t> buffer;
+    if (session->transport->Read(buffer, 256) > 0) {
+        
+        // 检查是否为可靠传输协议帧
+        if (IsReliableProtocolFrame(buffer)) {
+            return ProtocolType::RELIABLE;
+        }
+        
+        // 检查是否为流协议数据
+        if (IsStreamProtocolData(buffer)) {
+            return ProtocolType::STREAM;
+        }
+        
+        // 检查是否为数据包协议
+        if (IsPacketProtocolData(buffer)) {
+            return ProtocolType::PACKET;
+        }
+    }
+    
+    return ProtocolType::RAW;
+}
+
+bool ProtocolManager::AutoConfigureProtocol(const std::string& sessionId)
+{
+    ProtocolType detectedType = DetectProtocol(sessionId);
+    
+    auto session = GetSession(sessionId);
+    if (session) {
+        session->protocolType = detectedType;
+        
+        // 根据检测到的协议类型自动配置
+        if (detectedType == ProtocolType::RELIABLE) {
+            return InitializeReliableChannel(session);
+        }
+    }
+    
+    return true;
+}
+
+bool ProtocolManager::TestProtocol(const std::string& sessionId)
+{
+    auto session = GetSession(sessionId);
+    if (!session || !session->transport) {
+        return false;
+    }
+    
+    // 发送测试数据
+    std::vector<uint8_t> testData = {0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
+    
+    if (session->protocolType == ProtocolType::RELIABLE && session->reliableChannel) {
+        // TODO: 实现可靠传输测试
+        return true;
+    } else {
+        // 原始传输测试
+        size_t sent = session->transport->Write(testData);
+        return sent == testData.size();
+    }
+}
+
+std::string ProtocolManager::GenerateSessionId()
+{
+    std::ostringstream oss;
+    oss << "session_" << m_nextSessionId.fetch_add(1);
+    return oss.str();
+}
+
+bool ProtocolManager::CreateTransport(const DeviceInfo& device, std::shared_ptr<ITransport>& transport)
+{
+    // 根据设备类型创建相应的传输层
+    if (device.transportType == "Serial") {
+        transport = std::make_shared<SerialTransport>();
+    } else if (device.transportType == "TCP") {
+        transport = std::make_shared<TcpTransport>();
+    } else if (device.transportType == "UDP") {
+        transport = std::make_shared<UdpTransport>();
+    } else if (device.transportType == "LPT") {
+        transport = std::make_shared<LptSpoolerTransport>();
+    } else if (device.transportType == "USB") {
+        transport = std::make_shared<UsbPrinterTransport>();
+    } else if (device.transportType == "Loopback") {
+        transport = std::make_shared<LoopbackTransport>();
+    } else {
+        return false;
+    }
+    
+    // 配置传输层
+    TransportConfig config;
+    config.portName = device.deviceName;
+    
+    // TODO: 从设备属性中提取更多配置信息
+    
+    // 打开传输层连接
+    return transport->Configure(config) && transport->Open(config);
+}
+
+bool ProtocolManager::InitializeReliableChannel(std::shared_ptr<ProtocolSession> session)
+{
+    if (!session || !session->transport) {
+        return false;
+    }
+    
+    session->reliableChannel = std::make_shared<ReliableChannel>(session->transport);
+    
+    // 设置回调
+    session->reliableChannel->SetProgressCallback(
+        [this, sessionId = session->sessionId](const TransferStats& stats) {
+            OnProgressUpdate(sessionId, stats);
+        });
+    
+    session->reliableChannel->SetCompletionCallback(
+        [this, sessionId = session->sessionId](bool success, const std::string& message) {
+            OnTransferComplete(sessionId, success, message);
+        });
+    
+    session->reliableChannel->SetFileReceivedCallback(
+        [this, sessionId = session->sessionId](const std::string& filename, const std::vector<uint8_t>& data) {
+            OnFileReceived(sessionId, filename, data);
+        });
+    
+    return true;
+}
+
+bool ProtocolManager::SendDataRaw(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data)
+{
+    if (!session->transport) return false;
+    
+    size_t sent = session->transport->Write(data);
+    session->stats.transferredBytes += sent;
+    return sent == data.size();
+}
+
+bool ProtocolManager::SendDataReliable(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data)
+{
+    if (!session->reliableChannel) return false;
+    
+    return session->reliableChannel->SendData(data);
+}
+
+bool ProtocolManager::SendDataStream(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data)
+{
+    // 流式协议简化实现：直接发送数据，添加流标识
+    std::vector<uint8_t> streamData;
+    streamData.push_back(0xAA); // 流标识
+    streamData.insert(streamData.end(), data.begin(), data.end());
+    streamData.push_back(0x55); // 流结束标识
+    
+    return SendDataRaw(session, streamData);
+}
+
+bool ProtocolManager::SendDataPacket(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data)
+{
+    // 数据包协议简化实现：添加包头和长度信息
+    std::vector<uint8_t> packetData;
+    packetData.push_back(0xFF); // 包标识
+    packetData.push_back(0xFE);
+    
+    // 添加长度（2字节，小端序）
+    uint16_t length = static_cast<uint16_t>(data.size());
+    packetData.push_back(length & 0xFF);
+    packetData.push_back((length >> 8) & 0xFF);
+    
+    // 添加数据
+    packetData.insert(packetData.end(), data.begin(), data.end());
+    
+    return SendDataRaw(session, packetData);
+}
+
+void ProtocolManager::OnProgressUpdate(const std::string& sessionId, const TransferStats& stats)
+{
+    if (m_progressCallback) {
+        m_progressCallback(stats);
+    }
+}
+
+void ProtocolManager::OnTransferComplete(const std::string& sessionId, bool success, const std::string& message)
+{
+    if (m_completionCallback) {
+        m_completionCallback(success, message);
+    }
+}
+
+void ProtocolManager::OnFileReceived(const std::string& sessionId, const std::string& filename, const std::vector<uint8_t>& data)
+{
+    if (m_fileReceivedCallback) {
+        m_fileReceivedCallback(filename, data);
+    }
+}
+
+bool ProtocolManager::IsReliableProtocolFrame(const std::vector<uint8_t>& data) const
+{
+    // 检查是否包含可靠传输协议的帧头（0xAA55，小端序存储为 0x55 0xAA）
+    if (data.size() >= 2) {
+        return data[0] == 0x55 && data[1] == 0xAA;
+    }
+    return false;
+}
+
+bool ProtocolManager::IsStreamProtocolData(const std::vector<uint8_t>& data) const
+{
+    // 检查是否包含流协议标识
+    if (data.size() >= 2) {
+        return data[0] == 0xAA && data[data.size() - 1] == 0x55;
+    }
+    return false;
+}
+
+bool ProtocolManager::IsPacketProtocolData(const std::vector<uint8_t>& data) const
+{
+    // 检查是否包含数据包协议头
+    if (data.size() >= 4) {
+        return data[0] == 0xFF && data[1] == 0xFE;
+    }
+    return false;
+}

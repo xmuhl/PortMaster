@@ -1,0 +1,174 @@
+﻿#pragma once
+
+#include "ReliableChannel.h"
+#include "../Transport/ITransport.h"
+#include "../Common/DeviceManager.h"
+#include "../Common/ConfigManager.h"
+#include <memory>
+#include <vector>
+#include <map>
+#include <string>
+#include <functional>
+#include <chrono>
+#include <mutex>
+#include <atomic>
+
+// 协议类型枚举
+enum class ProtocolType
+{
+    RAW,        // 原始传输，无协议层
+    RELIABLE,   // 可靠传输协议
+    STREAM,     // 流式协议
+    PACKET,     // 数据包协议
+    CUSTOM      // 自定义协议
+};
+
+// 协议配置
+struct ProtocolConfig
+{
+    ProtocolType type;
+    bool enableCRC;
+    bool enableRetransmission;
+    bool enableAck;
+    int ackTimeoutMs;
+    int maxRetries;
+    size_t maxPayloadSize;
+    bool enableCompression;
+    bool enableEncryption;
+    
+    ProtocolConfig()
+        : type(ProtocolType::RAW)
+        , enableCRC(true)
+        , enableRetransmission(true)
+        , enableAck(true)
+        , ackTimeoutMs(1000)
+        , maxRetries(3)
+        , maxPayloadSize(1024)
+        , enableCompression(false)
+        , enableEncryption(false)
+    {}
+};
+
+// 协议会话信息
+struct ProtocolSession
+{
+    std::string sessionId;
+    ProtocolType protocolType;
+    std::shared_ptr<ITransport> transport;
+    std::shared_ptr<ReliableChannel> reliableChannel;
+    ProtocolConfig config;
+    TransferStats stats;
+    std::chrono::steady_clock::time_point startTime;
+    std::atomic<bool> active;
+    
+    ProtocolSession()
+        : protocolType(ProtocolType::RAW)
+        , active(false)
+        , startTime(std::chrono::steady_clock::now())
+    {}
+};
+
+// 协议管理器 - 统一管理所有协议层操作
+class ProtocolManager
+{
+public:
+    ProtocolManager();
+    ~ProtocolManager();
+    
+    // 会话管理
+    std::string CreateSession(const DeviceInfo& device, const ProtocolConfig& config);
+    bool DestroySession(const std::string& sessionId);
+    std::shared_ptr<ProtocolSession> GetSession(const std::string& sessionId);
+    std::vector<std::shared_ptr<ProtocolSession>> GetActiveSessions();
+    
+    // 协议操作
+    bool SendData(const std::string& sessionId, const std::vector<uint8_t>& data);
+    bool SendFile(const std::string& sessionId, const std::string& filePath);
+    bool ReceiveData(const std::string& sessionId, std::vector<uint8_t>& data);
+    
+    // 协议配置
+    bool SetProtocolConfig(const std::string& sessionId, const ProtocolConfig& config);
+    ProtocolConfig GetProtocolConfig(const std::string& sessionId) const;
+    
+    // 统计和监控
+    TransferStats GetSessionStats(const std::string& sessionId) const;
+    std::map<std::string, TransferStats> GetAllSessionStats() const;
+    
+    // 回调设置
+    void SetProgressCallback(ProgressCallback callback);
+    void SetCompletionCallback(CompletionCallback callback);
+    void SetFileReceivedCallback(FileReceivedCallback callback);
+    
+    // 协议发现和自适应
+    ProtocolType DetectProtocol(const std::string& sessionId);
+    bool AutoConfigureProtocol(const std::string& sessionId);
+    
+    // 协议测试和验证
+    bool TestProtocol(const std::string& sessionId);
+    bool ValidateConnection(const std::string& sessionId);
+    
+    // 高级功能
+    bool EnableMultiplexing(const std::string& sessionId);
+    bool SetPriorityLevel(const std::string& sessionId, int priority);
+    bool EnableFlowControl(const std::string& sessionId, bool enable);
+    
+    // 安全功能
+    bool EnableEncryption(const std::string& sessionId, const std::string& key);
+    bool DisableEncryption(const std::string& sessionId);
+    
+    // 压缩功能
+    bool EnableCompression(const std::string& sessionId, const std::string& algorithm = "zlib");
+    bool DisableCompression(const std::string& sessionId);
+    
+    // 错误处理和恢复
+    bool RecoverSession(const std::string& sessionId);
+    void SetErrorHandler(std::function<void(const std::string&, const std::string&)> handler);
+    
+    // 性能优化
+    void SetBufferSize(const std::string& sessionId, size_t size);
+    void SetConcurrencyLevel(int level);
+    void EnableBatching(const std::string& sessionId, bool enable);
+
+private:
+    std::map<std::string, std::shared_ptr<ProtocolSession>> m_sessions;
+    std::shared_ptr<DeviceManager> m_deviceManager;
+    std::shared_ptr<ConfigManager> m_configManager;
+    
+    mutable std::mutex m_sessionsMutex;
+    std::atomic<int> m_nextSessionId;
+    
+    // 回调函数
+    ProgressCallback m_progressCallback;
+    CompletionCallback m_completionCallback;
+    FileReceivedCallback m_fileReceivedCallback;
+    std::function<void(const std::string&, const std::string&)> m_errorHandler;
+    
+    // 内部方法
+    std::string GenerateSessionId();
+    bool CreateTransport(const DeviceInfo& device, std::shared_ptr<ITransport>& transport);
+    bool InitializeReliableChannel(std::shared_ptr<ProtocolSession> session);
+    void OnProgressUpdate(const std::string& sessionId, const TransferStats& stats);
+    void OnTransferComplete(const std::string& sessionId, bool success, const std::string& message);
+    void OnFileReceived(const std::string& sessionId, const std::string& filename, const std::vector<uint8_t>& data);
+    
+    // 协议特定方法
+    bool SendDataRaw(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data);
+    bool SendDataReliable(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data);
+    bool SendDataStream(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data);
+    bool SendDataPacket(std::shared_ptr<ProtocolSession> session, const std::vector<uint8_t>& data);
+    
+    // 数据处理
+    std::vector<uint8_t> CompressData(const std::vector<uint8_t>& data, const std::string& algorithm);
+    std::vector<uint8_t> DecompressData(const std::vector<uint8_t>& data, const std::string& algorithm);
+    std::vector<uint8_t> EncryptData(const std::vector<uint8_t>& data, const std::string& key);
+    std::vector<uint8_t> DecryptData(const std::vector<uint8_t>& data, const std::string& key);
+    
+    // 协议检测
+    bool IsReliableProtocolFrame(const std::vector<uint8_t>& data) const;
+    bool IsStreamProtocolData(const std::vector<uint8_t>& data) const;
+    bool IsPacketProtocolData(const std::vector<uint8_t>& data) const;
+    
+    // 会话维护
+    void CleanupInactiveSessions();
+    void UpdateSessionStats(const std::string& sessionId);
+};

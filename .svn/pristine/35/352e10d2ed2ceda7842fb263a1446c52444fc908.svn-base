@@ -1,0 +1,223 @@
+﻿#include "pch.h"
+#include "PortMaster.h"
+#include "SplashDialog.h"
+#include "afxdialogex.h"
+#include <gdiplus.h>
+#include <fstream>
+#pragma comment(lib, "gdiplus.lib")
+
+extern void WriteDebugLog(const char* message);
+using namespace Gdiplus;
+
+// CSplashDialog 对话框
+IMPLEMENT_DYNAMIC(CSplashDialog, CDialogEx)
+
+CSplashDialog::CSplashDialog(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_SPLASH_DIALOG, pParent)
+	, m_nTimer(0)
+{
+}
+
+CSplashDialog::~CSplashDialog()
+{
+	// 确保定时器在窗口销毁前被安全清理
+	if (m_nTimer != 0 && ::IsWindow(GetSafeHwnd()))
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+}
+
+void CSplashDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+}
+
+BEGIN_MESSAGE_MAP(CSplashDialog, CDialogEx)
+	ON_WM_PAINT()
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+// CSplashDialog 消息处理程序
+
+BOOL CSplashDialog::OnInitDialog()
+{
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 开始初始化启动画面对话框");
+	CDialogEx::OnInitDialog();
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: CDialogEx::OnInitDialog 完成");
+
+	// 加载PNG资源 - 添加容错处理
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 开始加载PNG资源");
+	HRSRC hResource = FindResource(AfxGetInstanceHandle(), MAKEINTRESOURCE(IDB_SPLASH), L"RCDATA");
+	if (hResource != NULL)
+	{
+		WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: PNG资源找到，开始加载");
+		HGLOBAL hGlobal = LoadResource(AfxGetInstanceHandle(), hResource);
+		if (hGlobal != NULL)
+		{
+			DWORD dwSize = SizeofResource(AfxGetInstanceHandle(), hResource);
+			LPVOID pData = LockResource(hGlobal);
+			
+			if (pData != NULL && dwSize > 0)
+				{
+					WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 资源数据获取成功，开始创建内存流");
+					// 创建内存流
+					HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, dwSize);
+				if (hMem != NULL)
+				{
+					LPVOID pMemData = GlobalLock(hMem);
+					memcpy(pMemData, pData, dwSize);
+					GlobalUnlock(hMem);
+					
+					IStream* pStream = NULL;
+					if (CreateStreamOnHGlobal(hMem, TRUE, &pStream) == S_OK)
+					{
+						// 使用GDI+加载PNG
+						GdiplusStartupInput gdiplusStartupInput;
+						ULONG_PTR gdiplusToken;
+						GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
+						
+						Image* pImage = Image::FromStream(pStream);
+							if (pImage && pImage->GetLastStatus() == Ok)
+							{
+								WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: GDI+图像加载成功");
+								// 转换为HBITMAP
+								HBITMAP hBitmap;
+							Color bgColor(255, 255, 255); // 白色背景
+							if (((Bitmap*)pImage)->GetHBITMAP(bgColor, &hBitmap) == Ok)
+									{
+										m_splashBitmap.Attach(hBitmap);
+										WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 位图转换成功");
+										
+										// 调整对话框大小
+										SetWindowPos(NULL, 0, 0, pImage->GetWidth(), pImage->GetHeight(), 
+											SWP_NOMOVE | SWP_NOZORDER);
+										WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 对话框大小调整完成");
+									}
+									else
+									{
+										WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: 位图转换失败");
+									}
+						}
+							else
+							{
+								WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: GDI+图像加载失败");
+							}
+							
+							if (pImage) delete pImage;
+							GdiplusShutdown(gdiplusToken);
+							pStream->Release();
+							WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: GDI+资源清理完成");
+					}
+				}
+				else
+				{
+					WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: 内存分配失败");
+				}
+			}
+			else
+			{
+				WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: 资源数据为空");
+			}
+		}
+		else
+		{
+			WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: 加载资源失败");
+		}
+	}
+	else
+	{
+		WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: 找不到PNG资源，将使用默认显示");
+		// 不是致命错误，继续初始化对话框
+	}
+
+	// 居中显示
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 开始居中显示");
+	CenterWindow();
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 居中显示完成");
+
+	// 设置定时器自动关闭
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 开始设置定时器");
+	m_nTimer = SetTimer(SPLASH_TIMER_ID, SPLASH_DURATION, NULL);
+	if (m_nTimer != 0)
+	{
+		WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 定时器设置成功");
+	}
+	else
+	{
+		WriteDebugLog("[ERROR] SplashDialog::OnInitDialog: 定时器设置失败");
+	}
+
+	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 启动画面对话框初始化完成");
+	return TRUE;
+}
+
+void CSplashDialog::OnPaint()
+{
+	WriteDebugLog("[DEBUG] SplashDialog::OnPaint: 开始绘制启动画面");
+	CPaintDC dc(this);
+
+	if (m_splashBitmap.GetSafeHandle() != NULL)
+	{
+		WriteDebugLog("[DEBUG] SplashDialog::OnPaint: 使用位图绘制");
+		// 创建兼容DC
+		CDC memDC;
+		memDC.CreateCompatibleDC(&dc);
+		CBitmap* pOldBitmap = memDC.SelectObject(&m_splashBitmap);
+
+		// 获取位图尺寸
+		BITMAP bmpInfo;
+		m_splashBitmap.GetBitmap(&bmpInfo);
+
+		// 获取客户区尺寸
+		CRect clientRect;
+		GetClientRect(&clientRect);
+
+		// 绘制位图
+		dc.BitBlt(0, 0, clientRect.Width(), clientRect.Height(), 
+			&memDC, 0, 0, SRCCOPY);
+
+		// 恢复原有位图
+		memDC.SelectObject(pOldBitmap);
+		WriteDebugLog("[DEBUG] SplashDialog::OnPaint: 位图绘制完成");
+	}
+	else
+	{
+		WriteDebugLog("[DEBUG] SplashDialog::OnPaint: 位图不存在，使用文本绘制");
+		// 如果没有位图，显示文本
+		CRect clientRect;
+		GetClientRect(&clientRect);
+		
+		// 设置背景色
+		dc.FillSolidRect(&clientRect, RGB(70, 130, 180)); // 钢蓝色
+		
+		// 绘制文本
+		dc.SetTextColor(RGB(255, 255, 255));
+		dc.SetBkMode(TRANSPARENT);
+		
+		CFont font;
+		font.CreatePointFont(240, L"微软雅黑");
+		CFont* pOldFont = dc.SelectObject(&font);
+		
+		dc.DrawText(L"PortMaster\n端口大师", &clientRect, 
+			DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		
+		dc.SelectObject(pOldFont);
+		WriteDebugLog("[DEBUG] SplashDialog::OnPaint: 文本绘制完成");
+	}
+	WriteDebugLog("[DEBUG] SplashDialog::OnPaint: 绘制完成");
+}
+
+void CSplashDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	WriteDebugLog("[DEBUG] SplashDialog::OnTimer: 定时器触发");
+	if (nIDEvent == SPLASH_TIMER_ID && ::IsWindow(GetSafeHwnd()))
+	{
+		WriteDebugLog("[DEBUG] SplashDialog::OnTimer: 启动画面定时器到期，关闭对话框");
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+		EndDialog(IDOK);
+	}
+	
+	CDialogEx::OnTimer(nIDEvent);
+}

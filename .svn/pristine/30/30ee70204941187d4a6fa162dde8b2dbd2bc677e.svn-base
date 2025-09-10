@@ -1,0 +1,218 @@
+﻿#include "pch.h"
+#include "PortMaster.h"
+#include "PortConfigDialog.h"
+#include "afxdialogex.h"
+
+// CPortConfigDialog 对话框
+IMPLEMENT_DYNAMIC(CPortConfigDialog, CDialogEx)
+
+CPortConfigDialog::CPortConfigDialog(const std::string& transportType, const TransportConfig& config, CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_PORT_CONFIG_DIALOG, pParent)
+	, m_transportType(transportType)
+	, m_config(config)
+{
+
+}
+
+CPortConfigDialog::~CPortConfigDialog()
+{
+}
+
+void CPortConfigDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+	DDX_Control(pDX, IDC_TRANSPORT_TYPE, m_ctrlTransportType);
+	DDX_Control(pDX, IDC_BAUD_RATE, m_ctrlBaudRate);
+	DDX_Control(pDX, IDC_DATA_BITS, m_ctrlDataBits);
+	DDX_Control(pDX, IDC_PARITY, m_ctrlParity);
+	DDX_Control(pDX, IDC_STOP_BITS, m_ctrlStopBits);
+	DDX_Control(pDX, IDC_IP_ADDRESS, m_ctrlIpAddress);
+	DDX_Control(pDX, IDC_PORT, m_ctrlPort);
+	DDX_Control(pDX, IDC_IS_SERVER, m_ctrlIsServer);
+	DDX_Control(pDX, IDC_CONNECT_TIMEOUT, m_ctrlConnectTimeout);
+	DDX_Control(pDX, IDC_READ_TIMEOUT, m_ctrlReadTimeout);
+	DDX_Control(pDX, IDC_WRITE_TIMEOUT, m_ctrlWriteTimeout);
+	DDX_Control(pDX, IDC_RX_BUFFER_SIZE, m_ctrlRxBufferSize);
+	DDX_Control(pDX, IDC_TX_BUFFER_SIZE, m_ctrlTxBufferSize);
+	DDX_Control(pDX, IDC_SERIAL_GROUP, m_ctrlSerialGroup);
+	DDX_Control(pDX, IDC_NETWORK_GROUP, m_ctrlNetworkGroup);
+	DDX_Control(pDX, IDC_TIMEOUT_GROUP, m_ctrlTimeoutGroup);
+	DDX_Control(pDX, IDC_BUFFER_GROUP, m_ctrlBufferGroup);
+}
+
+BEGIN_MESSAGE_MAP(CPortConfigDialog, CDialogEx)
+	ON_BN_CLICKED(IDOK, &CPortConfigDialog::OnBnClickedOk)
+	ON_BN_CLICKED(IDCANCEL, &CPortConfigDialog::OnBnClickedCancel)
+	ON_CBN_SELCHANGE(IDC_TRANSPORT_TYPE, &CPortConfigDialog::OnCbnSelchangeTransportType)
+END_MESSAGE_MAP()
+
+BOOL CPortConfigDialog::OnInitDialog()
+{
+	CDialogEx::OnInitDialog();
+
+	// 初始化传输类型下拉框
+	m_ctrlTransportType.AddString(L"串口 (Serial)");
+	m_ctrlTransportType.AddString(L"并口 (LPT)");
+	m_ctrlTransportType.AddString(L"USB打印机");
+	m_ctrlTransportType.AddString(L"TCP客户端");
+	m_ctrlTransportType.AddString(L"TCP服务端");
+	m_ctrlTransportType.AddString(L"UDP");
+	m_ctrlTransportType.AddString(L"本地回环");
+
+	// 设置当前传输类型
+	if (m_transportType == "Serial") m_ctrlTransportType.SetCurSel(0);
+	else if (m_transportType == "LPT") m_ctrlTransportType.SetCurSel(1);
+	else if (m_transportType == "USB") m_ctrlTransportType.SetCurSel(2);
+	else if (m_transportType == "TCP_Client") m_ctrlTransportType.SetCurSel(3);
+	else if (m_transportType == "TCP_Server") m_ctrlTransportType.SetCurSel(4);
+	else if (m_transportType == "UDP") m_ctrlTransportType.SetCurSel(5);
+	else if (m_transportType == "Loopback") m_ctrlTransportType.SetCurSel(6);
+
+	// 初始化校验位下拉框
+	m_ctrlParity.AddString(L"无校验");
+	m_ctrlParity.AddString(L"奇校验");
+	m_ctrlParity.AddString(L"偶校验");
+
+	// 初始化停止位下拉框
+	m_ctrlStopBits.AddString(L"1位");
+	m_ctrlStopBits.AddString(L"2位");
+
+	// 加载配置到控件
+	LoadConfigToControls();
+	
+	// 更新控件可见性
+	UpdateControlVisibility();
+
+	return TRUE;
+}
+
+void CPortConfigDialog::OnBnClickedOk()
+{
+	// 保存控件到配置
+	SaveControlsToConfig();
+	
+	CDialogEx::OnOK();
+}
+
+void CPortConfigDialog::OnBnClickedCancel()
+{
+	CDialogEx::OnCancel();
+}
+
+void CPortConfigDialog::OnCbnSelchangeTransportType()
+{
+	int sel = m_ctrlTransportType.GetCurSel();
+	switch (sel)
+	{
+	case 0: m_transportType = "Serial"; break;
+	case 1: m_transportType = "LPT"; break;
+	case 2: m_transportType = "USB"; break;
+	case 3: m_transportType = "TCP_Client"; break;
+	case 4: m_transportType = "TCP_Server"; break;
+	case 5: m_transportType = "UDP"; break;
+	case 6: m_transportType = "Loopback"; break;
+	}
+	
+	UpdateControlVisibility();
+}
+
+void CPortConfigDialog::UpdateControlVisibility()
+{
+	bool isSerial = (m_transportType == "Serial");
+	bool isNetwork = (m_transportType == "TCP_Client" || m_transportType == "TCP_Server" || m_transportType == "UDP");
+	bool isTcpServer = (m_transportType == "TCP_Server");
+	
+	// 串口相关控件
+	m_ctrlSerialGroup.ShowWindow(isSerial ? SW_SHOW : SW_HIDE);
+	m_ctrlBaudRate.ShowWindow(isSerial ? SW_SHOW : SW_HIDE);
+	m_ctrlDataBits.ShowWindow(isSerial ? SW_SHOW : SW_HIDE);
+	m_ctrlParity.ShowWindow(isSerial ? SW_SHOW : SW_HIDE);
+	m_ctrlStopBits.ShowWindow(isSerial ? SW_SHOW : SW_HIDE);
+	
+	// 网络相关控件
+	m_ctrlNetworkGroup.ShowWindow(isNetwork ? SW_SHOW : SW_HIDE);
+	m_ctrlIpAddress.ShowWindow(isNetwork ? SW_SHOW : SW_HIDE);
+	m_ctrlPort.ShowWindow(isNetwork ? SW_SHOW : SW_HIDE);
+	m_ctrlIsServer.ShowWindow(isTcpServer ? SW_SHOW : SW_HIDE);
+}
+
+void CPortConfigDialog::LoadConfigToControls()
+{
+	CString temp;
+	
+	// 串口配置
+	temp.Format(L"%d", m_config.baudRate);
+	m_ctrlBaudRate.SetWindowText(temp);
+	
+	temp.Format(L"%d", m_config.dataBits);
+	m_ctrlDataBits.SetWindowText(temp);
+	
+	m_ctrlParity.SetCurSel(m_config.parity);
+	m_ctrlStopBits.SetCurSel(m_config.stopBits - 1);
+	
+	// 网络配置
+	m_ctrlIpAddress.SetWindowText(CString(m_config.ipAddress.c_str()));
+	
+	temp.Format(L"%d", m_config.port);
+	m_ctrlPort.SetWindowText(temp);
+	
+	m_ctrlIsServer.SetCheck(m_config.isServer ? BST_CHECKED : BST_UNCHECKED);
+	
+	// 超时配置
+	temp.Format(L"%d", m_config.connectTimeoutMs);
+	m_ctrlConnectTimeout.SetWindowText(temp);
+	
+	temp.Format(L"%d", m_config.readTimeoutMs);
+	m_ctrlReadTimeout.SetWindowText(temp);
+	
+	temp.Format(L"%d", m_config.writeTimeoutMs);
+	m_ctrlWriteTimeout.SetWindowText(temp);
+	
+	// 缓冲区配置
+	temp.Format(L"%zu", m_config.rxBufferSize);
+	m_ctrlRxBufferSize.SetWindowText(temp);
+	
+	temp.Format(L"%zu", m_config.txBufferSize);
+	m_ctrlTxBufferSize.SetWindowText(temp);
+}
+
+void CPortConfigDialog::SaveControlsToConfig()
+{
+	CString temp;
+	
+	// 串口配置
+	m_ctrlBaudRate.GetWindowText(temp);
+	m_config.baudRate = _ttoi(temp);
+	
+	m_ctrlDataBits.GetWindowText(temp);
+	m_config.dataBits = _ttoi(temp);
+	
+	m_config.parity = m_ctrlParity.GetCurSel();
+	m_config.stopBits = m_ctrlStopBits.GetCurSel() + 1;
+	
+	// 网络配置
+	m_ctrlIpAddress.GetWindowText(temp);
+	m_config.ipAddress = CT2A(temp);
+	
+	m_ctrlPort.GetWindowText(temp);
+	m_config.port = _ttoi(temp);
+	
+	m_config.isServer = (m_ctrlIsServer.GetCheck() == BST_CHECKED);
+	
+	// 超时配置
+	m_ctrlConnectTimeout.GetWindowText(temp);
+	m_config.connectTimeoutMs = _ttoi(temp);
+	
+	m_ctrlReadTimeout.GetWindowText(temp);
+	m_config.readTimeoutMs = _ttoi(temp);
+	
+	m_ctrlWriteTimeout.GetWindowText(temp);
+	m_config.writeTimeoutMs = _ttoi(temp);
+	
+	// 缓冲区配置
+	m_ctrlRxBufferSize.GetWindowText(temp);
+	m_config.rxBufferSize = _ttoi(temp);
+	
+	m_ctrlTxBufferSize.GetWindowText(temp);
+	m_config.txBufferSize = _ttoi(temp);
+}

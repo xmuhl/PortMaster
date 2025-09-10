@@ -1,0 +1,13 @@
+﻿#pragma once
+
+#define _WINSOCK_DEPRECATED_NO_WARNINGS
+
+#include "framework.h"
+
+// 解决 Windows.h 中 min/max 宏与 std::min/std::max 的冲突
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif

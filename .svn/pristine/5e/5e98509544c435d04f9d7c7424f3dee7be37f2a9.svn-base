@@ -1,0 +1,130 @@
+﻿#include "pch.h"
+#include "PortMaster.h"
+#include "SplashDialog.h"
+#include "afxdialogex.h"
+
+// CSplashDialog 对话框
+IMPLEMENT_DYNAMIC(CSplashDialog, CDialogEx)
+
+CSplashDialog::CSplashDialog(CWnd* pParent /*=nullptr*/)
+	: CDialogEx(IDD_SPLASH_DIALOG, pParent)
+	, m_nTimer(0)
+{
+}
+
+CSplashDialog::~CSplashDialog()
+{
+	if (m_nTimer != 0)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+	}
+}
+
+void CSplashDialog::DoDataExchange(CDataExchange* pDX)
+{
+	CDialogEx::DoDataExchange(pDX);
+}
+
+BEGIN_MESSAGE_MAP(CSplashDialog, CDialogEx)
+	ON_WM_PAINT()
+	ON_WM_TIMER()
+END_MESSAGE_MAP()
+
+// CSplashDialog 消息处理程序
+
+BOOL CSplashDialog::OnInitDialog()
+{
+	CDialogEx::OnInitDialog();
+
+	// 加载启动画面位图
+	HBITMAP hBitmap = (HBITMAP)LoadImage(
+		AfxGetInstanceHandle(),
+		MAKEINTRESOURCE(IDB_SPLASH),
+		IMAGE_BITMAP,
+		0, 0,
+		LR_DEFAULTSIZE
+	);
+
+	if (hBitmap != NULL)
+	{
+		m_splashBitmap.Attach(hBitmap);
+
+		// 获取位图尺寸并调整对话框大小
+		BITMAP bmpInfo;
+		m_splashBitmap.GetBitmap(&bmpInfo);
+		
+		SetWindowPos(NULL, 0, 0, bmpInfo.bmWidth, bmpInfo.bmHeight, 
+			SWP_NOMOVE | SWP_NOZORDER);
+	}
+
+	// 居中显示
+	CenterWindow();
+
+	// 设置定时器自动关闭
+	m_nTimer = SetTimer(SPLASH_TIMER_ID, SPLASH_DURATION, NULL);
+
+	return TRUE;
+}
+
+void CSplashDialog::OnPaint()
+{
+	CPaintDC dc(this);
+
+	if (m_splashBitmap.GetSafeHandle() != NULL)
+	{
+		// 创建兼容DC
+		CDC memDC;
+		memDC.CreateCompatibleDC(&dc);
+		CBitmap* pOldBitmap = memDC.SelectObject(&m_splashBitmap);
+
+		// 获取位图尺寸
+		BITMAP bmpInfo;
+		m_splashBitmap.GetBitmap(&bmpInfo);
+
+		// 获取客户区尺寸
+		CRect clientRect;
+		GetClientRect(&clientRect);
+
+		// 绘制位图
+		dc.BitBlt(0, 0, clientRect.Width(), clientRect.Height(), 
+			&memDC, 0, 0, SRCCOPY);
+
+		// 恢复原有位图
+		memDC.SelectObject(pOldBitmap);
+	}
+	else
+	{
+		// 如果没有位图，显示文本
+		CRect clientRect;
+		GetClientRect(&clientRect);
+		
+		// 设置背景色
+		dc.FillSolidRect(&clientRect, RGB(70, 130, 180)); // 钢蓝色
+		
+		// 绘制文本
+		dc.SetTextColor(RGB(255, 255, 255));
+		dc.SetBkMode(TRANSPARENT);
+		
+		CFont font;
+		font.CreatePointFont(240, L"微软雅黑");
+		CFont* pOldFont = dc.SelectObject(&font);
+		
+		dc.DrawText(L"PortMaster\n端口大师", &clientRect, 
+			DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		
+		dc.SelectObject(pOldFont);
+	}
+}
+
+void CSplashDialog::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == SPLASH_TIMER_ID)
+	{
+		KillTimer(m_nTimer);
+		m_nTimer = 0;
+		EndDialog(IDOK);
+	}
+	
+	CDialogEx::OnTimer(nIDEvent);
+}

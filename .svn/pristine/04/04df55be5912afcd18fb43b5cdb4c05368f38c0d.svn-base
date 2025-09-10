@@ -1,0 +1,118 @@
+﻿#pragma once
+
+#include <string>
+#include <vector>
+#include <functional>
+
+// 传输接口配置结构
+struct TransportConfig
+{
+<<<<<<< .mine
+    // 通用配置
+    std::string portName;   // 端口名称（COM1, LPT1:, USB001等）
+
+||||||| .r19984
+=======
+    // 通用配置
+    std::string portName;       // 端口名称 (串口: "COM1", 打印机: "LPT1:" 等)
+    
+>>>>>>> .r19995
+    // 串口配置
+    int baudRate;
+    int dataBits;
+    int parity;     // 0=无校验, 1=奇校验, 2=偶校验
+    int stopBits;   // 1=1位, 2=2位
+
+    // 网络配置
+    std::string ipAddress;
+    int port;
+    bool isServer;
+
+    // 超时设置
+    int connectTimeoutMs;
+    int readTimeoutMs;
+    int writeTimeoutMs;
+
+    // 缓冲区大小
+    size_t rxBufferSize;
+    size_t txBufferSize;
+    
+    // 构造函数提供默认值
+    TransportConfig()
+        : portName("")
+        , baudRate(9600)
+        , dataBits(8)
+        , parity(0)
+        , stopBits(1)
+        , ipAddress("127.0.0.1")
+        , port(8080)
+        , isServer(false)
+        , connectTimeoutMs(5000)
+        , readTimeoutMs(1000)
+        , writeTimeoutMs(1000)
+        , rxBufferSize(4096)
+        , txBufferSize(4096)
+    {}
+};
+
+// 传输状态枚举
+enum TransportState
+{
+    TRANSPORT_CLOSED,
+    TRANSPORT_OPENING,
+    TRANSPORT_OPEN,
+    TRANSPORT_CLOSING,
+    TRANSPORT_ERROR
+};
+
+// 数据回调函数类型
+typedef std::function<void(const std::vector<uint8_t>&)> DataReceivedCallback;
+typedef std::function<void(TransportState, const std::string&)> StateChangedCallback;
+
+// 传输接口基类
+class ITransport
+{
+public:
+    virtual ~ITransport() = default;
+
+    // 基本操作
+    virtual bool Open(const TransportConfig& config) = 0;
+    virtual void Close() = 0;
+    virtual bool IsOpen() const = 0;
+    virtual TransportState GetState() const = 0;
+
+    // 配置管理
+    virtual bool Configure(const TransportConfig& config) = 0;
+    virtual TransportConfig GetConfiguration() const = 0;
+
+    // 数据传输
+    virtual size_t Write(const std::vector<uint8_t>& data) = 0;
+    virtual size_t Write(const uint8_t* data, size_t length) = 0;
+    virtual size_t Read(std::vector<uint8_t>& data, size_t maxLength = 0) = 0;
+    virtual size_t Available() const = 0;
+
+    // 状态查询
+    virtual std::string GetLastError() const = 0;
+    virtual std::string GetPortName() const = 0;
+    virtual std::string GetTransportType() const = 0;
+
+    // 回调函数设置
+    virtual void SetDataReceivedCallback(DataReceivedCallback callback) = 0;
+    virtual void SetStateChangedCallback(StateChangedCallback callback) = 0;
+
+    // 刷新和清空操作
+    virtual bool Flush() = 0;
+    virtual bool ClearBuffers() = 0;
+
+protected:
+    TransportConfig m_config;
+    TransportState m_state;
+    std::string m_lastError;
+    DataReceivedCallback m_dataCallback;
+    StateChangedCallback m_stateCallback;
+
+    // 辅助函数 - 由派生类实现
+    virtual void NotifyDataReceived(const std::vector<uint8_t>& data) = 0;
+    virtual void NotifyStateChanged(TransportState state, const std::string& message = "") = 0;
+    virtual void SetLastError(const std::string& error) = 0;
+};

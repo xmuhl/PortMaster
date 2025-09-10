@@ -1,0 +1,166 @@
+﻿#include "pch.h"
+#include "TcpTransport.h"
+
+bool TcpTransport::s_wsaInitialized = false;
+int TcpTransport::s_wsaRefCount = 0;
+
+TcpTransport::TcpTransport()
+    : m_socket(INVALID_SOCKET)
+    , m_listenSocket(INVALID_SOCKET)
+    , m_stopThreads(false)
+{
+    m_state = TRANSPORT_CLOSED;
+}
+
+TcpTransport::~TcpTransport()
+{
+    Close();
+}
+
+bool TcpTransport::Open(const TransportConfig& config)
+{
+    // TODO: 瀹炵幇TCP鎵撳紑閫昏緫
+    m_config = config;
+    NotifyStateChanged(TRANSPORT_OPEN, "TCP宸茶繛鎺?");
+    return true;
+}
+
+void TcpTransport::Close()
+{
+    // TODO: 瀹炵幇TCP鍏抽棴閫昏緫
+    NotifyStateChanged(TRANSPORT_CLOSED, "TCP宸插叧闂?");
+}
+
+bool TcpTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState TcpTransport::GetState() const
+{
+    return m_state;
+}
+
+bool TcpTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig TcpTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t TcpTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t TcpTransport::Write(const uint8_t* data, size_t length)
+{
+    // TODO: 瀹炵幇TCP鍐欏叆
+    return length;
+}
+
+size_t TcpTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    // TODO: 瀹炵幇TCP璇诲彇
+    data.clear();
+    return 0;
+}
+
+size_t TcpTransport::Available() const
+{
+    return 0;
+}
+
+std::string TcpTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string TcpTransport::GetPortName() const
+{
+    return m_config.ipAddress + ":" + std::to_string(m_config.port);
+}
+
+std::string TcpTransport::GetTransportType() const
+{
+    return m_config.isServer ? "TCP Server" : "TCP Client";
+}
+
+void TcpTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void TcpTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool TcpTransport::Flush()
+{
+    return true;
+}
+
+bool TcpTransport::ClearBuffers()
+{
+    return true;
+}
+
+std::string TcpTransport::GetRemoteEndpoint() const
+{
+    return m_remoteEndpoint;
+}
+
+std::string TcpTransport::GetLocalEndpoint() const
+{
+    return "127.0.0.1:" + std::to_string(m_config.port);
+}
+
+bool TcpTransport::InitializeWinsock()
+{
+    // TODO: 实现Winsock初始化
+    return true;
+}
+
+void TcpTransport::CleanupWinsock()
+{
+    // TODO: 瀹炵幇Winsock娓呯悊
+}
+
+bool TcpTransport::CreateSocket()
+{
+    // TODO: 实现套接字创建
+    return true;
+}
+
+bool TcpTransport::ConnectClient()
+{
+    // TODO: 实现客户端连接
+    return true;
+}
+
+bool TcpTransport::StartServer()
+{
+    // TODO: 实现服务端启动
+    return true;
+}
+
+void TcpTransport::ReadThreadFunc()
+{
+    // TODO: 瀹炵幇璇诲彇绾跨▼
+}
+
+void TcpTransport::AcceptThreadFunc()
+{
+    // TODO: 瀹炵幇鎺ュ彈杩炴帴绾跨▼
+}
+
+std::string TcpTransport::GetSocketErrorString(int error) const
+{
+    // TODO: 实现套接字错误信息转换
+    return "Socket error";
+}

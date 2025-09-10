@@ -1,0 +1,175 @@
+﻿#include "pch.h"
+#include "SerialTransport.h"
+
+SerialTransport::SerialTransport()
+    : m_hComm(INVALID_HANDLE_VALUE)
+    , m_stopRead(false)
+{
+    m_state = TRANSPORT_CLOSED;
+    ZeroMemory(&m_readOverlapped, sizeof(m_readOverlapped));
+    ZeroMemory(&m_writeOverlapped, sizeof(m_writeOverlapped));
+}
+
+SerialTransport::~SerialTransport()
+{
+    Close();
+}
+
+bool SerialTransport::Open(const TransportConfig& config)
+{
+    // TODO: 瀹炵幇涓插彛鎵撳紑閫昏緫
+    m_config = config;
+    m_portName = "COM1"; // 涓存椂
+    NotifyStateChanged(TRANSPORT_OPEN, "涓插彛宸叉墦寮€");
+    return true;
+}
+
+void SerialTransport::Close()
+{
+    // TODO: 瀹炵幇涓插彛鍏抽棴閫昏緫
+    NotifyStateChanged(TRANSPORT_CLOSED, "涓插彛宸插叧闂?");
+}
+
+bool SerialTransport::IsOpen() const
+{
+    return m_state == TRANSPORT_OPEN;
+}
+
+TransportState SerialTransport::GetState() const
+{
+    return m_state;
+}
+
+bool SerialTransport::Configure(const TransportConfig& config)
+{
+    m_config = config;
+    return true;
+}
+
+TransportConfig SerialTransport::GetConfiguration() const
+{
+    return m_config;
+}
+
+size_t SerialTransport::Write(const std::vector<uint8_t>& data)
+{
+    return Write(data.data(), data.size());
+}
+
+size_t SerialTransport::Write(const uint8_t* data, size_t length)
+{
+    // TODO: 瀹炵幇涓插彛鍐欏叆
+    return length;
+}
+
+size_t SerialTransport::Read(std::vector<uint8_t>& data, size_t maxLength)
+{
+    // TODO: 瀹炵幇涓插彛璇诲彇
+    data.clear();
+    return 0;
+}
+
+size_t SerialTransport::Available() const
+{
+    return 0;
+}
+
+std::string SerialTransport::GetLastError() const
+{
+    return m_lastError;
+}
+
+std::string SerialTransport::GetPortName() const
+{
+    return m_portName;
+}
+
+std::string SerialTransport::GetTransportType() const
+{
+    return "Serial";
+}
+
+void SerialTransport::SetDataReceivedCallback(DataReceivedCallback callback)
+{
+    m_dataCallback = callback;
+}
+
+void SerialTransport::SetStateChangedCallback(StateChangedCallback callback)
+{
+    m_stateCallback = callback;
+}
+
+bool SerialTransport::Flush()
+{
+    return true;
+}
+
+bool SerialTransport::ClearBuffers()
+{
+    return true;
+}
+
+std::vector<std::string> SerialTransport::EnumeratePorts()
+{
+    std::vector<std::string> ports;
+    // TODO: 瀹炵幇涓插彛鏋氫妇
+    for (int i = 1; i <= 16; i++)
+    {
+        char portName[16];
+        sprintf_s(portName, "COM%d", i);
+        ports.push_back(portName);
+    }
+    return ports;
+}
+
+bool SerialTransport::SetDTR(bool enable)
+{
+    // TODO: 瀹炵幇DTR鎺у埗
+    return true;
+}
+
+bool SerialTransport::SetRTS(bool enable)
+{
+    // TODO: 瀹炵幇RTS鎺у埗
+    return true;
+}
+
+bool SerialTransport::GetCTS() const
+{
+    // TODO: 瀹炵幇CTS鐘舵€佽鍙?
+    return false;
+}
+
+bool SerialTransport::GetDSR() const
+{
+    // TODO: 瀹炵幇DSR鐘舵€佽鍙?
+    return false;
+}
+
+bool SerialTransport::ConfigurePort()
+{
+    // TODO: 瀹炵幇涓插彛閰嶇疆
+    return true;
+}
+
+void SerialTransport::ReadThreadFunc()
+{
+    // TODO: 瀹炵幇璇诲彇绾跨▼
+}
+
+bool SerialTransport::SetupOverlapped()
+{
+    // TODO: 瀹炵幇閲嶅彔I/O璁剧疆
+    return true;
+}
+
+void SerialTransport::CleanupOverlapped()
+{
+    // TODO: 娓呯悊閲嶅彔I/O
+}
+
+std::string SerialTransport::GetSystemErrorString(DWORD error) const
+{
+    // TODO: 瀹炵幇Windows閿欒淇℃伅杞崲
+    return "Unknown error";
+}

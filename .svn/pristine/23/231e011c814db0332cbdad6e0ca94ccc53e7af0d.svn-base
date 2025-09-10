@@ -1,0 +1,712 @@
+﻿#include "pch.h"
+#include "ConfigManager.h"
+#include <fstream>
+#include <sstream>
+#include <shlobj.h>
+
+ConfigManager::ConfigManager()
+{
+    SetDefaultValues();
+    
+    // 尝试加载配置文件
+    std::string configPath = GetUserConfigPath();
+    if (!LoadConfig(configPath))
+    {
+        // 如果默认路径失败，尝试用户路径
+        configPath = GetDefaultConfigPath();
+        LoadConfig(configPath);
+    }
+}
+
+ConfigManager::~ConfigManager()
+{
+    // 自动保存配置
+    SaveConfig();
+}
+
+bool ConfigManager::LoadConfig(const std::string& filePath)
+{
+    if (filePath.empty())
+    {
+        m_configFilePath = GetDefaultConfigPath();
+    }
+    else
+    {
+        m_configFilePath = filePath;
+    }
+    
+    // TODO: 实现JSON配置文件加载
+    return ParseJsonFile(m_configFilePath);
+}
+
+bool ConfigManager::SaveConfig(const std::string& filePath) const
+{
+    std::string savePath = filePath.empty() ? m_configFilePath : filePath;
+    return WriteJsonFile(savePath);
+}
+
+bool ConfigManager::ResetToDefaults()
+{
+    m_config.clear();
+    SetDefaultValues();
+    return SaveConfig();
+}
+
+bool ConfigManager::SaveTransportConfig(const std::string& transportType, const TransportConfig& config)
+{
+    std::string section = "Transport_" + transportType;
+    
+    SetValue(section, "baudRate", config.baudRate);
+    SetValue(section, "dataBits", config.dataBits);
+    SetValue(section, "parity", config.parity);
+    SetValue(section, "stopBits", config.stopBits);
+    SetValue(section, "ipAddress", config.ipAddress);
+    SetValue(section, "port", config.port);
+    SetValue(section, "isServer", config.isServer);
+    SetValue(section, "connectTimeoutMs", config.connectTimeoutMs);
+    SetValue(section, "readTimeoutMs", config.readTimeoutMs);
+    SetValue(section, "writeTimeoutMs", config.writeTimeoutMs);
+    SetValue(section, "rxBufferSize", static_cast<int>(config.rxBufferSize));
+    SetValue(section, "txBufferSize", static_cast<int>(config.txBufferSize));
+    
+    return true;
+}
+
+TransportConfig ConfigManager::LoadTransportConfig(const std::string& transportType) const
+{
+    std::string section = "Transport_" + transportType;
+    TransportConfig config = GetDefaultTransportConfig(transportType);
+    
+    config.baudRate = GetInt(section, "baudRate", config.baudRate);
+    config.dataBits = GetInt(section, "dataBits", config.dataBits);
+    config.parity = GetInt(section, "parity", config.parity);
+    config.stopBits = GetInt(section, "stopBits", config.stopBits);
+    config.ipAddress = GetString(section, "ipAddress", config.ipAddress);
+    config.port = GetInt(section, "port", config.port);
+    config.isServer = GetBool(section, "isServer", config.isServer);
+    config.connectTimeoutMs = GetInt(section, "connectTimeoutMs", config.connectTimeoutMs);
+    config.readTimeoutMs = GetInt(section, "readTimeoutMs", config.readTimeoutMs);
+    config.writeTimeoutMs = GetInt(section, "writeTimeoutMs", config.writeTimeoutMs);
+    config.rxBufferSize = GetInt(section, "rxBufferSize", static_cast<int>(config.rxBufferSize));
+    config.txBufferSize = GetInt(section, "txBufferSize", static_cast<int>(config.txBufferSize));
+    
+    return config;
+}
+
+std::vector<std::string> ConfigManager::GetSavedTransportTypes() const
+{
+    std::vector<std::string> types;
+    
+    for (const auto& section : m_config)
+    {
+        if (section.first.substr(0, 10) == "Transport_")
+        {
+            types.push_back(section.first.substr(10));
+        }
+    }
+    
+    return types;
+}
+
+void ConfigManager::SetValue(const std::string& section, const std::string& key, const std::string& value)
+{
+    m_config[GetSectionKey(section, key)] = value;
+}
+
+void ConfigManager::SetValue(const std::string& section, const std::string& key, int value)
+{
+    m_config[GetSectionKey(section, key)] = std::to_string(value);
+}
+
+void ConfigManager::SetValue(const std::string& section, const std::string& key, bool value)
+{
+    m_config[GetSectionKey(section, key)] = value ? "true" : "false";
+}
+
+void ConfigManager::SetValue(const std::string& section, const std::string& key, double value)
+{
+    m_config[GetSectionKey(section, key)] = std::to_string(value);
+}
+
+std::string ConfigManager::GetString(const std::string& section, const std::string& key, const std::string& defaultValue) const
+{
+    auto it = m_config.find(GetSectionKey(section, key));
+    if (it != m_config.end())
+    {
+        return it->second;
+    }
+    return defaultValue;
+}
+
+int ConfigManager::GetInt(const std::string& section, const std::string& key, int defaultValue) const
+{
+    std::string value = GetString(section, key);
+    if (value.empty())
+        return defaultValue;
+    
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return defaultValue;
+    }
+}
+
+bool ConfigManager::GetBool(const std::string& section, const std::string& key, bool defaultValue) const
+{
+    std::string value = GetString(section, key);
+    if (value.empty())
+        return defaultValue;
+    
+    return (value == "true" || value == "1" || value == "yes");
+}
+
+double ConfigManager::GetDouble(const std::string& section, const std::string& key, double defaultValue) const
+{
+    std::string value = GetString(section, key);
+    if (value.empty())
+        return defaultValue;
+    
+    try {
+        return std::stod(value);
+    } catch (...) {
+        return defaultValue;
+    }
+}
+
+ConfigManager::AppConfig ConfigManager::GetAppConfig() const
+{
+    AppConfig config;
+    
+    config.windowX = GetInt("Window", "x", config.windowX);
+    config.windowY = GetInt("Window", "y", config.windowY);
+    config.windowWidth = GetInt("Window", "width", config.windowWidth);
+    config.windowHeight = GetInt("Window", "height", config.windowHeight);
+    config.windowMaximized = GetBool("Window", "maximized", config.windowMaximized);
+    
+    config.ackTimeoutMs = GetInt("Protocol", "ackTimeoutMs", config.ackTimeoutMs);
+    config.maxRetries = GetInt("Protocol", "maxRetries", config.maxRetries);
+    config.maxPayloadSize = GetInt("Protocol", "maxPayloadSize", static_cast<int>(config.maxPayloadSize));
+    config.receiveDirectory = GetString("Protocol", "receiveDirectory", config.receiveDirectory);
+    
+    config.hexViewEnabled = GetBool("UI", "hexViewEnabled", config.hexViewEnabled);
+    config.textViewEnabled = GetBool("UI", "textViewEnabled", config.textViewEnabled);
+    config.showTimestamp = GetBool("UI", "showTimestamp", config.showTimestamp);
+    
+    config.enableLogging = GetBool("Log", "enableLogging", config.enableLogging);
+    config.logDirectory = GetString("Log", "logDirectory", config.logDirectory);
+    config.maxLogFiles = GetInt("Log", "maxLogFiles", config.maxLogFiles);
+    
+    config.autoTest = GetBool("Test", "autoTest", config.autoTest);
+    config.testDataFile = GetString("Test", "testDataFile", config.testDataFile);
+    
+    return config;
+}
+
+void ConfigManager::SetAppConfig(const AppConfig& config)
+{
+    SetValue("Window", "x", config.windowX);
+    SetValue("Window", "y", config.windowY);
+    SetValue("Window", "width", config.windowWidth);
+    SetValue("Window", "height", config.windowHeight);
+    SetValue("Window", "maximized", config.windowMaximized);
+    
+    SetValue("Protocol", "ackTimeoutMs", config.ackTimeoutMs);
+    SetValue("Protocol", "maxRetries", config.maxRetries);
+    SetValue("Protocol", "maxPayloadSize", static_cast<int>(config.maxPayloadSize));
+    SetValue("Protocol", "receiveDirectory", config.receiveDirectory);
+    
+    SetValue("UI", "hexViewEnabled", config.hexViewEnabled);
+    SetValue("UI", "textViewEnabled", config.textViewEnabled);
+    SetValue("UI", "showTimestamp", config.showTimestamp);
+    
+    SetValue("Log", "enableLogging", config.enableLogging);
+    SetValue("Log", "logDirectory", config.logDirectory);
+    SetValue("Log", "maxLogFiles", config.maxLogFiles);
+    
+    SetValue("Test", "autoTest", config.autoTest);
+    SetValue("Test", "testDataFile", config.testDataFile);
+}
+
+std::string ConfigManager::GetDefaultConfigPath()
+{
+    char exePath[MAX_PATH];
+    GetModuleFileNameA(NULL, exePath, MAX_PATH);
+    
+    std::string path = exePath;
+    size_t pos = path.find_last_of("\\/");
+    if (pos != std::string::npos)
+        path = path.substr(0, pos);
+    
+    return path + "\\PortMaster.config";
+}
+
+std::string ConfigManager::GetUserConfigPath()
+{
+    char appDataPath[MAX_PATH];
+    if (SUCCEEDED(SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, appDataPath)))
+    {
+        std::string path = appDataPath;
+        path += "\\PortMaster";
+        
+        // 创建目录
+        CreateDirectoryA(path.c_str(), NULL);
+        
+        return path + "\\PortMaster.config";
+    }
+    
+    return GetDefaultConfigPath();
+}
+
+bool ConfigManager::ParseJsonFile(const std::string& filePath)
+{
+    // ⭐ 线程安全的JSON解析（支持基本键值对）- 添加异常保护
+    std::string content; // ⭐ 修复：在外部作用域声明content
+    
+    try {
+        std::ifstream file(filePath);
+        if (!file.is_open())
+            return false;
+        
+        // 读取整个文件 - 异常保护
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        if (file.fail() && !file.eof()) {
+            // 读取过程中发生错误
+            return false;
+        }
+        
+        content = buffer.str(); // ⭐ 修复：在外部作用域可访问
+        file.close();
+    } catch (const std::ios_base::failure&) {
+        // 文件I/O异常
+        return false;
+    } catch (const std::bad_alloc&) {
+        // 内存分配异常
+        return false;
+    } catch (const std::exception&) {
+        // 其他标准异常
+        return false;
+    } catch (...) {
+        // 所有其他异常
+        return false;
+    }
+    
+    // ⭐ 分离内容解析以便进一步异常保护
+    return ParseJsonContent(content);
+}
+
+// ⭐ 新增：异常安全的JSON内容解析方法
+bool ConfigManager::ParseJsonContent(const std::string& content)
+{
+    try {
+        // 简单的JSON解析 - 查找键值对（异常安全版本）
+        size_t pos = 0;
+        while (pos < content.length())
+        {
+            // ⭐ 异常保护：查找键
+            size_t keyStart = content.find('"', pos);
+            if (keyStart == std::string::npos) break;
+            keyStart++;
+            
+            size_t keyEnd = content.find('"', keyStart);
+            if (keyEnd == std::string::npos) break;
+            
+            // ⭐ 异常保护：子字符串操作
+            if (keyEnd <= keyStart) break; // 防止无效范围
+            std::string key = content.substr(keyStart, keyEnd - keyStart);
+            
+            // 查找冒号
+            size_t colonPos = content.find(':', keyEnd);
+            if (colonPos == std::string::npos) break;
+            
+            // 查找值
+            size_t valueStart = content.find_first_not_of(" \t\n\r", colonPos + 1);
+            if (valueStart == std::string::npos) break;
+            
+            std::string value;
+            if (content[valueStart] == '"')
+            {
+                // 字符串值
+                valueStart++;
+                size_t valueEnd = content.find('"', valueStart);
+                if (valueEnd == std::string::npos) break;
+                
+                // ⭐ 异常保护：防止无效范围
+                if (valueEnd <= valueStart) break;
+                value = content.substr(valueStart, valueEnd - valueStart);
+                pos = valueEnd + 1;
+            }
+            else
+            {
+                // 数值或布尔值
+                size_t valueEnd = content.find_first_of(",}\n\r", valueStart);
+                if (valueEnd == std::string::npos) valueEnd = content.length();
+                
+                // ⭐ 异常保护：防止无效范围
+                if (valueEnd <= valueStart) break;
+                value = content.substr(valueStart, valueEnd - valueStart);
+                
+                // ⭐ 异常保护：去除尾部空格
+                if (!value.empty()) {
+                    size_t lastNonSpace = value.find_last_not_of(" \t\n\r");
+                    if (lastNonSpace != std::string::npos) {
+                        value.erase(lastNonSpace + 1);
+                    }
+                }
+                pos = valueEnd;
+            }
+            
+            // ⭐ 异常保护：存储键值对
+            if (!key.empty()) {
+                m_config[key] = value;
+            }
+        }
+        
+        return true;
+    } catch (const std::out_of_range&) {
+        // 字符串索引越界异常
+        return false;
+    } catch (const std::length_error&) {
+        // 字符串长度异常
+        return false;
+    } catch (const std::bad_alloc&) {
+        // 内存分配异常
+        return false;
+    } catch (const std::exception&) {
+        // 其他标准异常
+        return false;
+    } catch (...) {
+        // 所有其他异常
+        return false;
+    }
+}
+
+bool ConfigManager::WriteJsonFile(const std::string& filePath) const
+{
+<<<<<<< .mine
+    try {
+        if (!EnsureDirectoryExists(filePath))
+            return false;
+||||||| .r19984
+    if (!EnsureDirectoryExists(filePath))
+        return false;
+    
+    std::ofstream file(filePath);
+    if (!file.is_open())
+        return false;
+    
+    // 写入JSON格式
+    file << "{\n";
+    file << "  \"_comment\": \"PortMaster Configuration File - Generated automatically\",\n";
+    
+    bool firstItem = true;
+    for (const auto& kv : m_config)
+    {
+        if (!firstItem)
+            file << ",\n";
+=======
+    if (!EnsureDirectoryExists(filePath))
+        return false;
+    
+    // 写入临时文件，稍后原子替换
+    std::string tmp = filePath + ".tmp";
+    std::ofstream file(tmp, std::ios::trunc);
+    if (!file.is_open())
+        return false;
+    
+    // 写入JSON格式
+    file << "{\n";
+    file << "  \"_comment\": \"PortMaster Configuration File - Generated automatically\",\n";
+    
+    bool firstItem = true;
+    for (const auto& kv : m_config)
+    {
+        if (!firstItem)
+            file << ",\n";
+>>>>>>> .r19995
+        
+        // ⭐ 异常保护：文件输出流操作
+        std::ofstream file(filePath);
+        if (!file.is_open())
+            return false;
+        
+        // ⭐ 异常保护：文件写入操作
+        // 写入JSON格式
+        file << "{\n";
+        file << "  \"_comment\": \"PortMaster Configuration File - Generated automatically\",\n";
+        
+        bool firstItem = true;
+        for (const auto& kv : m_config)
+        {
+            if (!firstItem)
+                file << ",\n";
+            
+            file << "  \"" << EscapeJsonString(kv.first) << "\": ";
+            
+            // 判断值的类型
+            if (IsNumeric(kv.second))
+            {
+                file << kv.second;
+            }
+            else if (kv.second == "true" || kv.second == "false")
+            {
+                file << kv.second;
+            }
+            else
+            {
+                file << "\"" << EscapeJsonString(kv.second) << "\"";
+            }
+            
+            firstItem = false;
+        }
+        
+        file << "\n}\n";
+        
+        // ⭐ 异常保护：检查文件写入状态
+        if (file.fail()) {
+            return false;
+        }
+        
+        return true;
+    } catch (const std::ios_base::failure&) {
+        // 文件I/O异常
+        return false;
+    } catch (const std::bad_alloc&) {
+        // 内存分配异常
+        return false;
+    } catch (const std::exception&) {
+        // 其他标准异常
+        return false;
+    } catch (...) {
+        // 所有其他异常
+        return false;
+    }
+<<<<<<< .mine
+||||||| .r19984
+    
+    file << "\n}\n";
+    return true;
+=======
+    
+    file << "\n}\n";
+    file.close();
+    if (!MoveFileExA(tmp.c_str(), filePath.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        DeleteFileA(tmp.c_str());
+        return false;
+    }
+    return true;
+>>>>>>> .r19995
+}
+
+std::string ConfigManager::EscapeJsonString(const std::string& str) const
+{
+    // 实现JSON字符串转义
+    std::string result;
+    result.reserve(str.length() * 2); // 预分配空间
+    
+    for (char c : str)
+    {
+        switch (c)
+        {
+        case '"':  result += "\\\""; break;
+        case '\\': result += "\\\\"; break;
+        case '\b': result += "\\b"; break;
+        case '\f': result += "\\f"; break;
+        case '\n': result += "\\n"; break;
+        case '\r': result += "\\r"; break;
+        case '\t': result += "\\t"; break;
+        default:
+            if (c >= 0 && c < 32)
+            {
+                // 控制字符转义为 \uXXXX
+                char buffer[7];
+                sprintf_s(buffer, sizeof(buffer), "\\u%04x", static_cast<unsigned char>(c));
+                result += buffer;
+            }
+            else
+            {
+                result += c;
+            }
+            break;
+        }
+    }
+    
+    return result;
+}
+
+std::string ConfigManager::UnescapeJsonString(const std::string& str) const
+{
+    // 实现JSON字符串反转义
+    std::string result;
+    result.reserve(str.length());
+    
+    for (size_t i = 0; i < str.length(); ++i)
+    {
+        if (str[i] == '\\' && i + 1 < str.length())
+        {
+            switch (str[i + 1])
+            {
+            case '"':  result += '"'; i++; break;
+            case '\\': result += '\\'; i++; break;
+            case 'b':  result += '\b'; i++; break;
+            case 'f':  result += '\f'; i++; break;
+            case 'n':  result += '\n'; i++; break;
+            case 'r':  result += '\r'; i++; break;
+            case 't':  result += '\t'; i++; break;
+            case 'u':  // Unicode转义 \uXXXX - ⭐ 异常安全版本
+                if (i + 5 < str.length())
+                {
+                    try {
+                        std::string hex = str.substr(i + 2, 4);
+                        unsigned int codepoint = std::stoul(hex, nullptr, 16);
+                        if (codepoint < 128)
+                        {
+                            result += static_cast<char>(codepoint);
+                        }
+                        else
+                        {
+                            result += '?'; // 简化处理，非ASCII字符用?替代
+                        }
+                        i += 5;
+                    } catch (const std::invalid_argument&) {
+                        // 无效的十六进制字符
+                        result += str[i]; // 保持原字符
+                    } catch (const std::out_of_range&) {
+                        // 数值超出范围
+                        result += '?';
+                        i += 5; // 跳过无效的Unicode序列
+                    } catch (...) {
+                        // 其他异常
+                        result += str[i];
+                    }
+                }
+                else
+                {
+                    result += str[i];
+                }
+                break;
+            default:
+                result += str[i];
+                break;
+            }
+        }
+        else
+        {
+            result += str[i];
+        }
+    }
+    
+    return result;
+}
+
+bool ConfigManager::IsNumeric(const std::string& str) const
+{
+    if (str.empty()) 
+        return false;
+    
+    size_t start = 0;
+    if (str[0] == '-' || str[0] == '+')
+        start = 1;
+    
+    if (start >= str.length())
+        return false;
+    
+    bool hasDecimalPoint = false;
+    for (size_t i = start; i < str.length(); ++i)
+    {
+        if (str[i] == '.')
+        {
+            if (hasDecimalPoint) 
+                return false; // 多个小数点
+            hasDecimalPoint = true;
+        }
+        else if (str[i] < '0' || str[i] > '9')
+        {
+            return false; // 非数字字符
+        }
+    }
+    
+    return true;
+}
+
+bool ConfigManager::EnsureDirectoryExists(const std::string& filePath) const
+{
+    size_t pos = filePath.find_last_of("\\/");
+    if (pos == std::string::npos)
+        return true;
+    
+    std::string directory = filePath.substr(0, pos);
+    return CreateDirectoryA(directory.c_str(), NULL) || GetLastError() == ERROR_ALREADY_EXISTS;
+}
+
+std::string ConfigManager::GetSectionKey(const std::string& section, const std::string& key) const
+{
+    return section + "." + key;
+}
+
+void ConfigManager::SetDefaultValues()
+{
+    // 设置默认配置值
+    SetValue("General", "version", "1.0.0");
+    SetValue("General", "firstRun", true);
+    
+    // 窗口默认设置
+    SetValue("Window", "x", 100);
+    SetValue("Window", "y", 100);
+    SetValue("Window", "width", 800);
+    SetValue("Window", "height", 600);
+    SetValue("Window", "maximized", false);
+    
+    // 协议默认设置
+    SetValue("Protocol", "ackTimeoutMs", 1000);
+    SetValue("Protocol", "maxRetries", 3);
+    SetValue("Protocol", "maxPayloadSize", 1024);
+    
+    // 获取用户本地数据目录并设置接收目录默认值 (DRY: 统一路径管理)
+    char localAppData[MAX_PATH];
+    if (SHGetFolderPathA(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData) == S_OK)
+    {
+        std::string receiveDir = std::string(localAppData) + "\\PortIO\\Recv";
+        SetValue("Protocol", "receiveDirectory", receiveDir);
+        
+        std::string logDir = std::string(localAppData) + "\\PortMaster\\Logs";
+        SetValue("Log", "logDirectory", logDir);
+    }
+    else
+    {
+        // 备用默认目录
+        SetValue("Protocol", "receiveDirectory", ".\\Recv");
+        SetValue("Log", "logDirectory", ".\\Logs");
+    }
+    
+    // UI默认设置
+    SetValue("UI", "hexViewEnabled", true);
+    SetValue("UI", "textViewEnabled", true);
+    SetValue("UI", "showTimestamp", true);
+    
+    // 日志默认设置
+    SetValue("Log", "enableLogging", true);
+    SetValue("Log", "maxLogFiles", 10);
+}
+
+TransportConfig ConfigManager::GetDefaultTransportConfig(const std::string& transportType) const
+{
+    TransportConfig config;
+    
+    if (transportType == "Serial")
+    {
+        config.baudRate = 9600;
+        config.dataBits = 8;
+        config.parity = 0;
+        config.stopBits = 1;
+    }
+    else if (transportType == "TCP" || transportType == "UDP")
+    {
+        config.ipAddress = "127.0.0.1";
+        config.port = 8080;
+        config.isServer = false;
+    }
+    
+    return config;
+}

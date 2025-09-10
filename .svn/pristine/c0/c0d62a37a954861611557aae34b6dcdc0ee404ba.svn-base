@@ -1,0 +1,114 @@
+﻿#include "pch.h"
+#include "FrameCodec.h"
+#include "CRC32.h"
+
+FrameCodec::FrameCodec(size_t maxPayloadSize)
+    : m_maxPayloadSize(maxPayloadSize)
+{
+}
+
+std::vector<uint8_t> FrameCodec::EncodeFrame(const Frame& frame)
+{
+    std::vector<uint8_t> buffer;
+    
+    // TODO: 瀹炵幇甯х紪鐮?    // 甯ф牸寮忥細鍖呭ご(2B) + 绫诲瀷(1B) + 搴忓彿(2B) + 闀垮害(2B) + CRC32(4B) + 鏁版嵁(0..N) + 鍖呭熬(2B)
+    
+    return buffer;
+}
+
+FrameCodec::DecodeResult FrameCodec::DecodeFrame(const std::vector<uint8_t>& buffer, 
+                                                size_t& consumedBytes, Frame& frame)
+{
+    consumedBytes = 0;
+    
+    // TODO: 瀹炵幇甯цВ鐮?    
+    return DecodeResult::Incomplete;
+}
+
+Frame FrameCodec::CreateStartFrame(uint16_t sequence, const StartMetadata& metadata)
+{
+    Frame frame(FRAME_START, sequence);
+    frame.payload = metadata.Serialize();
+    return frame;
+}
+
+Frame FrameCodec::CreateDataFrame(uint16_t sequence, const std::vector<uint8_t>& data)
+{
+    return Frame(FRAME_DATA, sequence, data);
+}
+
+Frame FrameCodec::CreateEndFrame(uint16_t sequence)
+{
+    return Frame(FRAME_END, sequence);
+}
+
+Frame FrameCodec::CreateAckFrame(uint16_t sequence)
+{
+    return Frame(FRAME_ACK, sequence);
+}
+
+Frame FrameCodec::CreateNakFrame(uint16_t sequence)
+{
+    return Frame(FRAME_NAK, sequence);
+}
+
+bool FrameCodec::ValidateFrame(const Frame& frame) const
+{
+    // TODO: 瀹炵幇甯ч獙璇?    return true;
+}
+
+size_t FrameCodec::FindFrameHeader(const std::vector<uint8_t>& buffer, size_t startPos)
+{
+    // TODO: 瀹炵幇甯уご鏌ユ壘
+    return std::string::npos;
+}
+
+uint32_t FrameCodec::CalculateFrameCrc(FrameType type, uint16_t sequence, 
+                                      const std::vector<uint8_t>& payload) const
+{
+    // TODO: 瀹炵幇CRC璁＄畻
+    return 0;
+}
+
+void FrameCodec::WriteUint16LE(std::vector<uint8_t>& buffer, uint16_t value)
+{
+    buffer.push_back(static_cast<uint8_t>(value & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+}
+
+void FrameCodec::WriteUint32LE(std::vector<uint8_t>& buffer, uint32_t value)
+{
+    buffer.push_back(static_cast<uint8_t>(value & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+}
+
+uint16_t FrameCodec::ReadUint16LE(const uint8_t* data)
+{
+    return static_cast<uint16_t>(data[0]) | (static_cast<uint16_t>(data[1]) << 8);
+}
+
+uint32_t FrameCodec::ReadUint32LE(const uint8_t* data)
+{
+    return static_cast<uint32_t>(data[0]) |
+           (static_cast<uint32_t>(data[1]) << 8) |
+           (static_cast<uint32_t>(data[2]) << 16) |
+           (static_cast<uint32_t>(data[3]) << 24);
+}
+
+// StartMetadata 瀹炵幇
+std::vector<uint8_t> StartMetadata::Serialize() const
+{
+    std::vector<uint8_t> data;
+    
+    // TODO: 瀹炵幇鍏冩暟鎹簭鍒楀寲
+    // 鏍煎紡: ver(1B) + flags(1B) + name_len(2B) + name(UTF-8) + file_size(8B) + [mtime(8B)]
+    
+    return data;
+}
+
+bool StartMetadata::Deserialize(const std::vector<uint8_t>& data)
+{
+    // TODO: 瀹炵幇鍏冩暟鎹弽搴忓垪鍖?    return true;
+}

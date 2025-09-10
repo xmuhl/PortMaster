@@ -1,0 +1,151 @@
+﻿#include "pch.h"
+#include "framework.h"
+#include "PortMaster.h"
+#include "PortMasterDlg.h"
+#include "SplashDialog.h"
+#include <fstream>
+
+void WriteDebugLog(const char* message) {
+    std::ofstream logFile("C:\\Users\\huangl\\Desktop\\PortMaster\\debug.log", std::ios::app);
+    if (logFile.is_open()) {
+        SYSTEMTIME st;
+        GetLocalTime(&st);
+        logFile << "[" << st.wHour << ":" << st.wMinute << ":" << st.wSecond << "." << st.wMilliseconds << "] " << message << std::endl;
+        logFile.close();
+    }
+}
+
+#ifdef _DEBUG
+#define new DEBUG_NEW
+#endif
+
+// CPortMasterApp
+
+BEGIN_MESSAGE_MAP(CPortMasterApp, CWinApp)
+	ON_COMMAND(ID_HELP, &CWinApp::OnHelp)
+END_MESSAGE_MAP()
+
+// CPortMasterApp 构造
+CPortMasterApp::CPortMasterApp()
+{
+	// 支持重新启动管理器
+	m_dwRestartManagerSupportFlags = AFX_RESTART_MANAGER_SUPPORT_RESTART;
+
+	// TODO: 在此处添加构造代码，
+	// 将所有重要的初始化放置在 InitInstance 中
+}
+
+// 唯一的 CPortMasterApp 对象
+
+CPortMasterApp theApp;
+
+// CPortMasterApp 初始化
+BOOL CPortMasterApp::InitInstance()
+{
+	WriteDebugLog("[DEBUG] InitInstance: 开始应用程序初始化");
+	
+	// 如果一个运行在 Windows XP 上的应用程序清单指定要
+	// 使用 ComCtl32.dll 版本 6 或更高版本来启用可视化方式，
+	//则需要 InitCommonControlsEx()。否则，将无法创建窗口。
+	INITCOMMONCONTROLSEX InitCtrls;
+	InitCtrls.dwSize = sizeof(InitCtrls);
+	// 将它设置为包括所有要在应用程序中使用的
+	// 公共控件类。
+	InitCtrls.dwICC = ICC_WIN95_CLASSES;
+	InitCommonControlsEx(&InitCtrls);
+	WriteDebugLog("[DEBUG] InitInstance: 公共控件初始化完成");
+
+	CWinApp::InitInstance();
+	WriteDebugLog("[DEBUG] InitInstance: CWinApp::InitInstance 完成");
+
+	// 初始化 RichEdit 控件
+	if (!AfxInitRichEdit2())
+	{
+		WriteDebugLog("[ERROR] InitInstance: RichEdit 控件初始化失败");
+		AfxMessageBox(L"无法初始化 RichEdit 控件！");
+		return FALSE;
+	}
+	WriteDebugLog("[DEBUG] InitInstance: RichEdit 控件初始化成功");
+
+	// 初始化 OLE 库
+	WriteDebugLog("[DEBUG] InitInstance: 开始初始化 OLE 库");
+	if (!AfxOleInit())
+	{
+		WriteDebugLog("[ERROR] InitInstance: OLE 库初始化失败");
+		AfxMessageBox(L"初始化 OLE 库失败！");
+		return FALSE;
+	}
+	WriteDebugLog("[DEBUG] InitInstance: OLE 库初始化成功");
+
+	AfxEnableControlContainer();
+	WriteDebugLog("[DEBUG] InitInstance: 控件容器启用完成");
+
+	// 创建 shell 管理器，以防对话框包含
+	// 任何 shell 树视图控件或 shell 列表视图控件。
+	WriteDebugLog("[DEBUG] InitInstance: 开始创建 Shell 管理器");
+	CShellManager *pShellManager = new CShellManager;
+	WriteDebugLog("[DEBUG] InitInstance: Shell 管理器创建完成");
+
+	// 激活"Windows Native"视觉管理器，以便在 MFC 控件中启用主题
+	WriteDebugLog("[DEBUG] InitInstance: 开始设置视觉管理器");
+	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
+	WriteDebugLog("[DEBUG] InitInstance: 视觉管理器设置完成");
+
+	// 标准初始化
+	// 如果未使用这些功能并希望减小
+	// 最终可执行文件的大小，则应移除下列
+	// 不需要的特定初始化例程
+	// 更改用于存储设置的注册表项
+	// TODO: 应适当修改该字符串，
+	// 例如修改为公司或组织名
+	WriteDebugLog("[DEBUG] InitInstance: 开始设置注册表项");
+	SetRegistryKey(L"端口大师");
+	WriteDebugLog("[DEBUG] InitInstance: 注册表项设置完成");
+
+	// 显示启动画面
+	WriteDebugLog("[DEBUG] InitInstance: 开始显示启动画面");
+	CSplashDialog splash;
+	INT_PTR splashResult = splash.DoModal();
+	WriteDebugLog("[DEBUG] InitInstance: 启动画面显示完成");
+
+	WriteDebugLog("[DEBUG] InitInstance: 开始创建主对话框");
+	CPortMasterDlg dlg;
+	WriteDebugLog("[DEBUG] InitInstance: 主对话框创建完成，开始显示");
+		WriteDebugLog("[DEBUG] InitInstance: 调用DoModal前");
+		// 注意：对于模态对话框，不应在DoModal前设置m_pMainWnd
+		// m_pMainWnd会在DoModal内部自动设置
+		INT_PTR nResponse = dlg.DoModal();
+		CString responseMsg;
+		responseMsg.Format(L"[DEBUG] InitInstance: DoModal返回值: %d", (int)nResponse);
+		WriteDebugLog(CW2A(responseMsg));
+		WriteDebugLog("[DEBUG] InitInstance: 主对话框显示完成");
+	if (nResponse == IDOK)
+	{
+		// TODO: 在此放置处理何时用
+		//  "确定"来关闭对话框的代码
+	}
+	else if (nResponse == IDCANCEL)
+	{
+		// TODO: 在此放置处理何时用
+		//  "取消"来关闭对话框的代码
+	}
+	else if (nResponse == -1)
+	{
+		TRACE(traceAppMsg, 0, "警告: 对话框创建失败，应用程序将意外终止。\n");
+		TRACE(traceAppMsg, 0, "警告: 如果您在对话框上使用 MFC 控件，则不能 #define _AFX_NO_MFC_CONTROLS_IN_DIALOGS。\n");
+	}
+
+	// 删除上面创建的 shell 管理器。
+	if (pShellManager != nullptr)
+	{
+		delete pShellManager;
+	}
+
+#if !defined(_AFXDLL) && !defined(_AFX_NO_MFC_CONTROLS_IN_DIALOGS)
+	ControlBarCleanUp();
+#endif
+
+	// 由于对话框已关闭，所以将返回 FALSE 以便退出应用程序，
+	//  而不是启动应用程序的消息泵。
+	return FALSE;
+}

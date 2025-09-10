@@ -1,0 +1,333 @@
+﻿#include "pch.h"
+#include "DataFormatter.h"
+#include <sstream>
+#include <iomanip>
+#include <algorithm>
+#include <cctype>
+
+const char* DataFormatter::HEX_CHARS = "0123456789ABCDEF";
+
+std::string DataFormatter::BytesToHex(const std::vector<uint8_t>& data, bool addSpaces)
+{
+    return BytesToHex(data.data(), data.size(), addSpaces);
+}
+
+std::string DataFormatter::BytesToHex(const uint8_t* data, size_t length, bool addSpaces)
+{
+    if (!data || length == 0)
+        return "";
+    
+    std::string result;
+    result.reserve(length * (addSpaces ? 3 : 2));
+    
+    for (size_t i = 0; i < length; i++)
+    {
+        if (i > 0 && addSpaces)
+            result += ' ';
+        
+        result += HEX_CHARS[(data[i] >> 4) & 0x0F];
+        result += HEX_CHARS[data[i] & 0x0F];
+    }
+    
+    return result;
+}
+
+std::vector<uint8_t> DataFormatter::HexToBytes(const std::string& hex)
+{
+    std::vector<uint8_t> result;
+    std::string cleanHex = CleanHexInput(hex);
+    
+    if (cleanHex.empty() || cleanHex.length() % 2 != 0)
+        return result;
+    
+    result.reserve(cleanHex.length() / 2);
+    
+    for (size_t i = 0; i < cleanHex.length(); i += 2)
+    {
+        int high = HexCharToValue(cleanHex[i]);
+        int low = HexCharToValue(cleanHex[i + 1]);
+        
+        if (high == -1 || low == -1)
+            return std::vector<uint8_t>(); // 无效字符
+        
+        result.push_back(static_cast<uint8_t>((high << 4) | low));
+    }
+    
+    return result;
+}
+
+std::string DataFormatter::BytesToText(const std::vector<uint8_t>& data)
+{
+    return BytesToText(data.data(), data.size());
+}
+
+std::string DataFormatter::BytesToText(const uint8_t* data, size_t length)
+{
+    if (!data || length == 0)
+        return "";
+    
+    std::string result;
+    result.reserve(length);
+    
+    for (size_t i = 0; i < length; i++)
+    {
+        if (IsPrintable(data[i]))
+            result += static_cast<char>(data[i]);
+        else
+            result += '.';
+    }
+    
+    return result;
+}
+
+std::vector<uint8_t> DataFormatter::TextToBytes(const std::string& text)
+{
+    std::vector<uint8_t> result;
+    result.reserve(text.length());
+    
+    for (char c : text)
+    {
+        result.push_back(static_cast<uint8_t>(c));
+    }
+    
+    return result;
+}
+
+bool DataFormatter::IsValidHex(const std::string& hex)
+{
+    std::string cleanHex = CleanHexInput(hex);
+    
+    if (cleanHex.empty() || cleanHex.length() % 2 != 0)
+        return false;
+    
+    for (char c : cleanHex)
+    {
+        if (HexCharToValue(c) == -1)
+            return false;
+    }
+    
+    return true;
+}
+
+std::string DataFormatter::FormatHexDump(const std::vector<uint8_t>& data, int bytesPerLine)
+{
+    if (data.empty())
+        return "";
+    
+    std::ostringstream oss;
+    
+    for (size_t i = 0; i < data.size(); i += bytesPerLine)
+    {
+        // 地址列 - 使用4位16进制地址（更紧凑）
+        oss << std::hex << std::uppercase << std::setw(4) << std::setfill('0') << i << ": ";
+        
+        // 十六进制列 - 每行16字节，中间分隔
+        for (int j = 0; j < bytesPerLine; j++)
+        {
+            if (i + j < data.size())
+            {
+                oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
+                    << static_cast<int>(data[i + j]);
+            }
+            else
+            {
+                oss << "  ";
+            }
+            
+            // 改进分组：每4字节一组，中间双空格分隔
+            if (j == 3) {
+                oss << "  ";  // 4字节分组
+            } else if (j < bytesPerLine - 1) {
+                oss << " ";   // 字节间分隔
+            }
+        }
+        
+        // ASCII预览列
+        oss << " |";
+        
+        // ASCII列 - 显示可打印字符
+        for (int j = 0; j < bytesPerLine && i + j < data.size(); j++)
+        {
+            uint8_t byte = data[i + j];
+            if (IsPrintable(byte))
+                oss << static_cast<char>(byte);
+            else if (byte == 0x00)
+                oss << '.';  // 空字节用点号
+            else
+                oss << '·';  // 其他不可见字符用中点
+        }
+        oss << "|\r\n";
+    }
+    
+    return oss.str();
+}
+
+std::string DataFormatter::CleanHexInput(const std::string& input)
+{
+    std::string result;
+    result.reserve(input.length());
+    
+    for (char c : input)
+    {
+        if (std::isxdigit(c))
+        {
+            result += std::toupper(c);
+        }
+    }
+    
+    return result;
+}
+
+bool DataFormatter::IsPrintable(uint8_t c)
+{
+    return (c >= 32 && c <= 126) || c == '\t';
+}
+
+int DataFormatter::HexCharToValue(char c)
+{
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    else if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    else if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
+    else
+        return -1;
+}
+
+char DataFormatter::ValueToHexChar(int value)
+{
+    if (value >= 0 && value <= 15)
+        return HEX_CHARS[value];
+    else
+        return '?';
+}
+
+bool DataFormatter::IsBinaryData(const std::vector<uint8_t>& data)
+{
+    return IsBinaryData(data.data(), data.size());
+}
+
+bool DataFormatter::IsBinaryData(const uint8_t* data, size_t length)
+{
+    if (!data || length == 0)
+        return false;
+    
+    // 检查前256字节或全部数据（取较小值）
+    size_t checkLength = std::min(length, static_cast<size_t>(256));
+    size_t nonPrintableCount = 0;
+    size_t nullByteCount = 0;
+    
+    for (size_t i = 0; i < checkLength; i++)
+    {
+        uint8_t byte = data[i];
+        
+        // 统计空字节
+        if (byte == 0x00)
+        {
+            nullByteCount++;
+            // 如果在前半部分发现多个连续空字节，可能是二进制
+            if (i > 10 && nullByteCount > 3)
+                return true;
+        }
+        
+        // 检查是否为非打印字符（排除常见空白字符和UTF-8字符）
+        if (!IsPrintable(byte) && byte != '\r' && byte != '\n' && byte != '\0' && byte != '\t')
+        {
+            // 允许UTF-8编码的中文字符范围
+            if (byte < 0x80 || (byte >= 0xA0 && byte <= 0xFF))
+            {
+                nonPrintableCount++;
+            }
+        }
+        
+        // 如果检测到明显的二进制标识符
+        if ((i == 0 && (byte == 0xFF || byte == 0xFE)) || // BOM标识
+            (i < 4 && byte > 0x7F && byte < 0x20))        // 早期控制字符
+        {
+            return true;
+        }
+    }
+    
+    // 提高阈值：如果非打印字符超过50%，认为是二进制数据
+    double nonPrintableRatio = static_cast<double>(nonPrintableCount) / checkLength;
+    
+    // 对于短数据，更宽松的判断
+    if (length < 32)
+        return nonPrintableRatio > 0.6;
+    else
+        return nonPrintableRatio > 0.5;
+}
+
+std::string DataFormatter::SmartTextDisplay(const std::vector<uint8_t>& data)
+{
+    return SmartTextDisplay(data.data(), data.size());
+}
+
+std::string DataFormatter::SmartTextDisplay(const uint8_t* data, size_t length)
+{
+    if (!data || length == 0)
+        return "";
+    
+    if (IsBinaryData(data, length))
+    {
+        // 对于二进制数据，显示十六进制摘要
+        std::ostringstream oss;
+        oss << "[二进制数据 " << length << " 字节] ";
+        
+        // 显示前16个字节的十六进制
+        size_t previewLength = std::min(length, static_cast<size_t>(16));
+        for (size_t i = 0; i < previewLength; i++)
+        {
+            oss << std::hex << std::uppercase << std::setw(2) << std::setfill('0') 
+                << static_cast<int>(data[i]);
+            if (i < previewLength - 1) oss << " ";
+        }
+        
+        if (length > 16)
+            oss << "...";
+        
+        return oss.str();
+    }
+    else
+    {
+        // 对于文本数据，直接转换为字符串并保持原始格式
+        std::string result;
+        result.reserve(length);
+        
+        for (size_t i = 0; i < length; i++)
+        {
+            uint8_t byte = data[i];
+            
+            // 保留所有可打印字符，包括UTF-8编码
+            if (byte >= 32 && byte <= 126)  // ASCII可打印字符
+            {
+                result += static_cast<char>(byte);
+            }
+            else if (byte == '\t')  // 制表符
+            {
+                result += '\t';
+            }
+            else if (byte == '\r' || byte == '\n')  // 换行符
+            {
+                result += static_cast<char>(byte);
+            }
+            else if (byte >= 0x80)  // 可能的UTF-8字符
+            {
+                result += static_cast<char>(byte);
+            }
+            else if (byte == 0x00)  // 空字节，在文本中可能存在
+            {
+                // 跳过空字节或用特殊字符表示
+                continue;
+            }
+            else  // 其他控制字符
+            {
+                // 用点号替代不可见字符
+                result += '.';
+            }
+        }
+        
+        return result;
+    }
+}

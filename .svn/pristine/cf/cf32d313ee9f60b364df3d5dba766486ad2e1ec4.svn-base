@@ -1,0 +1,137 @@
+﻿#pragma once
+
+#include "afxdialogex.h"
+#include "Common/DataFormatter.h"
+#include "Protocol/ReliableChannel.h"
+#include "Transport/LoopbackTransport.h"
+#include <memory>
+
+// CPortMasterDlg 对话框
+class CPortMasterDlg : public CDialogEx
+{
+// 构造
+public:
+	CPortMasterDlg(CWnd* pParent = nullptr);	// 标准构造函数
+
+// 对话框数据
+#ifdef AFX_DESIGN_TIME
+	enum { IDD = IDD_PORTMASTER_DIALOG };
+#endif
+
+	protected:
+	virtual void DoDataExchange(CDataExchange* pDX);	// DDX/DDV 支持
+
+// 实现
+protected:
+	HICON m_hIcon;
+
+	// 生成的消息映射函数
+	virtual BOOL OnInitDialog();
+	afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
+	afx_msg void OnPaint();
+	afx_msg HCURSOR OnQueryDragIcon();
+	afx_msg void OnBnClickedConnect();
+	afx_msg void OnBnClickedDisconnect();
+	afx_msg void OnBnClickedSend();
+	afx_msg void OnBnClickedClear();
+	afx_msg void OnBnClickedConfig();
+	afx_msg void OnBnClickedTest();
+	afx_msg void OnCbnSelchangePortType();
+	afx_msg void OnBnClickedReliableMode();
+	afx_msg void OnBnClickedLoadFile();
+	afx_msg void OnBnClickedSaveFile();
+	afx_msg void OnBnClickedCopyHex();
+	afx_msg void OnBnClickedCopyText();
+	afx_msg void OnBnClickedExportData();
+	afx_msg void OnBnClickedClearDisplay();
+	afx_msg void OnBnClickedClearInput();
+	afx_msg void OnBnClickedClearInput2();
+	afx_msg void OnDropFiles(HDROP hDropInfo);
+
+	DECLARE_MESSAGE_MAP()
+
+private:
+	// 控件变量
+	CComboBox m_ctrlPortType;
+	CComboBox m_ctrlPortList;
+	CComboBox m_ctrlBaudRate;
+	CComboBox m_ctrlDataBits;
+	CComboBox m_ctrlStopBits;
+	CComboBox m_ctrlParity;
+	CButton m_ctrlConnectBtn;
+	CButton m_ctrlDisconnectBtn;
+	CButton m_ctrlConfigBtn;
+	CButton m_ctrlTestBtn;
+	CButton m_ctrlSendBtn;
+	CButton m_ctrlClearBtn;
+	CButton m_ctrlLoadFileBtn;
+	CButton m_ctrlSaveFileBtn;
+	CButton m_ctrlReliableMode;
+	CEdit m_ctrlInputHex;
+	CEdit m_ctrlInputText;
+	CEdit m_ctrlHexView;
+	CEdit m_ctrlTextView;
+	CEdit m_ctrlLog;
+	CProgressCtrl m_ctrlProgress;
+	CStatic m_ctrlStatus;
+	// CStatic m_ctrlFileDropZone;  // 资源文件中不存在此控件
+	CStatic m_ctrlConnectionStatus;
+	CStatic m_ctrlProtocolStatus;
+	CStatic m_ctrlTransferSpeed;
+	CStatic m_ctrlTimeRemaining;
+	CStatic m_ctrlTransferProgress;
+	CButton m_ctrlClearInputBtn;
+	CButton m_ctrlClearInputBtn2;
+
+	// 状态变量
+	bool m_bConnected;
+	bool m_bReliableMode;
+	
+	// 可靠传输
+	std::shared_ptr<ITransport> m_transport;
+	std::shared_ptr<ReliableChannel> m_reliableChannel;
+	
+	// 传输状态变量
+	bool m_bTransmitting;
+	std::vector<uint8_t> m_transmissionData;  // 发送数据缓冲区（文件拖放数据）
+	std::vector<uint8_t> m_displayedData;    // 当前显示在hex/text view中的数据（用于保存功能）
+	CString m_currentFileName;               // 当前加载的文件名
+	size_t m_transmissionProgress;
+	UINT_PTR m_transmissionTimer;
+	
+	// 传输速度统计
+	DWORD m_transmissionStartTime;           // 传输开始时间
+	size_t m_totalBytesTransmitted;          // 已传输字节数
+	DWORD m_lastSpeedUpdateTime;             // 上次速度更新时间
+	
+	// 初始化函数
+	void InitializeControls();
+	void InitializeTransportObjects();
+	void UpdatePortList();
+	void UpdateButtonStates();
+	void AppendLog(const CString& message);
+	void AppendLogWithDetails(const CString& message, size_t bytes = 0);
+	void UpdateTransferSpeed(size_t bytesTransferred);
+	void AppendHexData(const BYTE* data, size_t length, bool incoming);
+	void AppendTextData(const CString& text, bool incoming);
+	
+	// 十六进制/文本视图辅助方法
+	void ProcessHexInput();
+	void ProcessTextInput();
+	bool ValidateHexInput(const CString& hexText);
+	std::vector<uint8_t> GetInputData();
+	void DisplayReceivedData(const std::vector<uint8_t>& data);
+	
+	// 文件拖放辅助方法
+	bool LoadFileForTransmission(const CString& filePath);
+	void ShowFileLoadProgress(const CString& filename, size_t totalSize, size_t loaded);
+	void ShowFileTransmissionProgress(const CString& filename, size_t totalSize, size_t transmitted);
+	
+	// 数据传输方法
+	void StartDataTransmission(const std::vector<uint8_t>& data);
+	void OnTransmissionTimer();
+
+public:
+	afx_msg void OnSize(UINT nType, int cx, int cy);
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+};

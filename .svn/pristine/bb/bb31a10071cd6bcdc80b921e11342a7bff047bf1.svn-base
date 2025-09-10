@@ -1,0 +1,100 @@
+﻿#pragma once
+
+#include <string>
+#include <vector>
+#include <functional>
+
+// 浼犺緭鎺ュ彛閰嶇疆缁撴瀯
+struct TransportConfig
+{
+    // 涓插彛閰嶇疆
+    int baudRate;
+    int dataBits;
+    int parity;     // 0=鏃犳牎楠? 1=濂囨牎楠? 2=鍋舵牎楠?    int stopBits;   // 1=1浣? 2=2浣?
+    // 缃戠粶閰嶇疆
+    std::string ipAddress;
+    int port;
+    bool isServer;
+
+    // 瓒呮椂璁剧疆
+    int connectTimeoutMs;
+    int readTimeoutMs;
+    int writeTimeoutMs;
+
+    // 缂撳啿鍖哄ぇ灏?    size_t rxBufferSize;
+    size_t txBufferSize;
+    
+    // 鏋勯€犲嚱鏁版彁渚涢粯璁ゅ€?    TransportConfig()
+        : baudRate(9600)
+        , dataBits(8)
+        , parity(0)
+        , stopBits(1)
+        , ipAddress("127.0.0.1")
+        , port(8080)
+        , isServer(false)
+        , connectTimeoutMs(5000)
+        , readTimeoutMs(1000)
+        , writeTimeoutMs(1000)
+        , rxBufferSize(4096)
+        , txBufferSize(4096)
+    {}
+};
+
+// 浼犺緭鐘舵€佹灇涓?enum TransportState
+{
+    TRANSPORT_CLOSED,
+    TRANSPORT_OPENING,
+    TRANSPORT_OPEN,
+    TRANSPORT_CLOSING,
+    TRANSPORT_ERROR
+};
+
+// 鏁版嵁鍥炶皟鍑芥暟绫诲瀷
+typedef std::function<void(const std::vector<uint8_t>&)> DataReceivedCallback;
+typedef std::function<void(TransportState, const std::string&)> StateChangedCallback;
+
+// 浼犺緭鎺ュ彛鍩虹被
+class ITransport
+{
+public:
+    virtual ~ITransport() = default;
+
+    // 鍩烘湰鎿嶄綔
+    virtual bool Open(const TransportConfig& config) = 0;
+    virtual void Close() = 0;
+    virtual bool IsOpen() const = 0;
+    virtual TransportState GetState() const = 0;
+
+    // 閰嶇疆绠＄悊
+    virtual bool Configure(const TransportConfig& config) = 0;
+    virtual TransportConfig GetConfiguration() const = 0;
+
+    // 鏁版嵁浼犺緭
+    virtual size_t Write(const std::vector<uint8_t>& data) = 0;
+    virtual size_t Write(const uint8_t* data, size_t length) = 0;
+    virtual size_t Read(std::vector<uint8_t>& data, size_t maxLength = 0) = 0;
+    virtual size_t Available() const = 0;
+
+    // 鐘舵€佹煡璇?    virtual std::string GetLastError() const = 0;
+    virtual std::string GetPortName() const = 0;
+    virtual std::string GetTransportType() const = 0;
+
+    // 鍥炶皟鍑芥暟璁剧疆
+    virtual void SetDataReceivedCallback(DataReceivedCallback callback) = 0;
+    virtual void SetStateChangedCallback(StateChangedCallback callback) = 0;
+
+    // 鍒锋柊鍜屾竻绌烘搷浣?    virtual bool Flush() = 0;
+    virtual bool ClearBuffers() = 0;
+
+protected:
+    TransportConfig m_config;
+    TransportState m_state;
+    std::string m_lastError;
+    DataReceivedCallback m_dataCallback;
+    StateChangedCallback m_stateCallback;
+
+    // 杈呭姪鍑芥暟 - 鐢辨淳鐢熺被瀹炵幇
+    virtual void NotifyDataReceived(const std::vector<uint8_t>& data) = 0;
+    virtual void NotifyStateChanged(TransportState state, const std::string& message = "") = 0;
+    virtual void SetLastError(const std::string& error) = 0;
+};
