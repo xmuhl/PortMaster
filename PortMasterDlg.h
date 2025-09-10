@@ -226,6 +226,11 @@ private:
 	size_t m_totalBytesTransmitted;          // 已传输字节数
 	DWORD m_lastSpeedUpdateTime;             // 上次速度更新时间
 	
+	// Stage 3 新增：自动重试机制变量
+	int m_currentRetryCount;                 // 当前重试次数
+	int m_maxRetryCount;                     // 最大重试次数
+	CString m_lastFailedOperation;           // 最后失败的操作
+	
 	// 初始化函数
 	void InitializeControls();
 	void InitializeDeviceManager();
@@ -258,6 +263,8 @@ private:
 	void UpdateProtocolStatus(); // 更新协议状态显示
 	void ShowProtocolConfiguration(); // 显示协议配置信息
     void UpdateButtonStates();
+    void UpdateStatusBar();                    // Stage 3 新增：综合状态栏信息更新 (SOLID-S: 单一职责)
+    CString GetCurrentTransferSpeed();         // Stage 3 新增：获取当前传输速度信息
     void EnsureInputEditorVisible();
 	void UpdateEnhancedProtocolStatus();	// 增强的协议状态可视化显示
 	
@@ -325,6 +332,9 @@ private:
 	bool ShouldEchoTransmittedData() const;                        // 第四阶段新增：回显策略判断
 	void DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk); // 第四阶段新增：分块数据显示
 	void HandleTransmissionError(const CString& operation, const std::string& error);
+	void ShowDetailedErrorMessage(const CString& operation, const CString& error, const CString& suggestion = L""); // Stage 3 新增：详细错误信息显示
+	void HandleTransmissionErrorWithSuggestion(const CString& errorMsg, bool canRetry = true); // Stage 3 新增：传输错误处理建议
+	bool AttemptAutoRetry(const CString& operation, int maxRetries = 3); // Stage 3 新增：自动重试机制
 	void DisplayReceivedDataImmediate(const std::vector<uint8_t>& data, const CString& sourceName);
 	CString FormatHexDisplay(const std::vector<uint8_t>& data);
 	CString FormatHexDisplaySimple(const std::vector<uint8_t>& data);  // 用于复制的简化格式

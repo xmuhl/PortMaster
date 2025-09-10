@@ -67,6 +67,8 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	, m_transmissionStartTime(0)
 	, m_totalBytesTransmitted(0)
 	, m_lastSpeedUpdateTime(0)
+	, m_currentRetryCount(0)
+	, m_maxRetryCount(3)  // 默认最多重试3次
 {
 	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数开始");
 	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
@@ -681,6 +683,134 @@ void CPortMasterDlg::UpdateButtonStates()
 		statusText = L"状态: 就绪";
 	}
 	m_ctrlTransferStatus.SetWindowText(statusText);
+}
+
+// =====================================
+// Stage 3 新增：综合状态栏更新 (SOLID-S: 单一职责, KISS: 简洁明了)
+// =====================================
+
+void CPortMasterDlg::UpdateStatusBar()
+{
+	// 连接状态详细信息 (DRY: 复用现有状态检查逻辑)
+	if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
+	{
+		CString connectionInfo;
+		if (m_bConnected && m_transport)
+		{
+			// 获取传输类型信息
+			std::string transportType = m_transport->GetTransportType();
+			CString portName;
+			if (m_ctrlPortList.GetCurSel() >= 0)
+			{
+				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), portName);
+			}
+			
+			connectionInfo.Format(L"● 已连接 [%s: %s]", 
+				CA2W(transportType.c_str()),
+				portName.IsEmpty() ? L"未知端口" : portName);
+		}
+		else
+		{
+			connectionInfo = L"○ 未连接";
+		}
+		m_ctrlConnectionStatus.SetWindowText(connectionInfo);
+	}
+	
+	// 协议状态详细信息
+	if (IsWindow(m_ctrlProtocolStatus.GetSafeHwnd()))
+	{
+		CString protocolInfo;
+		if (m_bReliableMode && m_reliableChannel)
+		{
+			ReliableState state = m_reliableChannel->GetState();
+			const wchar_t* stateNames[] = { 
+				L"空闲", L"开始", L"发送中", L"结束", L"就绪", L"接收中", L"完成", L"失败" 
+			};
+			
+			protocolInfo.Format(L"可靠协议: %s", 
+				(state >= 0 && state < 8) ? stateNames[state] : L"未知");
+		}
+		else
+		{
+			protocolInfo = L"直接传输模式";
+		}
+		m_ctrlProtocolStatus.SetWindowText(protocolInfo);
+	}
+	
+	// 传输状态综合信息 (SOLID-O: 开放封闭，易于扩展新状态)
+	if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd()))
+	{
+		CString transferInfo;
+		TransmissionState currentState = GetTransmissionState();
+		
+		switch (currentState)
+		{
+		case TransmissionState::IDLE:
+			transferInfo = L"状态: 就绪";
+			break;
+		case TransmissionState::TRANSMITTING:
+			if (!m_transmissionData.empty())
+			{
+				// 显示传输进度和速度信息
+				double progressPercent = (m_transmissionProgress * 100.0) / m_transmissionData.size();
+				transferInfo.Format(L"传输中 %.1f%% | 速度: %s", 
+					progressPercent, 
+					GetCurrentTransferSpeed());
+			}
+			else
+			{
+				transferInfo = L"传输中...";
+			}
+			break;
+		case TransmissionState::PAUSED:
+			if (m_transmissionContext.isValidContext)
+			{
+				transferInfo.Format(L"已暂停 (%.1f%%) | 可续传", 
+					m_transmissionContext.GetProgressPercentage());
+			}
+			else
+			{
+				transferInfo = L"已暂停";
+			}
+			break;
+		case TransmissionState::COMPLETED:
+			transferInfo = L"传输完成 ✓";
+			break;
+		case TransmissionState::FAILED:
+			transferInfo = L"传输失败 ✗ | 点击重试";
+			break;
+		default:
+			transferInfo = L"状态未知";
+			break;
+		}
+		
+		m_ctrlTransferStatus.SetWindowText(transferInfo);
+	}
+}
+
+CString CPortMasterDlg::GetCurrentTransferSpeed()
+{
+	// 计算当前传输速度 (YAGNI: 简化实现，避免过度设计)
+	DWORD currentTime = GetTickCount();
+	DWORD elapsedTime = currentTime - m_transmissionStartTime;
+	
+	if (elapsedTime > 0 && m_totalBytesTransmitted > 0)
+	{
+		double speed = (double)(m_totalBytesTransmitted * 1000) / elapsedTime;
+		CString speedText;
+		
+		if (speed >= 1024)
+		{
+			speedText.Format(L"%.1f KB/s", speed / 1024.0);
+		}
+		else
+		{
+			speedText.Format(L"%.0f B/s", speed);
+		}
+		return speedText;
+	}
+	
+	return L"计算中...";
 }
 
 void CPortMasterDlg::UpdatePortTypeSpecificControls()
@@ -2102,6 +2232,137 @@ std::vector<uint8_t> CPortMasterDlg::GetInputData()
 void CPortMasterDlg::ShowUserMessage(const CString& title, const CString& message, UINT type)
 {
 	MessageBox(message, title, type);
+}
+
+// =====================================
+// Stage 3 新增：增强错误处理机制 (SOLID-S: 单一职责, DRY: 统一错误处理)
+// =====================================
+
+void CPortMasterDlg::ShowDetailedErrorMessage(const CString& operation, const CString& error, const CString& suggestion)
+{
+	CString detailedMsg;
+	detailedMsg.Format(L"操作: %s\n\n错误详情: %s", operation, error);
+	
+	if (!suggestion.IsEmpty())
+	{
+		detailedMsg += L"\n\n建议解决方案:\n" + suggestion;
+	}
+	
+	// 根据错误类型提供通用建议 (SOLID-O: 开放封闭，易于扩展)
+	if (error.Find(L"连接") >= 0 || error.Find(L"端口") >= 0)
+	{
+		if (suggestion.IsEmpty())
+		{
+			detailedMsg += L"\n\n建议解决方案:\n• 检查设备连接是否正常\n• 确认端口参数设置正确\n• 尝试重新连接端口";
+		}
+	}
+	else if (error.Find(L"传输") >= 0 || error.Find(L"发送") >= 0)
+	{
+		if (suggestion.IsEmpty())
+		{
+			detailedMsg += L"\n\n建议解决方案:\n• 检查网络连接状态\n• 确认目标设备是否在线\n• 尝试减小传输数据大小";
+		}
+	}
+	else if (error.Find(L"文件") >= 0)
+	{
+		if (suggestion.IsEmpty())
+		{
+			detailedMsg += L"\n\n建议解决方案:\n• 检查文件是否存在且可读\n• 确认文件权限设置\n• 尝试选择其他文件";
+		}
+	}
+	
+	MessageBox(detailedMsg, L"详细错误信息", MB_ICONERROR | MB_OK);
+	
+	// 记录详细错误日志
+	CString logEntry;
+	logEntry.Format(L"[ERROR] %s: %s", operation, error);
+	AppendLog(logEntry);
+}
+
+void CPortMasterDlg::HandleTransmissionErrorWithSuggestion(const CString& errorMsg, bool canRetry)
+{
+	// 更新传输状态为失败
+	SetTransmissionState(TransmissionState::FAILED);
+	
+	// 分析错误类型并提供针对性建议 (KISS: 简化错误分类逻辑)
+	CString suggestion;
+	
+	if (errorMsg.Find(L"超时") >= 0 || errorMsg.Find(L"timeout") >= 0)
+	{
+		suggestion = L"• 检查网络连接稳定性\n• 尝试增加超时设置\n• 确认目标设备响应正常";
+	}
+	else if (errorMsg.Find(L"拒绝") >= 0 || errorMsg.Find(L"refused") >= 0)
+	{
+		suggestion = L"• 检查目标端口是否开放\n• 确认防火墙设置\n• 验证连接参数";
+	}
+	else if (errorMsg.Find(L"数据") >= 0 || errorMsg.Find(L"CRC") >= 0)
+	{
+		suggestion = L"• 检查传输线缆连接\n• 降低传输速率\n• 检查数据完整性";
+	}
+	else
+	{
+		suggestion = L"• 检查设备连接状态\n• 确认传输参数设置\n• 尝试重新启动传输";
+	}
+	
+	if (canRetry)
+	{
+		suggestion += L"\n• 点击\"重试\"按钮重新尝试传输";
+	}
+	
+	// 显示详细错误信息
+	ShowDetailedErrorMessage(L"数据传输", errorMsg, suggestion);
+	
+	// 更新状态栏显示
+	UpdateStatusBar();
+}
+
+bool CPortMasterDlg::AttemptAutoRetry(const CString& operation, int maxRetries)
+{
+	// 检查是否应该进行自动重试 (YAGNI: 避免过度复杂的重试策略)
+	if (m_currentRetryCount >= maxRetries)
+	{
+		// 已达到最大重试次数
+		CString msg;
+		msg.Format(L"操作 \"%s\" 重试 %d 次后仍然失败", operation, maxRetries);
+		AppendLog(msg);
+		
+		// 重置重试计数器
+		m_currentRetryCount = 0;
+		m_lastFailedOperation.Empty();
+		
+		return false;
+	}
+	
+	// 增加重试计数
+	m_currentRetryCount++;
+	m_lastFailedOperation = operation;
+	
+	CString retryMsg;
+	retryMsg.Format(L"正在进行第 %d 次重试: %s", m_currentRetryCount, operation);
+	AppendLog(retryMsg);
+	
+	// 简单的退避延迟策略 (KISS: 简化重试间隔逻辑)
+	Sleep(1000 * m_currentRetryCount);  // 1秒, 2秒, 3秒...
+	
+	// 根据操作类型执行相应的重试逻辑
+	if (operation.Find(L"连接") >= 0)
+	{
+		// 重试连接操作
+		OnBnClickedConnect();
+		return m_bConnected; // 返回连接是否成功
+	}
+	else if (operation.Find(L"传输") >= 0 || operation.Find(L"发送") >= 0)
+	{
+		// 重试传输操作 (SOLID-D: 依赖抽象而不是具体实现)
+		if (!m_transmissionData.empty())
+		{
+			// 有传输数据，重新发送
+			OnBnClickedSend();
+			return true;
+		}
+	}
+	
+	return false;
 }
 
 void CPortMasterDlg::StartDataTransmission(const std::vector<uint8_t>& data)
