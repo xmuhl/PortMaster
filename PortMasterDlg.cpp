@@ -61,6 +61,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	, m_bReliableMode(false)
 	, m_bHexDisplay(false)                      // 关键修复：初始化十六进制显示标志
 	, m_bTransmitting(false)
+	, m_transmissionState(TransmissionState::IDLE)  // 初始化传输状态为空闲
 	, m_transmissionProgress(0)
 	, m_transmissionTimer(0)
 	, m_transmissionStartTime(0)
@@ -107,6 +108,9 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 		
 		WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_SEND_BUTTON");
         DDX_Control(pDX, IDC_SEND_BUTTON, m_ctrlSendBtn);
+        
+        WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_STOP_BUTTON");
+        DDX_Control(pDX, IDC_STOP_BUTTON, m_ctrlStopBtn);
         
         WriteDebugLog("[DEBUG] DoDataExchange: 绑定 IDC_CLEAR_INPUT_BUTTON");
         DDX_Control(pDX, IDC_CLEAR_INPUT_BUTTON, m_ctrlClearInputBtn);
@@ -190,6 +194,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_CONNECT_BUTTON, &CPortMasterDlg::OnBnClickedConnect)
 	ON_BN_CLICKED(IDC_DISCONNECT_BUTTON, &CPortMasterDlg::OnBnClickedDisconnect)
 	ON_BN_CLICKED(IDC_SEND_BUTTON, &CPortMasterDlg::OnBnClickedSend)
+	ON_BN_CLICKED(IDC_STOP_BUTTON, &CPortMasterDlg::OnBnClickedStop)
 	ON_BN_CLICKED(IDC_CLEAR_INPUT_BUTTON, &CPortMasterDlg::OnBnClickedClearInput)
 	ON_BN_CLICKED(IDC_CLEAR_DISPLAY_BUTTON, &CPortMasterDlg::OnBnClickedClearDisplay)
 	ON_BN_CLICKED(IDC_CLEAR_BUTTON, &CPortMasterDlg::OnBnClickedClear)
@@ -566,23 +571,54 @@ void CPortMasterDlg::UpdateButtonStates()
 	m_ctrlConnectBtn.EnableWindow(!m_bConnected);
 	m_ctrlDisconnectBtn.EnableWindow(m_bConnected);
 	
-	// 改进的发送按钮状态管理
+	// 改进的发送按钮状态管理（使用新的状态管理系统）
 	bool hasSendableData = HasValidInputData();
 	if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
 	{
-		bool enableSend = m_bConnected && !m_bTransmitting && hasSendableData;
+		TransmissionState currentState = GetTransmissionState();
+		bool enableSend = m_bConnected && hasSendableData;
 		m_ctrlSendBtn.EnableWindow(enableSend);
 		
-		// 根据状态设置按钮文本
-		if (m_bTransmitting)
-			m_ctrlSendBtn.SetWindowText(L"发送中...");
-		else
+		// 根据传输状态设置按钮文本
+		switch (currentState)
+		{
+		case TransmissionState::IDLE:
 			m_ctrlSendBtn.SetWindowText(L"发送");
+			break;
+		case TransmissionState::TRANSMITTING:
+			m_ctrlSendBtn.SetWindowText(L"停止");
+			break;
+		case TransmissionState::PAUSED:
+			m_ctrlSendBtn.SetWindowText(L"继续");
+			break;
+		case TransmissionState::COMPLETED:
+			m_ctrlSendBtn.SetWindowText(L"发送");
+			break;
+		case TransmissionState::FAILED:
+			m_ctrlSendBtn.SetWindowText(L"重试");
+			break;
+		}
+	}
+	
+	// 停止按钮状态管理
+	if (IsWindow(m_ctrlStopBtn.GetSafeHwnd()))
+	{
+		bool enableStop = IsTransmissionActive();
+		m_ctrlStopBtn.EnableWindow(enableStop);
+		
+		// 根据传输状态设置停止按钮文本
+		TransmissionState currentState = GetTransmissionState();
+		if (currentState == TransmissionState::TRANSMITTING)
+			m_ctrlStopBtn.SetWindowText(L"暂停");
+		else if (currentState == TransmissionState::PAUSED)
+			m_ctrlStopBtn.SetWindowText(L"停止");
+		else
+			m_ctrlStopBtn.SetWindowText(L"停止");
 	}
 	
 	// 文件操作按钮状态管理
 	if (IsWindow(m_ctrlLoadFileBtn.GetSafeHwnd()))
-		m_ctrlLoadFileBtn.EnableWindow(!m_bTransmitting);
+		m_ctrlLoadFileBtn.EnableWindow(!IsTransmissionActive());
 	if (IsWindow(m_ctrlSaveFileBtn.GetSafeHwnd()))
 	{
 		bool hasDisplayData = !m_displayedData.empty();
@@ -1037,14 +1073,15 @@ void CPortMasterDlg::OnBnClickedSend()
 		return;
 	}
 	
-	// 第四阶段新增：传输控制功能 (SOLID-S: 单一职责 - 传输状态控制)
-	if (m_bTransmitting)
+	// 传输状态控制 (SOLID-S: 单一职责 - 传输状态控制)
+	if (IsTransmissionActive())
 	{
 		// 正在传输中，提供停止传输选项
 		int result = MessageBox(L"当前正在传输数据，是否要停止传输？", 
 			L"传输控制", MB_YESNO | MB_ICONQUESTION);
 		
 		if (result == IDYES) {
+			SetTransmissionState(TransmissionState::IDLE);
 			StopDataTransmission(false);
 			AppendLog(L"用户手动停止传输");
 		}
@@ -1054,7 +1091,7 @@ void CPortMasterDlg::OnBnClickedSend()
 	if (m_bReliableMode && m_reliableChannel)
 	{
 		// 使用可靠传输模式
-		m_bTransmitting = true;
+		SetTransmissionState(TransmissionState::TRANSMITTING);
 		if (isFileTransmission && !m_currentFileName.IsEmpty())
 		{
 			// 发送文件（带文件名）
@@ -1065,7 +1102,7 @@ void CPortMasterDlg::OnBnClickedSend()
 			}
 			else
 			{
-				m_bTransmitting = false;
+				SetTransmissionState(TransmissionState::FAILED);
 				AppendLog(L"可靠文件传输启动失败");
 				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
 				if (!error.IsEmpty())
@@ -1083,7 +1120,7 @@ void CPortMasterDlg::OnBnClickedSend()
 			}
 			else
 			{
-				m_bTransmitting = false;
+				SetTransmissionState(TransmissionState::FAILED);
 				AppendLog(L"可靠传输启动失败");
 				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
 				if (!error.IsEmpty())
@@ -2512,4 +2549,82 @@ LRESULT CPortMasterDlg::OnUpdateFileReceived(WPARAM wParam, LPARAM lParam)
 	}
 	
 	return 0;
+}
+
+// =====================================
+// 传输状态管理方法实现 (SOLID-S: 单一职责)
+// =====================================
+
+void CPortMasterDlg::SetTransmissionState(TransmissionState newState)
+{
+	// 状态转换逻辑验证
+	TransmissionState oldState = m_transmissionState;
+	
+	// 记录状态转换
+	CString stateNames[] = { L"空闲", L"传输中", L"暂停", L"完成", L"失败" };
+	CString logMsg;
+	logMsg.Format(L"传输状态转换: %s -> %s", 
+		stateNames[static_cast<int>(oldState)], 
+		stateNames[static_cast<int>(newState)]);
+	AppendLog(logMsg);
+	
+	// 设置新状态
+	m_transmissionState = newState;
+	
+	// 根据状态更新UI
+	UpdateButtonStates();
+	
+	// 同步旧的原子变量状态 (向后兼容)
+	m_bTransmitting = (newState == TransmissionState::TRANSMITTING);
+}
+
+TransmissionState CPortMasterDlg::GetTransmissionState() const
+{
+	return m_transmissionState;
+}
+
+bool CPortMasterDlg::IsTransmissionActive() const
+{
+	return (m_transmissionState == TransmissionState::TRANSMITTING || 
+			m_transmissionState == TransmissionState::PAUSED);
+}
+
+// =====================================
+// 停止按钮事件处理方法实现 (SOLID-S: 单一职责)
+// =====================================
+
+void CPortMasterDlg::OnBnClickedStop()
+{
+	// 检查是否有活跃的传输
+	if (!IsTransmissionActive())
+	{
+		AppendLog(L"当前没有正在进行的传输");
+		return;
+	}
+	
+	// 根据当前传输状态执行相应操作
+	TransmissionState currentState = GetTransmissionState();
+	
+	if (currentState == TransmissionState::TRANSMITTING)
+	{
+		// 正在传输 -> 暂停
+		SetTransmissionState(TransmissionState::PAUSED);
+		AppendLog(L"传输已暂停，点击发送按钮继续");
+		
+		// 如果有定时器正在运行，先暂停它
+		if (m_transmissionTimer != 0) {
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
+		}
+	}
+	else if (currentState == TransmissionState::PAUSED)
+	{
+		// 暂停状态 -> 停止
+		SetTransmissionState(TransmissionState::IDLE);
+		StopDataTransmission(false);
+		AppendLog(L"传输已完全停止");
+	}
+	
+	// 更新按钮状态
+	UpdateButtonStates();
 }

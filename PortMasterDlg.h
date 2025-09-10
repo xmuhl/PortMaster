@@ -27,6 +27,16 @@
 
 // 前置声明
 
+// 传输状态枚举
+enum class TransmissionState
+{
+	IDLE = 0,        // 空闲状态
+	TRANSMITTING,    // 传输中
+	PAUSED,          // 暂停状态
+	COMPLETED,       // 传输完成
+	FAILED           // 传输失败
+};
+
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
 {
@@ -55,6 +65,7 @@ protected:
 	afx_msg void OnBnClickedConnect();
 	afx_msg void OnBnClickedDisconnect();
 	afx_msg void OnBnClickedSend();
+	afx_msg void OnBnClickedStop();				// 停止传输按钮事件处理
 	afx_msg void OnBnClickedClearInput();
 	afx_msg void OnBnClickedClearDisplay();
 	afx_msg void OnBnClickedClear();
@@ -96,6 +107,7 @@ private:
 	CButton m_ctrlConnectBtn;
 	CButton m_ctrlDisconnectBtn;
 	CButton m_ctrlSendBtn;
+	CButton m_ctrlStopBtn;				// 停止传输按钮
 	CButton m_ctrlClearInputBtn;
 	CButton m_ctrlClearDisplayBtn;
 	CButton m_ctrlLoadFileBtn;
@@ -138,6 +150,7 @@ private:
 	
 	// 传输状态变量（线程安全保护）
 	std::atomic<bool> m_bTransmitting;
+	TransmissionState m_transmissionState;  // 传输状态管理
 	std::vector<uint8_t> m_transmissionData;  // 发送数据缓冲区（文件拖放数据）
 	std::vector<uint8_t> m_displayedData;    // 当前显示在hex/text view中的数据（用于保存功能）
 	mutable std::mutex m_displayDataMutex;   // 显示数据互斥锁
@@ -236,6 +249,11 @@ private:
 	void OnChunkTransmissionTimer();
 	void StopDataTransmission(bool completed);                      // 第四阶段新增：停止传输
 	void UpdateTransmissionProgress();                              // 第四阶段新增：更新传输进度
+	
+	// 传输状态管理方法 (SOLID-S: 单一职责)
+	void SetTransmissionState(TransmissionState newState);          // 设置传输状态
+	TransmissionState GetTransmissionState() const;                 // 获取当前传输状态  
+	bool IsTransmissionActive() const;                              // 检查传输是否活跃
 	bool ShouldEchoTransmittedData() const;                        // 第四阶段新增：回显策略判断
 	void DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk); // 第四阶段新增：分块数据显示
 	void HandleTransmissionError(const CString& operation, const std::string& error);
