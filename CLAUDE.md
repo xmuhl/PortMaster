@@ -100,3 +100,88 @@ To add new transport types:
 - File drag-drop support for transmission
 - Real-time progress reporting via callback mechanisms
 - Splash screen integration during application startup
+
+## 自动执行工作流程
+
+### 目标设定
+工作目录：C:\Users\huangl\Desktop\PortMaster
+核心目标：修改代码并确保编译 0 error / 0 warning，之后自动版本化与远程推送
+
+### 工作流程步骤（必须按顺序执行）
+
+#### 1. 环境准备与同步
+```powershell
+cd C:\Users\huangl\Desktop\PortMaster
+git pull --rebase 2>$null
+```
+
+#### 2. 代码修改规范
+- 仅修改必要文件，保持最小变更原则
+- **严禁提交以下目录**：`.vs/`、`bin/`、`obj/`、`Debug/`、`Release/` 等被 `.gitignore` 忽略的目录
+- 遵循现有代码标准：UTF-8 编码、中文注释、MFC 静态链接
+
+#### 3. 编译验证流程
+**首选编译命令：**
+```batch
+.\autobuild_x86_debug.bat
+```
+
+**备用编译命令：**
+```batch
+.\autobuild.bat
+```
+
+**编译要求：**
+- 必须达到 **0 error 0 warning** 标准
+- 如出现任何 error 或 warning，必须逐一修复后重新编译
+- 需在聊天中展示关键编译日志片段（包含 "0 error、0 warning" 确认信息）
+
+#### 4. 版本控制与推送
+**检查变更状态：**
+- 若 `git status` 显示无变更，回复 "无变更，无需提交" 并结束流程
+
+**提交变更（有文件变更时）：**
+```powershell
+git add -A
+git commit -m "feat: <简述本次修改>"
+
+# 推送到备份仓库
+git push backup HEAD
+
+# 推送到主仓库（如果存在）
+git remote | findstr origin && git push origin HEAD
+```
+
+#### 5. 存档标签生成（推荐）
+```powershell
+$tag = "save-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+git tag $tag
+git push --tags
+```
+
+#### 6. 工作汇报
+每次完成工作流程后，必须提供：
+- 最新 commit ID 和说明
+- 远程推送结果（backup/origin 状态）
+- 编译成功的关键日志段落
+- 如有未能自动修复的问题，列出详细清单与建议修复方案
+
+### 异常处理策略
+
+#### 编译失败处理
+- **不允许提交或推送** 编译失败的代码
+- 返回详细错误信息
+- 尝试自动修复常见问题
+- 如无法自动修复，提供手动修复建议
+
+#### 合并冲突处理
+- 立即停止工作流程
+- 明确指出冲突文件位置
+- 提供解决方案：
+  - 执行 `git merge --abort` 回退
+  - 或提供手动解决冲突的具体步骤
+
+### 质量保证原则
+- **零容忍政策**：绝不允许带有编译错误或警告的代码进入版本库
+- **最小变更原则**：仅修改实现目标所必需的文件
+- **完整验证**：每次变更都必须通过完整的编译验证流程
