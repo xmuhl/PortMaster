@@ -101,87 +101,139 @@ To add new transport types:
 - Real-time progress reporting via callback mechanisms
 - Splash screen integration during application startup
 
-## 自动执行工作流程
+## WSL环境自动执行工作流程
 
 ### 目标设定
-工作目录：C:\Users\huangl\Desktop\PortMaster
-核心目标：修改代码并确保编译 0 error / 0 warning，之后自动版本化与远程推送
+- **工作目录**：`/mnt/c/Users/huangl/Desktop/PortMaster`
+- **核心目标**：修改代码并确保编译 0 error / 0 warning，之后自动版本化与远程推送
+- **环境特点**：WSL2环境下操作，兼容Windows文件系统，支持跨平台工具
 
 ### 工作流程步骤（必须按顺序执行）
 
 #### 1. 环境准备与同步
-```powershell
-cd C:\Users\huangl\Desktop\PortMaster
-git pull --rebase 2>$null
+```bash
+# 切换到工作目录
+cd "/mnt/c/Users/huangl/Desktop/PortMaster"
+
+# 同步远程变更（使用Git bash语法）
+git pull --rebase 2>/dev/null || echo "同步完成或无需同步"
 ```
 
-#### 2. 代码修改规范
+#### 2. 进度文档更新（新增步骤）
+**在每次代码修改前，必须更新本地记录文档：**
+```bash
+# 更新Code_Revision_Progress.md中的执行日志
+# 记录当前任务开始时间和目标
+# 格式：- ⏳ **HH:MM**: 开始[具体任务描述]
+```
+
+**文档更新要求：**
+- 每个任务开始前更新执行日志
+- 任务完成后标记为完成状态 ✅
+- 记录编译结果和关键问题
+- 保持文档与实际进度同步
+
+#### 3. 代码修改规范
 - 仅修改必要文件，保持最小变更原则
 - **严禁提交以下目录**：`.vs/`、`bin/`、`obj/`、`Debug/`、`Release/` 等被 `.gitignore` 忽略的目录
 - 遵循现有代码标准：UTF-8 编码、中文注释、MFC 静态链接
 
-#### 3. 编译验证流程
-**首选编译命令：**
-```batch
-.\autobuild_x86_debug.bat
+#### 4. 编译验证流程（WSL适配）
+**首选编译命令（WSL环境）：**
+```bash
+# 使用cmd.exe执行Windows批处理脚本
+cmd.exe /c "cd /d \"C:\Users\huangl\Desktop\PortMaster\" && autobuild_x86_debug.bat"
 ```
 
-**备用编译命令：**
-```batch
-.\autobuild.bat
+**备用编译命令（WSL环境）：**
+```bash
+# 备用编译脚本
+cmd.exe /c "cd /d \"C:\Users\huangl\Desktop\PortMaster\" && autobuild.bat"
 ```
 
 **编译要求：**
 - 必须达到 **0 error 0 warning** 标准
 - 如出现任何 error 或 warning，必须逐一修复后重新编译
 - 需在聊天中展示关键编译日志片段（包含 "0 error、0 warning" 确认信息）
+- 编译成功后立即更新进度文档中的编译验证历史表格
 
-#### 4. 版本控制与推送
+#### 5. 版本控制与推送（WSL适配）
 **检查变更状态：**
-- 若 `git status` 显示无变更，回复 "无变更，无需提交" 并结束流程
+```bash
+git status --porcelain
+```
+- 若输出为空，回复 "无变更，无需提交" 并结束流程
 
 **提交变更（有文件变更时）：**
-```powershell
+```bash
+# 暂存所有变更
 git add -A
 
-# 自动生成简练的简体中文提交信息，避免弹出编辑器
+# 自动生成简练的简体中文提交信息
 # 格式：类型: 简述修改内容（不超过50字符）
 # 示例：feat: 添加串口通信模块, fix: 修复CRC校验错误, docs: 更新README文档
 git commit -m "类型: <根据实际修改内容自动生成的简练中文描述>"
 
-# 推送到备份仓库
+# 推送到备份仓库（WSL路径已适配）
 git push backup HEAD
 
 # 推送到主仓库（如果存在）
-git remote | findstr origin && git push origin HEAD
+git remote | grep -q origin && git push origin HEAD
 ```
 
 **提交信息规范：**
 - **格式**：`类型: 简述修改内容`
-- **类型枚举**：`feat`（新功能）、`fix`（修复）、`docs`（文档）、`refactor`（重构）、`test`（测试）、`chore`（维护）
+- **类型枚举**：`feat`（新功能）、`fix`（修复）、`docs`（文档更新）、`refactor`（重构）、`test`（测试）、`chore`（维护）
 - **描述要求**：简体中文，不超过50字符，准确概括本次变更核心内容
 - **自动生成**：基于 `git diff --name-only` 和 `git status` 分析文件变更，智能生成描述
 
-#### 5. 存档标签生成（推荐）
-```powershell
-$tag = "save-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-git tag $tag
+#### 6. 存档标签生成（推荐）
+```bash
+# 生成时间戳标签
+tag="save-$(date +%Y%m%d-%H%M%S)"
+git tag "$tag"
 git push --tags
 ```
 
-#### 6. 工作汇报
+#### 7. 工作汇报
 每次完成工作流程后，必须提供：
 - 最新 commit ID 和说明
 - 远程推送结果（backup/origin 状态）
 - 编译成功的关键日志段落
+- 进度文档更新确认
 - 如有未能自动修复的问题，列出详细清单与建议修复方案
+
+### WSL环境特殊配置
+
+#### 路径处理规范
+```bash
+# WSL工作目录
+WORK_DIR="/mnt/c/Users/huangl/Desktop/PortMaster"
+
+# Windows路径（用于cmd.exe调用）
+WIN_PATH="C:\Users\huangl\Desktop\PortMaster"
+
+# Git远程仓库路径（已适配WSL）
+BACKUP_REPO="/mnt/d/GitBackups/PortMaster.git"
+```
+
+#### 跨平台工具使用
+```bash
+# Windows命令执行（编译脚本）
+cmd.exe /c "cd /d \"$WIN_PATH\" && command.bat"
+
+# Linux命令使用（Git、文本处理）
+git status
+grep pattern file
+sed 's/old/new/' file
+```
 
 ### 异常处理策略
 
 #### 编译失败处理
 - **不允许提交或推送** 编译失败的代码
-- 返回详细错误信息
-- 尝试自动修复常见问题
+- 返回详细错误信息，包含WSL环境特有的路径转换错误
+- 尝试自动修复常见问题（路径分隔符、编码问题）
 - 如无法自动修复，提供手动修复建议
 
 #### 合并冲突处理
@@ -191,7 +243,22 @@ git push --tags
   - 执行 `git merge --abort` 回退
   - 或提供手动解决冲突的具体步骤
 
+#### WSL特有问题处理
+- **路径转换错误**：自动检测并转换Windows/WSL路径格式
+- **文件权限问题**：使用`chmod +x`修复执行权限
+- **编码问题**：确保UTF-8编码在WSL和Windows间正确转换
+- **Git远程路径**：验证WSL挂载路径可访问性
+
 ### 质量保证原则
 - **零容忍政策**：绝不允许带有编译错误或警告的代码进入版本库
 - **最小变更原则**：仅修改实现目标所必需的文件
 - **完整验证**：每次变更都必须通过完整的编译验证流程
+- **进度同步**：代码变更与文档更新保持同步，确保项目状态可追踪
+
+### 环境验证清单
+执行工作流程前，必须确认以下环境要求：
+- [x] WSL2环境正常工作
+- [x] `/mnt/c/Users/huangl/Desktop/PortMaster` 路径可访问
+- [x] `cmd.exe` 可正常调用
+- [x] Git远程仓库 `/mnt/d/GitBackups/PortMaster.git` 可访问
+- [x] 编译脚本 `autobuild_x86_debug.bat` 和 `autobuild.bat` 存在
