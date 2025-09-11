@@ -488,11 +488,16 @@ void CPortMasterDlg::InitializeTransportObjects()
 			CString* statusText = new CString();
 			statusText->Format(L"传输中 (%.1f%%)", stats.GetProgress() * 100);
 			
-			// 使用PostMessage发送到UI线程处理 - 带错误保护
-			if (!PostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
+			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃
+			if (!SafePostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
 			{
-				// PostMessage失败，清理分配的内存
+				// SafePostMessage失败，清理分配的内存
 				delete statusText;
+				WriteDebugLog(CT2A(L"[WARNING] 直接传输进度回调SafePostMessage失败"));
+			}
+			else
+			{
+				WriteDebugLog(CT2A(L"[DEBUG] 直接传输进度更新成功"));
 			}
 		}
 	});
@@ -530,11 +535,19 @@ void CPortMasterDlg::InitializeTransportObjects()
 			
 			FileReceivedData* receivedData = new FileReceivedData{filename, data};
 			
-			// 线程安全更新：使用PostMessage发送到UI线程处理
-			if (!PostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
+			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃（直接传输）
+			CString debugMsg;
+			debugMsg.Format(L"[DEBUG] 直接传输文件接收回调：%s, %zu字节", CA2W(filename.c_str()), data.size());
+			WriteDebugLog(CT2A(debugMsg));
+			if (!SafePostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
 			{
-				// PostMessage失败，清理分配的内存
+				// SafePostMessage失败，清理分配的内存
 				delete receivedData;
+				WriteDebugLog(CT2A(L"[ERROR] 直接传输文件接收回调SafePostMessage失败"));
+			}
+			else
+			{
+				WriteDebugLog(CT2A(L"[DEBUG] 直接传输文件接收回调SafePostMessage成功"));
 			}
 		}
 	});
@@ -1174,11 +1187,19 @@ void CPortMasterDlg::OnBnClickedConnect()
 			
 			FileReceivedData* receivedData = new FileReceivedData{filename, data};
 			
-			// 线程安全更新：使用PostMessage发送到UI线程处理
-			if (!PostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
+			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃（可靠传输）
+			CString debugMsg2;
+			debugMsg2.Format(L"[DEBUG] 可靠传输文件接收回调：%s, %zu字节", CA2W(filename.c_str()), data.size());
+			WriteDebugLog(CT2A(debugMsg2));
+			if (!SafePostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
 			{
-				// PostMessage失败，清理分配的内存
+				// SafePostMessage失败，清理分配的内存
 				delete receivedData;
+				WriteDebugLog(CT2A(L"[CRITICAL] 可靠传输文件接收回调SafePostMessage失败 - 这是崩溃的主要原因！"));
+			}
+			else
+			{
+				WriteDebugLog(CT2A(L"[DEBUG] 可靠传输文件接收回调SafePostMessage成功"));
 			}
 		}
 	});
