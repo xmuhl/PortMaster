@@ -2564,41 +2564,100 @@ CString CPortMasterDlg::FormatHexDisplay(const std::vector<uint8_t>& data)
 	return result;
 }
 
+// 🔑 UTF-8序列验证辅助函数
+bool CPortMasterDlg::IsValidUTF8Sequence(const std::vector<uint8_t>& data, size_t start, size_t& length)
+{
+	if (start >= data.size()) return false;
+	
+	uint8_t firstByte = data[start];
+	length = 1;
+	
+	// ASCII字符 (0xxxxxxx)
+	if ((firstByte & 0x80) == 0) {
+		return true;
+	}
+	
+	// 多字节UTF-8序列
+	if ((firstByte & 0xE0) == 0xC0) {
+		// 2字节序列 (110xxxxx 10xxxxxx)
+		length = 2;
+	} else if ((firstByte & 0xF0) == 0xE0) {
+		// 3字节序列 (1110xxxx 10xxxxxx 10xxxxxx)
+		length = 3;
+	} else if ((firstByte & 0xF8) == 0xF0) {
+		// 4字节序列 (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
+		length = 4;
+	} else {
+		return false; // 无效的起始字节
+	}
+	
+	// 检查是否有足够的字节
+	if (start + length > data.size()) {
+		return false;
+	}
+	
+	// 验证后续字节格式 (10xxxxxx)
+	for (size_t i = 1; i < length; ++i) {
+		if ((data[start + i] & 0xC0) != 0x80) {
+			return false;
+		}
+	}
+	
+	return true;
+}
+
 CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
 {
 	if (data.empty()) return L"";
 	
-	std::string utf8Str(data.begin(), data.end());
+	// 🔑 策略1：增强的UTF-8检测和解码
+	bool hasValidUTF8 = true;
+	size_t i = 0;
+	while (i < data.size()) {
+		size_t seqLength;
+		if (!IsValidUTF8Sequence(data, i, seqLength)) {
+			hasValidUTF8 = false;
+			break;
+		}
+		i += seqLength;
+	}
 	
-	// 🔑 策略1：宽容的UTF-8解码（不使用严格的MB_ERR_INVALID_CHARS）
-	int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, 
-		utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
-	
-	if (wideStrLen > 0) {
-		std::vector<wchar_t> wideStr(wideStrLen + 1);
-		int actualLen = MultiByteToWideChar(CP_UTF8, 0,
-			utf8Str.c_str(), static_cast<int>(utf8Str.length()),
-			wideStr.data(), wideStrLen);
-			
-		if (actualLen > 0) {
-			wideStr[actualLen] = L'\0';
-			return CString(wideStr.data());
+	if (hasValidUTF8) {
+		std::string utf8Str(data.begin(), data.end());
+		int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, 
+			utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+		
+		if (wideStrLen > 0) {
+			std::vector<wchar_t> wideStr(wideStrLen + 1);
+			int actualLen = MultiByteToWideChar(CP_UTF8, 0,
+				utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+				wideStr.data(), wideStrLen);
+				
+			if (actualLen > 0) {
+				wideStr[actualLen] = L'\0';
+				return CString(wideStr.data());
+			}
 		}
 	}
 	
 	// 🔑 策略2：GBK/GB2312解码（支持简体中文）
-	wideStrLen = MultiByteToWideChar(CP_ACP, 0,
-		utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+	std::string gbkStr(data.begin(), data.end());
+	int wideStrLen = MultiByteToWideChar(CP_ACP, 0,
+		gbkStr.c_str(), static_cast<int>(gbkStr.length()), nullptr, 0);
 	
 	if (wideStrLen > 0) {
 		std::vector<wchar_t> wideStr(wideStrLen + 1);
 		int actualLen = MultiByteToWideChar(CP_ACP, 0,
-			utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+			gbkStr.c_str(), static_cast<int>(gbkStr.length()),
 			wideStr.data(), wideStrLen);
 			
 		if (actualLen > 0) {
 			wideStr[actualLen] = L'\0';
-			return CString(wideStr.data());
+			// 验证转换结果是否包含有效字符
+			CString result(wideStr.data());
+			if (!result.IsEmpty() && result != L"?") {
+				return result;
+			}
 		}
 	}
 	
@@ -2612,14 +2671,44 @@ CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
 	CString result;
 	result.Preallocate(static_cast<int>(data.size() * 2));
 	
-	for (size_t i = 0; i < data.size(); ++i) {
+	for (size_t i = 0; i < data.size(); ) {
 		uint8_t byte = data[i];
 		
+		// 检查是否为有效的UTF-8序列起始
+		size_t utf8Length;
+		if (IsValidUTF8Sequence(data, i, utf8Length) && utf8Length > 1) {
+			// 尝试解码UTF-8序列
+			std::vector<uint8_t> utf8Bytes(data.begin() + i, data.begin() + i + utf8Length);
+			std::string utf8Str(utf8Bytes.begin(), utf8Bytes.end());
+			
+			int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, 
+				utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+			
+			if (wideStrLen > 0) {
+				std::vector<wchar_t> wideStr(wideStrLen + 1);
+				int actualLen = MultiByteToWideChar(CP_UTF8, 0,
+					utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+					wideStr.data(), wideStrLen);
+					
+				if (actualLen > 0) {
+					wideStr[actualLen] = L'\0';
+					CString decodedChar(wideStr.data());
+					// 验证解码结果是否为有效字符
+					if (!decodedChar.IsEmpty() && decodedChar != L"?") {
+						result += decodedChar;
+						i += utf8Length;
+						continue;
+					}
+				}
+			}
+		}
+		
+		// 单字节处理
 		if (byte >= 32 && byte <= 126) {
 			// 可打印ASCII字符
 			result += static_cast<wchar_t>(byte);
 		} else if (byte >= 0x80) {
-			// 可能的多字节字符，显示为十六进制
+			// 非UTF-8的高位字节，显示为十六进制
 			CString hexByte;
 			hexByte.Format(L"[%02X]", byte);
 			result += hexByte;
@@ -2637,6 +2726,8 @@ CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
 				break;
 			}
 		}
+		
+		i++;
 	}
 	
 	return result;
