@@ -254,6 +254,15 @@ private:
 	CString GetDetailedErrorSuggestion(int transportIndex, const std::string& error);
 	void SetupReceiveDirectory();
 	void ConfigureReliableChannelFromConfig(); // 新增：从配置管理器设置可靠通道参数 (SOLID-S: 单一职责)
+	void ConfigureReliableChannelForLoopback(); // 🚀 性能优化：本地回路快速配置函数
+	
+	// 📊 统一状态管理 - 解决状态信息混乱问题
+	enum class StatusPriority { NORMAL = 0, HIGH = 1, CRITICAL = 2 };
+	void UpdateStatusDisplay(const CString& connectionStatus = L"", 
+	                        const CString& protocolStatus = L"", 
+	                        const CString& transferStatus = L"",
+	                        StatusPriority priority = StatusPriority::NORMAL);
+	
 	std::string GetNetworkConnectionInfo(const std::string& transportType);
 	void InitializeTransportObjects(int portType); // 新增：支持指定端口类型的初始化
 	void SetupTransportCallbacks(); // 新增：设置传输对象回调

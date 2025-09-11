@@ -432,9 +432,8 @@ void CPortMasterDlg::InitializeControls()
 		// m_ctrlFileDropZone.SetWindowText(L"拖拽文件到此处加载(不自动传输)");  // 控件不存在
 
 		// 初始化状态显示
-		m_ctrlConnectionStatus.SetWindowText(L"未连接");
-		m_ctrlProtocolStatus.SetWindowText(L"空闲");
-		m_ctrlTransferStatus.SetWindowText(L"就绪");
+		// 📊 使用统一状态管理初始化状态显示
+		UpdateStatusDisplay(L"未连接", L"空闲", L"就绪", StatusPriority::NORMAL);
 		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 设置状态显示完成");
 		
 		// 设置等宽字体用于十六进制显示
@@ -679,56 +678,54 @@ void CPortMasterDlg::UpdateButtonStates()
 	if (IsWindow(m_ctrlClearDisplayBtn.GetSafeHwnd()))
 		m_ctrlClearDisplayBtn.EnableWindow(TRUE);
 	
-	// 更新连接状态显示（带状态指示器）
-	if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
-	{
-		CString statusText;
-		if (m_bTransmitting)
-			statusText = L"● 传输中";
-		else if (m_bConnected)
-			statusText = L"● 已连接";
-		else
-			statusText = L"○ 未连接";
-		
-		m_ctrlConnectionStatus.SetWindowText(statusText);
-	}
+	// 📊 使用统一状态管理更新显示（SOLID-S: 单一职责原则 - 集中状态管理）
+	CString connectionStatus, protocolStatus, transferStatus;
+	StatusPriority priority = StatusPriority::NORMAL;
 	
-	// 更新协议状态显示
+	// 连接状态（带状态指示器）
+	if (m_bTransmitting)
+		connectionStatus = L"● 传输中";
+	else if (m_bConnected)
+		connectionStatus = L"● 已连接";
+	else
+		connectionStatus = L"○ 未连接";
+	
+	// 协议状态
 	if (m_reliableChannel)
 	{
 		ReliableState state = m_reliableChannel->GetState();
-		CString stateText;
 		switch (state)
 		{
-		case RELIABLE_IDLE: stateText = L"空闲"; break;
-		case RELIABLE_STARTING: stateText = L"开始传输"; break;
-		case RELIABLE_SENDING: stateText = L"传输中"; break;
-		case RELIABLE_ENDING: stateText = L"结束传输"; break;
-		case RELIABLE_RECEIVING: stateText = L"接收中"; break;
-		case RELIABLE_DONE: stateText = L"完成"; break;
-		case RELIABLE_FAILED: stateText = L"失败"; break;
-		default: stateText = L"未知"; break;
+		case RELIABLE_IDLE: protocolStatus = L"空闲"; break;
+		case RELIABLE_STARTING: protocolStatus = L"开始传输"; priority = StatusPriority::HIGH; break;
+		case RELIABLE_SENDING: protocolStatus = L"传输中"; priority = StatusPriority::HIGH; break;
+		case RELIABLE_ENDING: protocolStatus = L"结束传输"; priority = StatusPriority::HIGH; break;
+		case RELIABLE_RECEIVING: protocolStatus = L"接收中"; priority = StatusPriority::HIGH; break;
+		case RELIABLE_DONE: protocolStatus = L"完成"; priority = StatusPriority::HIGH; break;
+		case RELIABLE_FAILED: protocolStatus = L"失败"; priority = StatusPriority::CRITICAL; break;
+		default: protocolStatus = L"未知"; break;
 		}
-		m_ctrlProtocolStatus.SetWindowText(stateText);
 	}
 	
-	// 更新状态栏显示
-	CString statusText;
+	// 传输状态
 	if (m_bTransmitting)
 	{
-		statusText = L"状态: 传输中";
+		transferStatus = L"状态: 传输中";
+		priority = StatusPriority::HIGH; // 传输中是高优先级状态
 	}
 	else if (m_bConnected)
 	{
-		statusText = L"状态: 已连接";
+		transferStatus = L"状态: 已连接";
 		if (m_bReliableMode)
-			statusText += L" (可靠模式)";
+			transferStatus += L" (可靠模式)";
 	}
 	else
 	{
-		statusText = L"状态: 就绪";
+		transferStatus = L"状态: 就绪";
 	}
-	m_ctrlTransferStatus.SetWindowText(statusText);
+	
+	// 📊 统一状态更新 - 避免状态信息混乱
+	UpdateStatusDisplay(connectionStatus, protocolStatus, transferStatus, priority);
 	}
 	catch (const std::exception& e)
 	{
@@ -749,9 +746,9 @@ void CPortMasterDlg::UpdateButtonStates()
 void CPortMasterDlg::UpdateStatusBar()
 {
 	// 连接状态详细信息 (DRY: 复用现有状态检查逻辑)
+	CString connectionInfo;
 	if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
 	{
-		CString connectionInfo;
 		if (m_bConnected && m_transport)
 		{
 			// 获取传输类型信息
@@ -770,79 +767,77 @@ void CPortMasterDlg::UpdateStatusBar()
 		{
 			connectionInfo = L"○ 未连接";
 		}
-		m_ctrlConnectionStatus.SetWindowText(connectionInfo);
 	}
 	
 	// 协议状态详细信息
-	if (IsWindow(m_ctrlProtocolStatus.GetSafeHwnd()))
+	CString protocolInfo;
+	if (m_bReliableMode && m_reliableChannel)
 	{
-		CString protocolInfo;
-		if (m_bReliableMode && m_reliableChannel)
-		{
-			ReliableState state = m_reliableChannel->GetState();
-			const wchar_t* stateNames[] = { 
-				L"空闲", L"开始", L"发送中", L"结束", L"就绪", L"接收中", L"完成", L"失败" 
-			};
-			
-			protocolInfo.Format(L"可靠协议: %s", 
-				(state >= 0 && state < 8) ? stateNames[state] : L"未知");
-		}
-		else
-		{
-			protocolInfo = L"直接传输模式";
-		}
-		m_ctrlProtocolStatus.SetWindowText(protocolInfo);
+		ReliableState state = m_reliableChannel->GetState();
+		const wchar_t* stateNames[] = { 
+			L"空闲", L"开始", L"发送中", L"结束", L"就绪", L"接收中", L"完成", L"失败" 
+		};
+		
+		protocolInfo.Format(L"可靠协议: %s", 
+			(state >= 0 && state < 8) ? stateNames[state] : L"未知");
+	}
+	else
+	{
+		protocolInfo = L"直接传输模式";
 	}
 	
 	// 传输状态综合信息 (SOLID-O: 开放封闭，易于扩展新状态)
-	if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd()))
+	CString transferInfo;
+	StatusPriority priority = StatusPriority::NORMAL;
+	TransmissionState currentState = GetTransmissionState();
+	
+	switch (currentState)
 	{
-		CString transferInfo;
-		TransmissionState currentState = GetTransmissionState();
-		
-		switch (currentState)
+	case TransmissionState::IDLE:
+		transferInfo = L"状态: 就绪";
+		break;
+	case TransmissionState::TRANSMITTING:
+		priority = StatusPriority::HIGH; // 传输中是高优先级
+		if (!m_transmissionData.empty())
 		{
-		case TransmissionState::IDLE:
-			transferInfo = L"状态: 就绪";
-			break;
-		case TransmissionState::TRANSMITTING:
-			if (!m_transmissionData.empty())
-			{
-				// 显示传输进度和速度信息
-				double progressPercent = (m_transmissionProgress * 100.0) / m_transmissionData.size();
-				transferInfo.Format(L"传输中 %.1f%% | 速度: %s", 
-					progressPercent, 
-					GetCurrentTransferSpeed());
-			}
-			else
-			{
-				transferInfo = L"传输中...";
-			}
-			break;
-		case TransmissionState::PAUSED:
-			if (m_transmissionContext.isValidContext)
-			{
-				transferInfo.Format(L"已暂停 (%.1f%%) | 可续传", 
-					m_transmissionContext.GetProgressPercentage());
-			}
-			else
-			{
-				transferInfo = L"已暂停";
-			}
-			break;
-		case TransmissionState::COMPLETED:
-			transferInfo = L"传输完成 ✓";
-			break;
-		case TransmissionState::FAILED:
-			transferInfo = L"传输失败 ✗ | 点击重试";
-			break;
-		default:
-			transferInfo = L"状态未知";
-			break;
+			// 显示传输进度和速度信息
+			double progressPercent = (m_transmissionProgress * 100.0) / m_transmissionData.size();
+			transferInfo.Format(L"传输中 %.1f%% | 速度: %s", 
+				progressPercent, 
+				GetCurrentTransferSpeed());
 		}
-		
-		m_ctrlTransferStatus.SetWindowText(transferInfo);
+		else
+		{
+			transferInfo = L"传输中...";
+		}
+		break;
+	case TransmissionState::PAUSED:
+		priority = StatusPriority::HIGH;
+		if (m_transmissionContext.isValidContext)
+		{
+			transferInfo.Format(L"已暂停 (%.1f%%) | 可续传", 
+				m_transmissionContext.GetProgressPercentage());
+		}
+		else
+		{
+			transferInfo = L"已暂停";
+		}
+		break;
+	case TransmissionState::COMPLETED:
+		priority = StatusPriority::HIGH;
+		transferInfo = L"传输完成 ✓";
+		break;
+	case TransmissionState::FAILED:
+		priority = StatusPriority::CRITICAL;
+		transferInfo = L"传输失败 ✗ | 点击重试";
+		break;
+	default:
+		transferInfo = L"状态未知";
+		break;
 	}
+	
+	// 📊 使用统一状态管理更新增强连接显示
+	UpdateStatusDisplay(connectionInfo, protocolInfo, transferInfo, priority);
 }
 
 CString CPortMasterDlg::GetCurrentTransferSpeed()
@@ -1095,11 +1090,8 @@ void CPortMasterDlg::OnBnClickedConnect()
 			AppendLog(L"建议: " + detailedError);
 		}
 		
-		// 更新连接状态显示
-		if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
-		{
-			m_ctrlConnectionStatus.SetWindowText(statusMsg);
-		}
+		// 📊 使用统一状态管理更新连接失败状态
+		UpdateStatusDisplay(statusMsg, L"空闲", L"状态: 连接失败", StatusPriority::CRITICAL);
 		return;
 	}
 	
@@ -1123,7 +1115,12 @@ void CPortMasterDlg::OnBnClickedConnect()
 	m_reliableChannel = std::make_shared<ReliableChannel>(m_transport);
 	
 	// SOLID-S: 单一职责 - 配置协议参数 (DRY: 统一配置管理)
-	ConfigureReliableChannelFromConfig();
+	// 🚀 性能优化：本地回路跳过重配置，使用默认值提升连接速度
+	if (std::dynamic_pointer_cast<LoopbackTransport>(newTransport)) {
+		ConfigureReliableChannelForLoopback();
+	} else {
+		ConfigureReliableChannelFromConfig();
+	}
 	
 	// 设置回调函数 (保持原有功能) - 使用SafePostMessage实现线程安全UI更新
 	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
@@ -1241,11 +1238,8 @@ void CPortMasterDlg::OnBnClickedConnect()
 		
 		AppendLog(L"连接成功 - " + transportInfo);
 		
-		// 更新连接状态显示
-		if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
-		{
-			m_ctrlConnectionStatus.SetWindowText(statusMsg);
-		}
+		// 📊 使用统一状态管理更新连接成功状态
+		UpdateStatusDisplay(statusMsg, L"空闲", L"状态: 已连接", StatusPriority::HIGH);
 	}
 	else
 	{
@@ -1253,11 +1247,8 @@ void CPortMasterDlg::OnBnClickedConnect()
 		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_ERROR, error);
 		AppendLog(L"可靠通道启动失败: " + statusMsg);
 		
-		// 更新连接状态显示
-		if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
-		{
-			m_ctrlConnectionStatus.SetWindowText(statusMsg);
-		}
+		// 📊 使用统一状态管理更新可靠通道失败状态
+		UpdateStatusDisplay(statusMsg, L"失败", L"状态: 通道启动失败", StatusPriority::CRITICAL);
 	}
 }
 
@@ -1273,15 +1264,8 @@ void CPortMasterDlg::OnBnClickedDisconnect()
 	SetTransmissionState(TransmissionState::IDLE);
 	AppendLog(L"已断开连接");
 	
-	// 更新状态显示
-	if (IsWindow(m_ctrlConnectionStatus.GetSafeHwnd()))
-	{
-		m_ctrlConnectionStatus.SetWindowText(L"未连接");
-	}
-	if (IsWindow(m_ctrlProtocolStatus.GetSafeHwnd()))
-	{
-		m_ctrlProtocolStatus.SetWindowText(L"空闲");
-	}
+	// 📊 使用统一状态管理更新断开连接后的状态
+	UpdateStatusDisplay(L"○ 未连接", L"空闲", L"状态: 就绪", StatusPriority::NORMAL);
 }
 
 void CPortMasterDlg::OnBnClickedSend()
@@ -2057,6 +2041,66 @@ void CPortMasterDlg::ConfigureReliableChannelFromConfig()
 		
 		AppendLog(L"已使用默认协议参数");
 	}
+}
+
+// 🚀 性能优化：本地回路快速配置函数
+void CPortMasterDlg::ConfigureReliableChannelForLoopback()
+{
+	if (!m_reliableChannel)
+		return;
+		
+	// 本地回路使用优化的默认参数，无需读取配置文件
+	m_reliableChannel->SetAckTimeout(100);    // 更短超时，本地回路延迟极低
+	m_reliableChannel->SetMaxRetries(1);      // 更少重试，本地回路不丢包
+	m_reliableChannel->SetMaxPayloadSize(8192); // 更大负载，本地回路无带宽限制
+	m_reliableChannel->SetReceiveDirectory("."); // 简单接收目录
+	
+	WriteDebugLog("[DEBUG] 本地回路快速配置完成 - 跳过配置文件读取");
+}
+
+// 📊 统一状态管理 - 解决状态信息混乱问题
+void CPortMasterDlg::UpdateStatusDisplay(const CString& connectionStatus, 
+                                         const CString& protocolStatus, 
+                                         const CString& transferStatus,
+                                         StatusPriority priority)
+{
+	// 静态变量记录当前状态优先级，防止低优先级覆盖高优先级状态
+	static StatusPriority s_currentPriority = StatusPriority::NORMAL;
+	static DWORD s_lastHighPriorityTime = 0;
+	
+	// 高优先级状态保持至少2秒钟
+	DWORD currentTime = GetTickCount();
+	if (s_currentPriority > StatusPriority::NORMAL && 
+		currentTime - s_lastHighPriorityTime < 2000 && 
+		priority < s_currentPriority) {
+		return; // 跳过低优先级更新
+	}
+	
+	// 更新优先级和时间戳
+	if (priority > StatusPriority::NORMAL) {
+		s_lastHighPriorityTime = currentTime;
+	}
+	s_currentPriority = priority;
+	
+	// 线程安全的UI更新
+	if (!connectionStatus.IsEmpty() && IsWindow(m_ctrlConnectionStatus.GetSafeHwnd())) {
+		m_ctrlConnectionStatus.SetWindowText(connectionStatus);
+	}
+	if (!protocolStatus.IsEmpty() && IsWindow(m_ctrlProtocolStatus.GetSafeHwnd())) {
+		m_ctrlProtocolStatus.SetWindowText(protocolStatus);
+	}
+	if (!transferStatus.IsEmpty() && IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+		m_ctrlTransferStatus.SetWindowText(transferStatus);
+	}
+	
+	// 记录调试日志
+	CString debugMsg;
+	debugMsg.Format(L"[DEBUG] 状态更新 - 连接:%s 协议:%s 传输:%s 优先级:%d", 
+		connectionStatus.IsEmpty() ? L"" : connectionStatus,
+		protocolStatus.IsEmpty() ? L"" : protocolStatus, 
+		transferStatus.IsEmpty() ? L"" : transferStatus,
+		static_cast<int>(priority));
+	WriteDebugLog(CT2A(debugMsg));
 }
 
 // SOLID-S: 单一职责 - 用户界面交互方法实现
@@ -3206,17 +3250,16 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 		delete message; // 释放动态分配的内存
 	}
 	
+	// 📊 使用统一状态管理更新传输完成状态
 	if (success) {
 		if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
 			m_ctrlProgress.SetPos(0);
 		}
-		if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
-			m_ctrlTransferStatus.SetWindowText(L"传输完成");
-		}
+		// 传输完成后更新所有状态
+		UpdateStatusDisplay(L"● 已连接", L"完成", L"传输完成", StatusPriority::HIGH);
 	} else {
-		if (IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
-			m_ctrlTransferStatus.SetWindowText(L"传输失败");
-		}
+		// 传输失败后更新所有状态
+		UpdateStatusDisplay(L"● 已连接", L"失败", L"传输失败", StatusPriority::CRITICAL);
 	}
 	
 	// 🔑 关键修复：使用统一的状态管理并同步ReliableChannel状态
