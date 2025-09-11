@@ -261,6 +261,7 @@ private:
 	void UpdateStatusDisplay(const CString& connectionStatus = L"", 
 	                        const CString& protocolStatus = L"", 
 	                        const CString& transferStatus = L"",
+	                        const CString& speedInfo = L"",
 	                        StatusPriority priority = StatusPriority::NORMAL);
 	
 	std::string GetNetworkConnectionInfo(const std::string& transportType);
