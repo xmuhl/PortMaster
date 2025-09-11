@@ -1076,6 +1076,24 @@ void CPortMasterDlg::OnBnClickedConnect()
 	
 	// 连接成功，更新传输对象和可靠通道
 	m_transport = newTransport;
+	
+	// 🔑 关键修复：设置直接传输模式的数据接收回调（必须在创建ReliableChannel之前）
+	m_transport->SetDataReceivedCallback([this](const std::vector<uint8_t>& data) {
+		// 直接传输模式数据接收回调 - 线程安全UI更新
+		if (::IsWindow(GetSafeHwnd()))
+		{
+			// 复制数据到堆内存用于线程间传递
+			std::vector<uint8_t>* dataPtr = new std::vector<uint8_t>(data);
+			
+			// 使用PostMessage发送到UI线程处理
+			if (!PostMessage(WM_DISPLAY_RECEIVED_DATA, 0, reinterpret_cast<LPARAM>(dataPtr)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete dataPtr;
+			}
+		}
+	});
+	
 	m_reliableChannel = std::make_shared<ReliableChannel>(m_transport);
 	
 	// SOLID-S: 单一职责 - 配置协议参数 (DRY: 统一配置管理)
@@ -3079,6 +3097,12 @@ void CPortMasterDlg::DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk)
 {
 	if (chunk.empty()) return;
 	
+	// 🔑 关键修复：更新显示数据缓冲区，确保按钮状态正确
+	{
+		std::lock_guard<std::mutex> lock(m_displayDataMutex);
+		m_displayedData.insert(m_displayedData.end(), chunk.begin(), chunk.end());
+	}
+	
 	// 追加显示模式 - 不替换已有数据
 	CString hexDisplay = FormatHexDisplay(chunk);
 	CString textDisplay = FormatTextDisplay(chunk);
@@ -3097,6 +3121,9 @@ void CPortMasterDlg::DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk)
 	m_ctrlDataView.GetWindowText(currentText);
 	currentText += textDisplay;
 	m_ctrlDataView.SetWindowText(currentText);
+	
+	// 🔑 关键修复：更新按钮状态，确保复制和保存按钮能正确启用
+	UpdateButtonStates();
 	
 	// 滚动到底部
 	ScrollToBottom();
@@ -3199,6 +3226,9 @@ LRESULT CPortMasterDlg::OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam)
 		// 更新显示
 		UpdateDataDisplay();
 		ScrollToBottom();
+		
+		// 🔑 关键修复：更新按钮状态，确保复制和保存按钮能正确启用
+		UpdateButtonStates();
 		
 		// 清理内存
 		delete dataPtr;
