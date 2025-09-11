@@ -628,6 +628,13 @@ void CPortMasterDlg::UpdateButtonStates()
 		m_ctrlSaveFileBtn.EnableWindow(hasDisplayData);
 	}
 	
+	// 🔑 关键修复：添加复制按钮状态管理
+	if (IsWindow(m_ctrlCopyBtn.GetSafeHwnd()))
+	{
+		bool hasDisplayData = !m_displayedData.empty();
+		m_ctrlCopyBtn.EnableWindow(hasDisplayData);
+	}
+	
 	// 清除按钮始终可用 - 使用实际绑定的控件
 	if (IsWindow(m_ctrlClearInputBtn.GetSafeHwnd()))
 		m_ctrlClearInputBtn.EnableWindow(TRUE);
