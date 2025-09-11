@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <string>
 #include <vector>
+#include <chrono>  // 🔑 P1-4: 回调频率限制所需
 
 // 自定义消息定义（线程安全UI更新）
 #define WM_UPDATE_PROGRESS      (WM_USER + 1001)
@@ -228,6 +229,10 @@ private:
 	size_t m_totalBytesTransmitted;          // 已传输字节数
 	DWORD m_lastSpeedUpdateTime;             // 上次速度更新时间
 	
+	// 🔑 P1-4: 回调频率限制机制变量
+	std::chrono::steady_clock::time_point m_lastProgressUpdate;
+	static const int MIN_PROGRESS_INTERVAL_MS = 50; // 限制为20fps，防止UI消息队列饱和
+	
 	// Stage 3 新增：自动重试机制变量
 	int m_currentRetryCount;                 // 当前重试次数
 	int m_maxRetryCount;                     // 最大重试次数
@@ -266,6 +271,9 @@ private:
 	void ShowProtocolConfiguration(); // 显示协议配置信息
     void UpdateButtonStates();
     void UpdateStatusBar();                    // Stage 3 新增：综合状态栏信息更新 (SOLID-S: 单一职责)
+    
+    // 🔑 P0-1: 安全的PostMessage封装函数 - 防止MFC断言崩溃
+    bool SafePostMessage(UINT message, WPARAM wParam, LPARAM lParam);
     CString GetCurrentTransferSpeed();         // Stage 3 新增：获取当前传输速度信息
     void EnsureInputEditorVisible();
 	void UpdateEnhancedProtocolStatus();	// 增强的协议状态可视化显示

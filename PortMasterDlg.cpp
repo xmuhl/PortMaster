@@ -69,6 +69,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	, m_lastSpeedUpdateTime(0)
 	, m_currentRetryCount(0)
 	, m_maxRetryCount(3)  // 默认最多重试3次
+	, m_lastProgressUpdate(std::chrono::steady_clock::now())  // 🔑 P1-4: 初始化回调频率限制时间戳
 {
 	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数开始");
 	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
@@ -497,7 +498,7 @@ void CPortMasterDlg::InitializeTransportObjects()
 	});
 	
 	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
-		// 传输完成回调 - 使用PostMessage实现线程安全UI更新
+		// 🔑 P1-5: 增强完成回调线程安全 - 使用SafePostMessage防止崩溃
 		m_bTransmitting = false;  // 首先更新原子状态
 		
 		// 验证窗口句柄有效性后再进行UI操作
@@ -505,11 +506,12 @@ void CPortMasterDlg::InitializeTransportObjects()
 		{
 			CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
 			
-			// 线程安全更新：使用PostMessage发送到UI线程处理
-			if (!PostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
+			// 🔑 P0-1: 使用SafePostMessage提升线程安全性
+			if (!SafePostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
 			{
-				// PostMessage失败，清理分配的内存
+				// SafePostMessage失败，清理分配的内存
 				delete msgData;
+				WriteDebugLog(CT2A(L"[WARNING] 可靠传输完成回调SafePostMessage失败"));
 			}
 		}
 	});
@@ -583,12 +585,15 @@ void CPortMasterDlg::UpdatePortList()
 
 void CPortMasterDlg::UpdateButtonStates()
 {
-	// 添加控件句柄安全检查
-	if (!IsWindow(m_ctrlConnectBtn.GetSafeHwnd()) || !IsWindow(m_ctrlDisconnectBtn.GetSafeHwnd()))
+	// 🔑 P2-7: 异常处理和崩溃预防机制 - UI更新函数保护
+	try 
 	{
-		WriteDebugLog("[WARNING] UpdateButtonStates: 控件句柄未初始化，跳过更新");
-		return;
-	}
+		// 添加控件句柄安全检查
+		if (!IsWindow(m_ctrlConnectBtn.GetSafeHwnd()) || !IsWindow(m_ctrlDisconnectBtn.GetSafeHwnd()))
+		{
+			WriteDebugLog("[WARNING] UpdateButtonStates: 控件句柄未初始化，跳过更新");
+			return;
+		}
 	
 	// 更新在DoDataExchange中实际绑定的控件
 	m_ctrlConnectBtn.EnableWindow(!m_bConnected);
@@ -711,6 +716,17 @@ void CPortMasterDlg::UpdateButtonStates()
 		statusText = L"状态: 就绪";
 	}
 	m_ctrlTransferStatus.SetWindowText(statusText);
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(L"[CRITICAL] UpdateButtonStates异常: %s", CA2W(e.what()));
+		WriteDebugLog(CT2A(errorMsg));
+	}
+	catch (...)
+	{
+		WriteDebugLog(CT2A(L"[CRITICAL] UpdateButtonStates未知异常"));
+	}
 }
 
 // =====================================
@@ -1077,20 +1093,17 @@ void CPortMasterDlg::OnBnClickedConnect()
 	// 连接成功，更新传输对象和可靠通道
 	m_transport = newTransport;
 	
-	// 🔑 关键修复：设置直接传输模式的数据接收回调（必须在创建ReliableChannel之前）
+	// 🔑 P0-2: 设置直接传输模式的数据接收回调（使用SafePostMessage防止MFC崩溃）
 	m_transport->SetDataReceivedCallback([this](const std::vector<uint8_t>& data) {
-		// 直接传输模式数据接收回调 - 线程安全UI更新
-		if (::IsWindow(GetSafeHwnd()))
+		// 复制数据到堆内存用于线程间传递
+		std::vector<uint8_t>* dataPtr = new std::vector<uint8_t>(data);
+		
+		// 使用SafePostMessage发送到UI线程处理 - 防止winq.cpp:1113崩溃
+		if (!SafePostMessage(WM_DISPLAY_RECEIVED_DATA, 0, reinterpret_cast<LPARAM>(dataPtr)))
 		{
-			// 复制数据到堆内存用于线程间传递
-			std::vector<uint8_t>* dataPtr = new std::vector<uint8_t>(data);
-			
-			// 使用PostMessage发送到UI线程处理
-			if (!PostMessage(WM_DISPLAY_RECEIVED_DATA, 0, reinterpret_cast<LPARAM>(dataPtr)))
-			{
-				// PostMessage失败，清理分配的内存
-				delete dataPtr;
-			}
+			// SafePostMessage失败，清理分配的内存
+			delete dataPtr;
+			WriteDebugLog(CT2A(L"[WARNING] 直接传输数据接收回调SafePostMessage失败"));
 		}
 	});
 	
@@ -1099,8 +1112,17 @@ void CPortMasterDlg::OnBnClickedConnect()
 	// SOLID-S: 单一职责 - 配置协议参数 (DRY: 统一配置管理)
 	ConfigureReliableChannelFromConfig();
 	
-	// 设置回调函数 (保持原有功能) - 使用PostMessage实现线程安全UI更新
+	// 设置回调函数 (保持原有功能) - 使用SafePostMessage实现线程安全UI更新
 	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
+		// 🔑 P1-4: 频率限制机制 - 防止UI消息队列饱和
+		auto now = std::chrono::steady_clock::now();
+		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastProgressUpdate);
+		
+		if (elapsed.count() < MIN_PROGRESS_INTERVAL_MS) {
+			return; // 跳过过于频繁的回调
+		}
+		m_lastProgressUpdate = now;
+		
 		// 线程安全的进度更新 - 增强窗口句柄验证
 		if (stats.totalBytes > 0 && ::IsWindow(GetSafeHwnd()))
 		{
@@ -1109,17 +1131,18 @@ void CPortMasterDlg::OnBnClickedConnect()
 			statusText->Format(L"状态: 传输中 (%.1f%%, %zu/%zu 字节)", 
 				stats.GetProgress() * 100, stats.transferredBytes, stats.totalBytes);
 			
-			// 使用PostMessage发送到UI线程处理 - 带错误保护
-			if (!PostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
+			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃
+			if (!SafePostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
 			{
-				// PostMessage失败，清理分配的内存
+				// SafePostMessage失败，清理分配的内存
 				delete statusText;
+				WriteDebugLog(CT2A(L"[WARNING] 可靠传输进度回调SafePostMessage失败"));
 			}
 		}
 	});
 	
 	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
-		// 传输完成回调 - 使用PostMessage实现线程安全UI更新
+		// 🔑 P1-5: 增强完成回调线程安全 - 使用SafePostMessage防止崩溃
 		m_bTransmitting = false;  // 首先更新原子状态
 		
 		// 验证窗口句柄有效性后再进行UI操作
@@ -1127,11 +1150,12 @@ void CPortMasterDlg::OnBnClickedConnect()
 		{
 			CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
 			
-			// 线程安全更新：使用PostMessage发送到UI线程处理
-			if (!PostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
+			// 🔑 P0-1: 使用SafePostMessage提升线程安全性
+			if (!SafePostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
 			{
-				// PostMessage失败，清理分配的内存
+				// SafePostMessage失败，清理分配的内存
 				delete msgData;
+				WriteDebugLog(CT2A(L"[WARNING] 可靠传输完成回调SafePostMessage失败"));
 			}
 		}
 	});
@@ -3581,4 +3605,61 @@ void CPortMasterDlg::OnBnClickedStop()
 	
 	// 立即更新按钮状态
 	UpdateButtonStates();
+}
+
+// 🔑 P0-1: 安全的PostMessage封装函数 - 防止MFC断言崩溃
+bool CPortMasterDlg::SafePostMessage(UINT message, WPARAM wParam, LPARAM lParam)
+{
+	// 🔑 P2-7: 异常处理和崩溃预防机制
+	try 
+	{
+		// 多重安全检查 - 防止winq.cpp:1113断言失败
+		if (!::IsWindow(GetSafeHwnd()))
+		{
+			WriteDebugLog(CT2A(L"[WARNING] SafePostMessage: 窗口句柄无效"));
+			return false;
+		}
+		
+		// 检查窗口是否属于当前线程 - 防止跨线程访问问题
+		DWORD windowThreadId = ::GetWindowThreadProcessId(GetSafeHwnd(), NULL);
+		DWORD currentThreadId = ::GetCurrentThreadId();
+		if (windowThreadId != currentThreadId)
+		{
+			WriteDebugLog(CT2A(L"[WARNING] SafePostMessage: 跨线程访问检测"));
+			// 对于跨线程情况，仍然尝试发送，但记录警告
+		}
+		
+		// 双重句柄验证，防止竞态条件
+		HWND hWnd = GetSafeHwnd();
+		if (!::IsWindow(hWnd))
+		{
+			WriteDebugLog(CT2A(L"[WARNING] SafePostMessage: 窗口句柄在使用前失效"));
+			return false;
+		}
+		
+		// 安全地发送消息
+		BOOL result = ::PostMessage(hWnd, message, wParam, lParam);
+		if (!result)
+		{
+			DWORD error = ::GetLastError();
+			CString errorMsg;
+			errorMsg.Format(L"[ERROR] SafePostMessage失败: 错误码=%lu, 消息=0x%X", error, message);
+			WriteDebugLog(CT2A(errorMsg));
+			return false;
+		}
+		
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(L"[CRITICAL] SafePostMessage异常: %s", CA2W(e.what()));
+		WriteDebugLog(CT2A(errorMsg));
+		return false;
+	}
+	catch (...)
+	{
+		WriteDebugLog(CT2A(L"[CRITICAL] SafePostMessage未知异常"));
+		return false;
+	}
 }
