@@ -142,13 +142,13 @@ git pull --rebase 2>/dev/null || echo "同步完成或无需同步"
 **首选编译命令（WSL环境）：**
 ```bash
 # 使用cmd.exe执行Windows批处理脚本
-cmd.exe /c "cd /d \"C:\Users\huangl\Desktop\PortMaster\" && autobuild_x86_debug.bat"
+cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
 ```
 
 **备用编译命令（WSL环境）：**
 ```bash
 # 备用编译脚本
-cmd.exe /c "cd /d \"C:\Users\huangl\Desktop\PortMaster\" && autobuild.bat"
+cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild.bat" 2>&1 | tail -20
 ```
 
 **编译要求：**

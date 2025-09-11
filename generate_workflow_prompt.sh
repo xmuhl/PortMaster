@@ -137,9 +137,9 @@ generate_workflow_prompt() {
             workflow_prompt+="### 3. 编译验证（必需）\n"
             workflow_prompt+="\`\`\`bash\n"
             workflow_prompt+="# 首选编译命令\n"
-            workflow_prompt+="cmd.exe /c \"cd /d \\\"C:\\\\Users\\\\huangl\\\\Desktop\\\\PortMaster\\\" && autobuild_x86_debug.bat\"\n\n"
+            workflow_prompt+="cd \"/mnt/c/Users/huangl/Desktop/PortMaster\" && cmd.exe /c \"autobuild_x86_debug.bat\" 2>&1 | tail -20\n\n"
             workflow_prompt+="# 如果失败则使用备用命令\n"
-            workflow_prompt+="cmd.exe /c \"cd /d \\\"C:\\\\Users\\\\huangl\\\\Desktop\\\\PortMaster\\\" && autobuild.bat\"\n"
+            workflow_prompt+="cd \"/mnt/c/Users/huangl/Desktop/PortMaster\" && cmd.exe /c \"autobuild.bat\" 2>&1 | tail -20\n"
             workflow_prompt+="\`\`\`\n"
             workflow_prompt+="**要求**: 必须达到 0 error 0 warning 标准，展示关键日志片段\n\n"
         else
