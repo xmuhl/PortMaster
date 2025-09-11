@@ -218,6 +218,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_MESSAGE(WM_UPDATE_PROGRESS, &CPortMasterDlg::OnUpdateProgress)
 	ON_MESSAGE(WM_UPDATE_COMPLETION, &CPortMasterDlg::OnUpdateCompletion)
 	ON_MESSAGE(WM_UPDATE_FILE_RECEIVED, &CPortMasterDlg::OnUpdateFileReceived)
+	ON_MESSAGE(WM_DISPLAY_RECEIVED_DATA, &CPortMasterDlg::OnDisplayReceivedDataMsg)
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -2137,23 +2138,14 @@ void CPortMasterDlg::DisplayReceivedData(const std::vector<uint8_t>& data)
 	if (data.empty())
 		return;
 		
-	// 更新显示数据缓冲区 (SOLID-S: 单一职责 - 数据管理)
+	// 线程安全地更新显示数据缓冲区 (SOLID-S: 单一职责 - 数据管理)
 	{
 		std::lock_guard<std::mutex> lock(m_displayDataMutex);
 		m_displayedData = data; // 替换而不是追加
 	}
 	
-	// 根据当前显示模式更新统一的数据视图
-	if (m_bHexDisplay)
-	{
-		CString hexDisplay = FormatHexDisplay(data);
-		m_ctrlDataView.SetWindowText(hexDisplay);
-	}
-	else
-	{
-		CString textDisplay = FormatTextDisplay(data);
-		m_ctrlDataView.SetWindowText(textDisplay);
-	}
+	// 🔑 关键修复：统一调用UpdateDataDisplay，消除格式不一致
+	UpdateDataDisplay();
 	
 	// 滚动到底部
 	ScrollToBottom();
@@ -2616,8 +2608,14 @@ void CPortMasterDlg::ScrollToBottom()
 // 第四阶段核心：分块传输定时器处理 (SOLID-S: 单一职责 - 分块数据传输)
 void CPortMasterDlg::OnChunkTransmissionTimer()
 {
-	// 验证传输状态
-	if (!m_bTransmitting || m_chunkTransmissionData.empty()) {
+	// 修复状态检查逻辑：使用统一的传输状态检查
+	// 检查传输是否应该继续（TRANSMITTING状态才继续，PAUSED状态暂停）
+	if (m_transmissionState != TransmissionState::TRANSMITTING || m_chunkTransmissionData.empty()) {
+		// 如果是暂停状态，保持定时器但不执行传输
+		if (m_transmissionState == TransmissionState::PAUSED) {
+			return; // 暂停状态下保持定时器运行，等待恢复
+		}
+		// 如果是其他状态（IDLE、COMPLETED、FAILED），停止定时器
 		return;
 	}
 	
@@ -2877,76 +2875,45 @@ LRESULT CPortMasterDlg::OnUpdateFileReceived(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+// 🔑 线程安全的数据显示更新消息处理函数
+LRESULT CPortMasterDlg::OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam)
+{
+	// wParam未使用，lParam包含数据向量指针
+	std::vector<uint8_t>* dataPtr = reinterpret_cast<std::vector<uint8_t>*>(lParam);
+	
+	if (dataPtr) {
+		// 追加模式显示数据
+		{
+			std::lock_guard<std::mutex> lock(m_displayDataMutex);
+			m_displayedData.insert(m_displayedData.end(), 
+								 dataPtr->begin(), dataPtr->end());
+		}
+		
+		// 更新显示
+		UpdateDataDisplay();
+		ScrollToBottom();
+		
+		// 清理内存
+		delete dataPtr;
+	}
+	
+	return 0;
+}
+
 // =====================================
 // 数据格式化方法实现 (SOLID-S: 单一职责)
 // =====================================
 
 CString CPortMasterDlg::FormatDataAsHex(const std::vector<uint8_t>& data)
 {
-	if (data.empty()) {
-		return CString(L"");
-	}
-	
-	CString result;
-	result.Preallocate(static_cast<int>(data.size() * 3)); // 预分配内存优化性能
-	
-	for (size_t i = 0; i < data.size(); ++i) {
-		CString hexByte;
-		hexByte.Format(L"%02X", data[i]);
-		result += hexByte;
-		
-		// 每16个字节换行，提高可读性
-		if ((i + 1) % 16 == 0 && i != data.size() - 1) {
-			result += L"\r\n";
-		} else if (i != data.size() - 1) {
-			result += L" ";
-		}
-	}
-	
-	return result;
+	// 🔑 关键修复：直接调用详细版本，确保一致性
+	return FormatHexDisplay(data);
 }
 
 CString CPortMasterDlg::FormatDataAsText(const std::vector<uint8_t>& data)
 {
-	if (data.empty()) {
-		return CString(L"");
-	}
-	
-	// 尝试UTF-8解码，如果失败则使用字符显示
-	try {
-		// 先尝试UTF-8解码
-		std::string utf8Str(data.begin(), data.end());
-		int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
-			utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
-		
-		if (wideStrLen > 0) {
-			std::vector<wchar_t> wideStr(wideStrLen + 1);
-			MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
-				utf8Str.c_str(), static_cast<int>(utf8Str.length()), 
-				wideStr.data(), wideStrLen);
-			wideStr[wideStrLen] = L'\0';
-			return CString(wideStr.data());
-		}
-	}
-	catch (...) {
-		// UTF-8解码失败，使用字符显示
-	}
-	
-	// UTF-8解码失败，使用可见字符显示
-	CString result;
-	result.Preallocate(static_cast<int>(data.size()));
-	
-	for (uint8_t byte : data) {
-		if (byte >= 32 && byte <= 126) {
-			// 可打印ASCII字符
-			result += static_cast<wchar_t>(byte);
-		} else {
-			// 不可打印字符用点号表示
-			result += L'.';
-		}
-	}
-	
-	return result;
+	// 🔑 关键修复：直接调用详细版本，确保一致性
+	return FormatTextDisplay(data);
 }
 
 // =====================================
@@ -2968,11 +2935,11 @@ void CPortMasterDlg::UpdateDataDisplay()
 	
 	CString formattedData;
 	
-	// 根据当前显示模式选择格式化方法
+	// 🔑 关键修复：统一使用详细格式化方法，确保显示一致性
 	if (m_bHexDisplay) {
-		formattedData = FormatDataAsHex(m_displayedData);
+		formattedData = FormatHexDisplay(m_displayedData);
 	} else {
-		formattedData = FormatDataAsText(m_displayedData);
+		formattedData = FormatTextDisplay(m_displayedData);
 	}
 	
 	// 更新显示控件
@@ -3253,17 +3220,14 @@ void CPortMasterDlg::OnBnClickedStop()
 	{
 		// 正在传输 -> 暂停
 		SetTransmissionState(TransmissionState::PAUSED);
-		AppendLog(L"传输已暂停，点击发送按钮继续");
+		AppendLog(L"传输已暂停，点击停止按钮可完全停止，点击发送按钮继续传输");
 		
-		// 如果有定时器正在运行，先暂停它
-		if (m_transmissionTimer != 0) {
-			KillTimer(m_transmissionTimer);
-			m_transmissionTimer = 0;
-		}
+		// 保持定时器运行，但定时器会检查状态并暂停执行
+		// 不需要停止定时器，让定时器在暂停状态下待机
 	}
 	else if (currentState == TransmissionState::PAUSED)
 	{
-		// 暂停状态 -> 停止
+		// 暂停状态 -> 完全停止
 		SetTransmissionState(TransmissionState::IDLE);
 		StopDataTransmission(false);
 		AppendLog(L"传输已完全停止");

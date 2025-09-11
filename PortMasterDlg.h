@@ -24,6 +24,7 @@
 #define WM_UPDATE_PROGRESS      (WM_USER + 1001)
 #define WM_UPDATE_COMPLETION    (WM_USER + 1002)
 #define WM_UPDATE_FILE_RECEIVED (WM_USER + 1003)
+#define WM_DISPLAY_RECEIVED_DATA (WM_USER + 1004)
 
 // 前置声明
 
@@ -145,6 +146,7 @@ protected:
 	afx_msg LRESULT OnUpdateProgress(WPARAM wParam, LPARAM lParam);        // 进度更新
 	afx_msg LRESULT OnUpdateCompletion(WPARAM wParam, LPARAM lParam);      // 完成状态更新
 	afx_msg LRESULT OnUpdateFileReceived(WPARAM wParam, LPARAM lParam);    // 文件接收更新
+	afx_msg LRESULT OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam); // 🔑 数据显示更新
 
 	DECLARE_MESSAGE_MAP()
 
