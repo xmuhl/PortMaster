@@ -341,6 +341,7 @@ private:
 	CString FormatHexDisplay(const std::vector<uint8_t>& data);
 	CString FormatHexDisplaySimple(const std::vector<uint8_t>& data);  // 用于复制的简化格式
 	CString FormatTextDisplay(const std::vector<uint8_t>& data);
+	CString FormatMixedDisplay(const std::vector<uint8_t>& data);      // 🔑 智能混合显示
 	void ScrollToBottom();
 	void DisplayDataAppendMode(const std::vector<uint8_t>& data);
 	

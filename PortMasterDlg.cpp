@@ -2567,23 +2567,79 @@ CString CPortMasterDlg::FormatHexDisplay(const std::vector<uint8_t>& data)
 
 CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
 {
-	if (data.empty())
-		return L"";
-		
-	// 尝试将数据转换为UTF-8文本
-	std::string utf8Text(data.begin(), data.end());
-	// 使用 MultiByteToWideChar 进行 UTF-8 到 UTF-16 转换，避免不安全的临时对象转换告警
-	const char* src = utf8Text.c_str();
-	int srcLen = static_cast<int>(utf8Text.size());
-	int wlen = MultiByteToWideChar(CP_UTF8, 0, src, srcLen, NULL, 0);
-	if (wlen <= 0)
-	{
-		return L"";
+	if (data.empty()) return L"";
+	
+	std::string utf8Str(data.begin(), data.end());
+	
+	// 🔑 策略1：宽容的UTF-8解码（不使用严格的MB_ERR_INVALID_CHARS）
+	int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, 
+		utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+	
+	if (wideStrLen > 0) {
+		std::vector<wchar_t> wideStr(wideStrLen + 1);
+		int actualLen = MultiByteToWideChar(CP_UTF8, 0,
+			utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+			wideStr.data(), wideStrLen);
+			
+		if (actualLen > 0) {
+			wideStr[actualLen] = L'\0';
+			return CString(wideStr.data());
+		}
 	}
+	
+	// 🔑 策略2：GBK/GB2312解码（支持简体中文）
+	wideStrLen = MultiByteToWideChar(CP_ACP, 0,
+		utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+	
+	if (wideStrLen > 0) {
+		std::vector<wchar_t> wideStr(wideStrLen + 1);
+		int actualLen = MultiByteToWideChar(CP_ACP, 0,
+			utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+			wideStr.data(), wideStrLen);
+			
+		if (actualLen > 0) {
+			wideStr[actualLen] = L'\0';
+			return CString(wideStr.data());
+		}
+	}
+	
+	// 🔑 策略3：智能混合显示（保持可读性）
+	return FormatMixedDisplay(data);
+}
+
+// 🔑 智能混合显示策略（SOLID-S: 单一职责 - 混合格式显示）
+CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
+{
 	CString result;
-	LPWSTR buf = result.GetBuffer(wlen);
-	int written = MultiByteToWideChar(CP_UTF8, 0, src, srcLen, buf, wlen);
-	result.ReleaseBuffer((written > 0) ? written : 0);
+	result.Preallocate(static_cast<int>(data.size() * 2));
+	
+	for (size_t i = 0; i < data.size(); ++i) {
+		uint8_t byte = data[i];
+		
+		if (byte >= 32 && byte <= 126) {
+			// 可打印ASCII字符
+			result += static_cast<wchar_t>(byte);
+		} else if (byte >= 0x80) {
+			// 可能的多字节字符，显示为十六进制
+			CString hexByte;
+			hexByte.Format(L"[%02X]", byte);
+			result += hexByte;
+		} else {
+			// 控制字符，显示为可读转义序列
+			switch (byte) {
+			case 0x0A: result += L"⏎"; break;      // 换行符号
+			case 0x0D: result += L"↵"; break;      // 回车符号  
+			case 0x09: result += L"→"; break;      // 制表符号
+			case 0x00: result += L"∅"; break;      // 空字符符号
+			default:
+				CString ctrlChar;
+				ctrlChar.Format(L"[%02X]", byte);
+				result += ctrlChar;
+				break;
+			}
+		}
+	}
+	
 	return result;
 }
 
