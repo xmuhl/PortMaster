@@ -480,41 +480,61 @@ void CPortMasterDlg::InitializeTransportObjects()
 	
 	// 设置可靠通道回调 - 使用PostMessage实现线程安全UI更新
 	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
-		// 线程安全的进度更新
-		if (stats.totalBytes > 0)
+		// 线程安全的进度更新 - 增强窗口句柄验证
+		if (stats.totalBytes > 0 && ::IsWindow(GetSafeHwnd()))
 		{
 			int progress = static_cast<int>((stats.transferredBytes * 100) / stats.totalBytes);
 			CString* statusText = new CString();
 			statusText->Format(L"传输中 (%.1f%%)", stats.GetProgress() * 100);
 			
-			// 使用PostMessage发送到UI线程处理
-			PostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText));
+			// 使用PostMessage发送到UI线程处理 - 带错误保护
+			if (!PostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete statusText;
+			}
 		}
 	});
 	
 	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
 		// 传输完成回调 - 使用PostMessage实现线程安全UI更新
-		CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
+		m_bTransmitting = false;  // 首先更新原子状态
 		
-		// 线程安全更新：使用PostMessage发送到UI线程处理
-		PostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData));
-		
-		m_bTransmitting = false;
+		// 验证窗口句柄有效性后再进行UI操作
+		if (::IsWindow(GetSafeHwnd()))
+		{
+			CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
+			
+			// 线程安全更新：使用PostMessage发送到UI线程处理
+			if (!PostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete msgData;
+			}
+		}
 	});
 	
 	m_reliableChannel->SetFileReceivedCallback([this](const std::string& filename, const std::vector<uint8_t>& data) {
 		// 文件接收完成回调 - 使用PostMessage实现线程安全UI更新
 		
-		// 创建数据包用于传递到UI线程
-		struct FileReceivedData {
-			std::string filename;
-			std::vector<uint8_t> data;
-		};
-		
-		FileReceivedData* receivedData = new FileReceivedData{filename, data};
-		
-		// 线程安全更新：使用PostMessage发送到UI线程处理
-		PostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData));
+		// 验证窗口句柄有效性后再进行UI操作
+		if (::IsWindow(GetSafeHwnd()))
+		{
+			// 创建数据包用于传递到UI线程
+			struct FileReceivedData {
+				std::string filename;
+				std::vector<uint8_t> data;
+			};
+			
+			FileReceivedData* receivedData = new FileReceivedData{filename, data};
+			
+			// 线程安全更新：使用PostMessage发送到UI线程处理
+			if (!PostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete receivedData;
+			}
+		}
 	});
 	
 	WriteDebugLog("[DEBUG] CPortMasterDlg::InitializeTransportObjects: 传输对象初始化完成");
@@ -1063,42 +1083,62 @@ void CPortMasterDlg::OnBnClickedConnect()
 	
 	// 设置回调函数 (保持原有功能) - 使用PostMessage实现线程安全UI更新
 	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
-		// 线程安全的进度更新
-		if (stats.totalBytes > 0)
+		// 线程安全的进度更新 - 增强窗口句柄验证
+		if (stats.totalBytes > 0 && ::IsWindow(GetSafeHwnd()))
 		{
 			int progress = static_cast<int>((stats.transferredBytes * 100) / stats.totalBytes);
 			CString* statusText = new CString();
 			statusText->Format(L"状态: 传输中 (%.1f%%, %zu/%zu 字节)", 
 				stats.GetProgress() * 100, stats.transferredBytes, stats.totalBytes);
 			
-			// 使用PostMessage发送到UI线程处理
-			PostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText));
+			// 使用PostMessage发送到UI线程处理 - 带错误保护
+			if (!PostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete statusText;
+			}
 		}
 	});
 	
 	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
 		// 传输完成回调 - 使用PostMessage实现线程安全UI更新
-		CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
+		m_bTransmitting = false;  // 首先更新原子状态
 		
-		// 线程安全更新：使用PostMessage发送到UI线程处理
-		PostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData));
-		
-		m_bTransmitting = false;
+		// 验证窗口句柄有效性后再进行UI操作
+		if (::IsWindow(GetSafeHwnd()))
+		{
+			CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
+			
+			// 线程安全更新：使用PostMessage发送到UI线程处理
+			if (!PostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete msgData;
+			}
+		}
 	});
 	
 	m_reliableChannel->SetFileReceivedCallback([this](const std::string& filename, const std::vector<uint8_t>& data) {
 		// 文件接收完成回调 - 使用PostMessage实现线程安全UI更新
 		
-		// 创建数据包用于传递到UI线程
-		struct FileReceivedData {
-			std::string filename;
-			std::vector<uint8_t> data;
-		};
-		
-		FileReceivedData* receivedData = new FileReceivedData{filename, data};
-		
-		// 线程安全更新：使用PostMessage发送到UI线程处理
-		PostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData));
+		// 验证窗口句柄有效性后再进行UI操作
+		if (::IsWindow(GetSafeHwnd()))
+		{
+			// 创建数据包用于传递到UI线程
+			struct FileReceivedData {
+				std::string filename;
+				std::vector<uint8_t> data;
+			};
+			
+			FileReceivedData* receivedData = new FileReceivedData{filename, data};
+			
+			// 线程安全更新：使用PostMessage发送到UI线程处理
+			if (!PostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
+			{
+				// PostMessage失败，清理分配的内存
+				delete receivedData;
+			}
+		}
 	});
 	
 	// 启用接收功能
@@ -1259,44 +1299,87 @@ void CPortMasterDlg::OnBnClickedSend()
 	
 	if (m_bReliableMode && m_reliableChannel)
 	{
-		// 使用可靠传输模式
+		// 使用可靠传输模式 - 增强错误检查和状态验证
+		
+		// 1. 验证可靠传输通道是否已激活
+		if (!m_reliableChannel->IsActive())
+		{
+			AppendLog(L"可靠传输通道未启动，尝试启动...");
+			if (!m_reliableChannel->Start())
+			{
+				SetTransmissionState(TransmissionState::FAILED);
+				AppendLog(L"无法启动可靠传输通道");
+				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
+				if (!error.IsEmpty())
+				{
+					AppendLog(L"启动错误: " + error);
+				}
+				ShowUserMessage(L"可靠传输启动失败", 
+					L"可靠传输通道无法启动，请检查连接状态或切换到普通传输模式", 
+					MB_ICONERROR);
+				return;
+			}
+			AppendLog(L"可靠传输通道启动成功");
+		}
+		
+		// 2. 验证可靠传输通道状态
+		ReliableState currentState = m_reliableChannel->GetState();
+		if (currentState != RELIABLE_IDLE)
+		{
+			SetTransmissionState(TransmissionState::FAILED);
+			CString stateMsg;
+			stateMsg.Format(L"可靠传输通道状态异常 (状态码: %d)，请等待当前操作完成或重新连接", static_cast<int>(currentState));
+			AppendLog(stateMsg);
+			ShowUserMessage(L"可靠传输状态错误", stateMsg, MB_ICONWARNING);
+			return;
+		}
+		
+		// 3. 开始传输操作
 		SetTransmissionState(TransmissionState::TRANSMITTING);
+		bool transmissionStarted = false;
+		
 		if (isFileTransmission && !m_currentFileName.IsEmpty())
 		{
 			// 发送文件（带文件名）
 			std::string fileNameStr = CT2A(m_currentFileName);
-			if (m_reliableChannel->SendFile(fileNameStr, dataToSend))
+			transmissionStarted = m_reliableChannel->SendFile(fileNameStr, dataToSend);
+			if (transmissionStarted)
 			{
 				AppendLog(L"开始可靠文件传输: " + m_currentFileName);
 			}
 			else
 			{
-				SetTransmissionState(TransmissionState::FAILED);
 				AppendLog(L"可靠文件传输启动失败");
-				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
-				if (!error.IsEmpty())
-				{
-					AppendLog(L"错误: " + error);
-				}
 			}
 		}
 		else
 		{
 			// 发送数据
-			if (m_reliableChannel->SendData(dataToSend))
+			transmissionStarted = m_reliableChannel->SendData(dataToSend);
+			if (transmissionStarted)
 			{
 				AppendLog(L"开始可靠传输");
 			}
 			else
 			{
-				SetTransmissionState(TransmissionState::FAILED);
 				AppendLog(L"可靠传输启动失败");
-				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
-				if (!error.IsEmpty())
-				{
-					AppendLog(L"错误: " + error);
-				}
 			}
+		}
+		
+		// 4. 处理传输启动失败的情况
+		if (!transmissionStarted)
+		{
+			SetTransmissionState(TransmissionState::FAILED);
+			CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
+			if (!error.IsEmpty())
+			{
+				AppendLog(L"错误详情: " + error);
+			}
+			
+			// 提供用户友好的错误处理建议
+			ShowUserMessage(L"可靠传输失败", 
+				L"可靠传输启动失败。\n\n建议操作：\n1. 检查连接状态\n2. 重新连接端口\n3. 或切换到普通传输模式", 
+				MB_ICONERROR);
 		}
 	}
 	else
