@@ -529,11 +529,11 @@ void CPortMasterDlg::InitializeTransportObjects()
 		{
 			// 创建数据包用于传递到UI线程
 			struct FileReceivedData {
-				std::string filename;
+				CString filename;
 				std::vector<uint8_t> data;
 			};
 			
-			FileReceivedData* receivedData = new FileReceivedData{filename, data};
+			FileReceivedData* receivedData = new FileReceivedData{CA2W(filename.c_str()), data};
 			
 			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃（直接传输）
 			CString debugMsg;
@@ -1181,11 +1181,11 @@ void CPortMasterDlg::OnBnClickedConnect()
 		{
 			// 创建数据包用于传递到UI线程
 			struct FileReceivedData {
-				std::string filename;
+				CString filename;
 				std::vector<uint8_t> data;
 			};
 			
-			FileReceivedData* receivedData = new FileReceivedData{filename, data};
+			FileReceivedData* receivedData = new FileReceivedData{CA2W(filename.c_str()), data};
 			
 			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃（可靠传输）
 			CString debugMsg2;
@@ -3232,12 +3232,12 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 LRESULT CPortMasterDlg::OnUpdateFileReceived(WPARAM wParam, LPARAM lParam)
 {
 	// wParam未使用，lParam包含文件信息结构体指针
-	struct FileReceivedInfo {
+	struct FileReceivedData {
 		CString filename;
 		std::vector<uint8_t> data;
 	};
 	
-	FileReceivedInfo* info = reinterpret_cast<FileReceivedInfo*>(lParam);
+	FileReceivedData* info = reinterpret_cast<FileReceivedData*>(lParam);
 	
 	if (info) {
 		// 线程安全的UI更新 - 显示接收到的文件数据
