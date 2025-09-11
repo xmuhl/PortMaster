@@ -3289,6 +3289,10 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 		SetTransmissionState(TransmissionState::FAILED);
 	}
 	
+	// 🔑 DEBUGGER AGENT发现的关键修复：传输完成后必须更新按钮状态
+	// 确保"发送"按钮从"停止"状态恢复到正常的"发送"状态
+	UpdateButtonStates();
+	
 	return 0;
 }
 
