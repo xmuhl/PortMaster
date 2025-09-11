@@ -85,6 +85,9 @@ public:
     TransferStats GetStats() const;
     std::string GetLastError() const;
     
+    // 状态控制
+    void ResetToIdle(); // 重置到空闲状态（用于UI状态同步）
+    
     // 配置
     void SetAckTimeout(int timeoutMs) { m_ackTimeoutMs = timeoutMs; }
     void SetMaxRetries(int maxRetries) { m_maxRetries = maxRetries; }

@@ -3219,9 +3219,15 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 		}
 	}
 	
-	// 🔑 关键修复：使用统一的状态管理
+	// 🔑 关键修复：使用统一的状态管理并同步ReliableChannel状态
 	if (success) {
 		SetTransmissionState(TransmissionState::COMPLETED);
+		
+		// 🔑 修复状态同步问题：在UI处理完成通知后，立即重置ReliableChannel到IDLE状态
+		if (m_reliableChannel && m_reliableChannel->GetState() == RELIABLE_DONE) {
+			// 直接重置ReliableChannel状态，确保状态一致性
+			m_reliableChannel->ResetToIdle();
+		}
 	} else {
 		SetTransmissionState(TransmissionState::FAILED);
 	}
@@ -3412,8 +3418,25 @@ TransmissionState CPortMasterDlg::GetTransmissionState() const
 
 bool CPortMasterDlg::IsTransmissionActive() const
 {
-	return (m_transmissionState == TransmissionState::TRANSMITTING || 
-			m_transmissionState == TransmissionState::PAUSED);
+	// 🔑 修复状态同步问题：同时检查UI状态和可靠传输状态
+	bool uiActive = (m_transmissionState == TransmissionState::TRANSMITTING || 
+					 m_transmissionState == TransmissionState::PAUSED);
+	
+	// 在可靠传输模式下，还需要检查ReliableChannel的状态
+	if (m_bReliableMode && m_reliableChannel)
+	{
+		ReliableState reliableState = m_reliableChannel->GetState();
+		bool reliableActive = (reliableState == RELIABLE_STARTING || 
+							   reliableState == RELIABLE_SENDING || 
+							   reliableState == RELIABLE_ENDING ||
+							   reliableState == RELIABLE_RECEIVING);
+		
+		// 可靠传输模式下，任一层面活跃即认为传输活跃
+		return uiActive || reliableActive;
+	}
+	
+	// 非可靠传输模式，只检查UI状态
+	return uiActive;
 }
 
 // =====================================

@@ -233,6 +233,15 @@ std::string ReliableChannel::GetLastError() const
     return m_lastError;
 }
 
+void ReliableChannel::ResetToIdle()
+{
+    // 🔑 线程安全地重置状态到IDLE，用于UI同步
+    std::lock_guard<std::mutex> lock(m_mutex);
+    if (m_state == RELIABLE_DONE) {
+        SetState(RELIABLE_IDLE);
+    }
+}
+
 void ReliableChannel::ProtocolThreadFunc()
 {
     while (!m_stopThread)
@@ -550,8 +559,9 @@ void ReliableChannel::SendEndFrame()
             SetState(RELIABLE_DONE);
             NotifyCompletion(true, "传输完成");
             
-            // 重置到空闲状态
-            SetState(RELIABLE_IDLE);
+            // 🔑 修复状态同步问题：延迟重置状态，让UI有时间处理完成通知
+            // 不立即重置为IDLE，让UI线程通过OnUpdateCompletion来控制最终状态
+            // SetState(RELIABLE_IDLE); // 移除立即重置
         }
     }
     else
@@ -624,14 +634,15 @@ void ReliableChannel::CompleteReceive()
         }
         
         NotifyCompletion(true, "文件接收完成: " + m_receivedFilename);
+        
+        // 🔑 修复状态同步问题：延迟重置状态，让UI有时间处理完成通知
+        // 不立即重置为IDLE，让UI线程通过OnUpdateCompletion来控制最终状态
+        // SetState(RELIABLE_IDLE); // 移除立即重置
     }
     else
     {
         AbortReceive("文件保存失败");
     }
-    
-    // 重置到空闲状态
-    SetState(RELIABLE_IDLE);
 }
 
 void ReliableChannel::AbortReceive(const std::string& reason)
