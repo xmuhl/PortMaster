@@ -1159,8 +1159,8 @@ void CPortMasterDlg::OnBnClickedDisconnect()
 	}
 	
 	m_bConnected = false;
-	m_bTransmitting = false;
-	UpdateButtonStates();
+	// 🔑 关键修复：断开连接时重置传输状态
+	SetTransmissionState(TransmissionState::IDLE);
 	AppendLog(L"已断开连接");
 	
 	// 更新状态显示
@@ -2365,8 +2365,8 @@ void CPortMasterDlg::StartDataTransmission(const std::vector<uint8_t>& data)
 		return;
 	}
 	
-	// 设置传输状态
-	m_bTransmitting = true;
+	// 🔑 关键修复：使用统一的状态管理系统
+	SetTransmissionState(TransmissionState::TRANSMITTING);
 	
 	// 初始化传输参数
 	m_chunkTransmissionData = data;
@@ -2399,8 +2399,7 @@ void CPortMasterDlg::StartDataTransmission(const std::vector<uint8_t>& data)
 	
 	if (m_transmissionTimer == 0) {
 		// 定时器启动失败
-		m_bTransmitting = false;
-		UpdateButtonStates();
+		SetTransmissionState(TransmissionState::FAILED);
 		AppendLog(L"错误：无法启动传输定时器");
 		return;
 	}
@@ -2664,14 +2663,58 @@ void CPortMasterDlg::ScrollToBottom()
 // 第四阶段核心：分块传输定时器处理 (SOLID-S: 单一职责 - 分块数据传输)
 void CPortMasterDlg::OnChunkTransmissionTimer()
 {
-	// 修复状态检查逻辑：使用统一的传输状态检查
-	// 检查传输是否应该继续（TRANSMITTING状态才继续，PAUSED状态暂停）
-	if (m_transmissionState != TransmissionState::TRANSMITTING || m_chunkTransmissionData.empty()) {
-		// 如果是暂停状态，保持定时器但不执行传输
-		if (m_transmissionState == TransmissionState::PAUSED) {
-			return; // 暂停状态下保持定时器运行，等待恢复
+	// 🔑 Task 3.3 增强：定时器有效性验证（防止重复调用）
+	if (m_transmissionTimer == 0) {
+		// 定时器已被外部停止，立即退出
+		return;
+	}
+	
+	// 🔑 Task 3.3 增强：线程安全的状态检查（添加中断信号检查）
+	TransmissionState currentState = GetTransmissionState();
+	
+	// 🔑 Task 3.3 增强：优先检查中断信号
+	if (currentState == TransmissionState::IDLE || 
+		currentState == TransmissionState::COMPLETED || 
+		currentState == TransmissionState::FAILED) {
+		// 检测到中断信号，安全停止传输
+		AppendLog(L"检测到中断信号，停止传输定时器");
+		if (m_transmissionTimer != 0) {
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
 		}
-		// 如果是其他状态（IDLE、COMPLETED、FAILED），停止定时器
+		return;
+	}
+	
+	// 🔑 Task 3.3 增强：数据有效性检查（安全的传输状态转换）
+	if (m_chunkTransmissionData.empty()) {
+		AppendLog(L"传输数据为空，安全停止传输");
+		SetTransmissionState(TransmissionState::FAILED);
+		StopDataTransmission(false);
+		return;
+	}
+	
+	// 🔑 Task 3.3 增强：暂停状态的智能处理
+	if (currentState == TransmissionState::PAUSED) {
+		// 暂停状态下保持定时器运行但不执行传输，等待恢复信号
+		return;
+	}
+	
+	// 🔑 Task 3.3 增强：仅在TRANSMITTING状态下执行传输
+	if (currentState != TransmissionState::TRANSMITTING) {
+		// 未知状态，安全转换为失败状态
+		CString statusMsg;
+		statusMsg.Format(L"传输状态异常 (%d)，停止传输", static_cast<int>(currentState));
+		AppendLog(statusMsg);
+		SetTransmissionState(TransmissionState::FAILED);
+		StopDataTransmission(false);
+		return;
+	}
+	
+	// 🔑 Task 3.3 增强：安全的数据块计算
+	if (m_chunkTransmissionIndex >= m_chunkTransmissionData.size()) {
+		// 传输已完成，执行安全的状态转换
+		AppendLog(L"数据传输完成，执行完成状态转换");
+		StopDataTransmission(true);
 		return;
 	}
 	
@@ -2681,7 +2724,15 @@ void CPortMasterDlg::OnChunkTransmissionTimer()
 	
 	if (currentChunkSize == 0) {
 		// 传输已完成
+		AppendLog(L"当前数据块大小为0，传输完成");
 		StopDataTransmission(true);
+		return;
+	}
+	
+	// 🔑 Task 3.3 增强：传输前的最终中断检查
+	currentState = GetTransmissionState();
+	if (currentState != TransmissionState::TRANSMITTING) {
+		AppendLog(L"传输前检测到状态变更，取消当前传输");
 		return;
 	}
 	
@@ -2691,12 +2742,19 @@ void CPortMasterDlg::OnChunkTransmissionTimer()
 		m_chunkTransmissionData.begin() + m_chunkTransmissionIndex + currentChunkSize
 	);
 	
-	// 执行真实的数据传输 (SOLID-D: 依赖抽象 - 使用传输接口)
+	// 🔑 Task 3.3 增强：安全的数据传输执行 (SOLID-D: 依赖抽象 - 使用传输接口)
 	bool transmissionSuccess = false;
 	if (m_transport && m_transport->IsOpen()) {
 		try {
 			size_t written = m_transport->Write(currentChunk);
 			transmissionSuccess = (written == currentChunk.size());
+			
+			// 🔑 Task 3.3 增强：传输后立即检查中断信号
+			currentState = GetTransmissionState();
+			if (currentState != TransmissionState::TRANSMITTING) {
+				AppendLog(L"传输后检测到中断信号，停止后续处理");
+				return;
+			}
 			
 			if (transmissionSuccess) {
 				// 更新传输进度
@@ -2719,22 +2777,27 @@ void CPortMasterDlg::OnChunkTransmissionTimer()
 				AppendLog(debugMsg);
 			}
 			else {
-				// 写入失败
+				// 写入失败 - 安全的错误状态转换
 				CString errorMsg;
 				errorMsg.Format(L"数据块传输失败: 预期 %zu 字节, 实际 %zu 字节", 
 					currentChunkSize, written);
 				AppendLog(errorMsg);
+				SetTransmissionState(TransmissionState::FAILED);
 				StopDataTransmission(false);
 			}
 		}
 		catch (const std::exception& e) {
+			// 🔑 Task 3.3 增强：异常处理中的安全状态转换
 			CString errorMsg = CA2W(e.what(), CP_UTF8);
 			AppendLog(L"传输异常: " + errorMsg);
+			SetTransmissionState(TransmissionState::FAILED);
 			StopDataTransmission(false);
 		}
 	}
 	else {
-		AppendLog(L"错误：传输通道未开启，停止传输");
+		// 🔑 Task 3.3 增强：传输通道错误的安全处理
+		AppendLog(L"错误：传输通道未开启，执行安全停止");
+		SetTransmissionState(TransmissionState::FAILED);
 		StopDataTransmission(false);
 	}
 }
@@ -2748,8 +2811,12 @@ void CPortMasterDlg::StopDataTransmission(bool completed)
 		m_transmissionTimer = 0;
 	}
 	
-	// 清除传输状态
-	m_bTransmitting = false;
+	// 🔑 关键修复：使用统一的状态管理
+	if (completed) {
+		SetTransmissionState(TransmissionState::COMPLETED);
+	} else {
+		SetTransmissionState(TransmissionState::IDLE);
+	}
 	
 	// 更新UI状态
 	UpdateButtonStates();
@@ -2899,9 +2966,12 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 		}
 	}
 	
-	// 更新按钮状态
-	m_bTransmitting = false;
-	UpdateButtonStates();
+	// 🔑 关键修复：使用统一的状态管理
+	if (success) {
+		SetTransmissionState(TransmissionState::COMPLETED);
+	} else {
+		SetTransmissionState(TransmissionState::FAILED);
+	}
 	
 	return 0;
 }
@@ -3262,33 +3332,42 @@ bool CPortMasterDlg::ResumeTransmission()
 
 void CPortMasterDlg::OnBnClickedStop()
 {
-	// 检查是否有活跃的传输
-	if (!IsTransmissionActive())
-	{
-		AppendLog(L"当前没有正在进行的传输");
-		return;
-	}
-	
-	// 根据当前传输状态执行相应操作
+	// 🔑 关键修复：强制停止任何活跃的传输，绕过状态检查
 	TransmissionState currentState = GetTransmissionState();
 	
+	// 立即停止定时器（优先级最高，确保传输立即停止）
+	if (m_transmissionTimer != 0) {
+		KillTimer(m_transmissionTimer);
+		m_transmissionTimer = 0;
+		AppendLog(L"传输定时器已强制停止");
+	}
+	
+	// 根据当前状态执行相应操作
 	if (currentState == TransmissionState::TRANSMITTING)
 	{
-		// 正在传输 -> 暂停
-		SetTransmissionState(TransmissionState::PAUSED);
-		AppendLog(L"传输已暂停，点击停止按钮可完全停止，点击发送按钮继续传输");
-		
-		// 保持定时器运行，但定时器会检查状态并暂停执行
-		// 不需要停止定时器，让定时器在暂停状态下待机
+		// 正在传输 -> 直接停止
+		StopDataTransmission(false);
+		AppendLog(L"传输已立即停止");
 	}
 	else if (currentState == TransmissionState::PAUSED)
 	{
-		// 暂停状态 -> 完全停止
-		SetTransmissionState(TransmissionState::IDLE);
+		// 暂停状态 -> 强制停止
 		StopDataTransmission(false);
-		AppendLog(L"传输已完全停止");
+		AppendLog(L"传输已强制停止");
+	}
+	else if (IsTransmissionActive())
+	{
+		// 其他活跃状态 -> 强制停止
+		StopDataTransmission(false);
+		AppendLog(L"传输已强制停止");
+	}
+	else
+	{
+		// 非活跃状态也允许操作，重置状态
+		SetTransmissionState(TransmissionState::IDLE);
+		AppendLog(L"传输状态已重置为空闲");
 	}
 	
-	// 更新按钮状态
+	// 立即更新按钮状态
 	UpdateButtonStates();
 }
