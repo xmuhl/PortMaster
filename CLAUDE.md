@@ -122,36 +122,48 @@ git pull --rebase 2>/dev/null || echo "同步完成或无需同步"
 #### 2. 进度文档更新（新增步骤）
 **在每次代码修改前，必须更新本地记录文档：**
 ```bash
-# 更新Code_Revision_Progress.md中的执行日志
+# 更新修订记录文档中的执行日志  
 # 记录当前任务开始时间和目标
 # 格式：- ⏳ **HH:MM**: 开始[具体任务描述]
 ```
 
-**文档更新要求：**
-- 每个任务开始前更新执行日志
-- 任务完成后标记为完成状态 ✅
-- 记录编译结果和关键问题
-- 保持文档与实际进度同步
+**文档内容边界（重要）：**
+- ✅ **应记录**: 问题详细分析、代码修改内容、编译验证结果  
+- ❌ **不应记录**: Git提交ID、推送状态、标签详情、版本控制操作过程
+- 📝 **目的**: 避免文档变更后再次推送的循环问题  
+- 🔄 **原则**: 先完成文档更新，再执行版本控制操作
 
 #### 3. 代码修改规范
 - 仅修改必要文件，保持最小变更原则
 - **严禁提交以下目录**：`.vs/`、`bin/`、`obj/`、`Debug/`、`Release/` 等被 `.gitignore` 忽略的目录
 - 遵循现有代码标准：UTF-8 编码、中文注释、MFC 静态链接
 
-#### 4. 编译验证流程（WSL适配）
-**首选编译命令（WSL环境）：**
+#### 4. 智能编译验证流程（WSL适配）
+**编译检查前置步骤（重要）：**
 ```bash
-# 使用cmd.exe执行Windows批处理脚本
-cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
+# 检查变更文件类型，判断是否需要编译
+CHANGED_FILES=$(git status --porcelain | awk '{print $2}')
+echo "变更文件: $CHANGED_FILES"
+
+# 源码文件扩展名（需要编译）: .cpp .h .rc .vcxproj .sln 等
+# 文档文件扩展名（无需编译）: .md .txt .log 等
 ```
 
-**备用编译命令（WSL环境）：**
+**编译执行规则：**
+- ✅ **源码文件变更时** - 执行编译验证
+- 🚫 **仅文档文件变更时** - 跳过编译验证
+- ⚡ **效率优化** - 避免不必要的编译操作
+
+**编译命令（仅源码变更时执行）：**
 ```bash
-# 备用编译脚本
+# 首选编译命令（WSL环境）
+cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
+
+# 备用编译命令
 cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild.bat" 2>&1 | tail -20
 ```
 
-**编译要求：**
+**编译质量要求：**
 - 必须达到 **0 error 0 warning** 标准
 - 如出现任何 error 或 warning，必须逐一修复后重新编译
 - 需在聊天中展示关键编译日志片段（包含 "0 error、0 warning" 确认信息）
@@ -174,8 +186,8 @@ git add -A
 # 示例：feat: 添加串口通信模块, fix: 修复CRC校验错误, docs: 更新README文档
 git commit -m "类型: <根据实际修改内容自动生成的简练中文描述>"
 
-# 推送到备份仓库（WSL路径已适配）
-git push backup HEAD
+# 推送到PortMaster仓库（WSL路径已适配）
+git push PortMaster HEAD
 
 # 推送到主仓库（如果存在）
 git remote | grep -q origin && git push origin HEAD
