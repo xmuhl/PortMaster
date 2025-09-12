@@ -3001,14 +3001,14 @@ CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
 			}
 		}
 		
-		// 🔑 修复：根据用户显示模式选择显示策略（恢复m_bHexDisplay控制）
+		// 🔑 优化7：根据十六进制显示标志选择显示策略
 		if (m_bHexDisplay) {
-			// 十六进制显示模式：使用智能混合显示（调试友好）
-			WriteDebugLog("[INFO] 十六进制显示模式：使用智能混合显示");
+			// 十六进制显示开启：使用智能混合显示
+			WriteDebugLog("[INFO] 十六进制显示开启：智能混合显示");
 			return FormatMixedDisplay(processData);
 		} else {
-			// 文本显示模式：使用纯文本显示（用户友好）
-			WriteDebugLog("[INFO] 文本显示模式：使用纯文本显示");
+			// 十六进制显示关闭：使用纯文本显示
+			WriteDebugLog("[INFO] 十六进制显示关闭：纯文本显示");
 			return FormatPlainTextDisplay(processData);
 		}
 		
