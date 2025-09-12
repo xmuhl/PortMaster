@@ -359,6 +359,7 @@ void ReliableChannel::ProcessReceivedFrame(const Frame& frame)
                 m_receivedData.clear();
                 m_receivedData.reserve(static_cast<size_t>(m_receiveMetadata.fileSize));
                 m_expectedSequence = 2; // 下一个期望的DATA帧序号
+                m_fileSaved = false;    // 🔧 重置文件保存状态，开始新的接收
                 
                 // 窗口大小协商：接收端与发送端协商合适的窗口大小
                 if (m_receiveMetadata.window_size > 0 && m_receiveMetadata.window_size <= 255)
@@ -720,6 +721,12 @@ std::string ReliableChannel::GenerateUniqueFilename(const std::string& originalN
 
 bool ReliableChannel::SaveReceivedFile()
 {
+    // 🔧 修复文件重复生成问题：检查文件是否已经保存过
+    if (m_fileSaved) {
+        // 文件已保存，直接返回成功，避免重复保存
+        return true;
+    }
+    
     try
     {
         std::string filePath = GenerateUniqueFilename(m_receivedFilename);
@@ -747,6 +754,9 @@ bool ReliableChannel::SaveReceivedFile()
             SetError("文件写入失败: " + filePath);
             return false;
         }
+        
+        // 标记文件已保存，防止重复保存
+        m_fileSaved = true;
         
         return true;
     }

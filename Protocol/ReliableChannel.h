@@ -153,6 +153,7 @@ private:
     std::string m_receivedFilename;
     uint16_t m_expectedSequence;
     StartMetadata m_receiveMetadata;
+    bool m_fileSaved = false;  // 文件保存状态标记，防止重复保存
     
     // 滑动窗口接收端
     struct ReceiveWindowEntry {
