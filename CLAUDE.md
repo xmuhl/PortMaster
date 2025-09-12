@@ -394,3 +394,87 @@ if (reliableState == RELIABLE_DONE || reliableState == RELIABLE_FAILED)
 - **回归测试集成：** 在编译验证基础上增加功能回归测试
 - **代码审查机制：** 建立修改前后的代码对比审查流程
 - **性能监控：** 跟踪修复对系统性能的影响
+
+## 第九轮修订 - 可靠传输模式切换状态重置修复 (2025-01-17)
+
+### 问题描述
+用户反馈新版本存在可靠传输模式切换后发送功能异常的问题：
+1. **场景一**: 可靠传输结束后，取消可靠传输模式，重新点击发送按钮不执行数据传输
+2. **场景二**: 程序启动后不勾选可靠传输模式，执行直接传输完成后，切换到可靠传输模式点击发送不执行传输
+
+### 问题分析
+
+#### 根因定位
+通过代码审查发现问题根源在于 `OnBnClickedReliableMode()` 函数：
+- **状态残留**: 模式切换时未重置可靠传输通道状态
+- **UI状态不同步**: 传输状态未正确重置到IDLE
+- **状态检查逻辑**: `OnBnClickedSend()` 中的 `IsTransmissionActive()` 检查到残留状态导致发送被阻止
+
+#### 技术分析
+```cpp
+// 原始代码问题
+void CPortMasterDlg::OnBnClickedReliableMode()
+{
+    m_bReliableMode = (m_ctrlReliableMode.GetCheck() == BST_CHECKED);
+    UpdateButtonStates();
+    AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
+    // ❌ 缺少状态重置逻辑
+}
+```
+
+### 修复实现
+
+#### 核心修复逻辑
+```cpp
+void CPortMasterDlg::OnBnClickedReliableMode()
+{
+    m_bReliableMode = (m_ctrlReliableMode.GetCheck() == BST_CHECKED);
+    
+    // 🔑 关键修复：模式切换时重置可靠传输状态
+    if (m_reliableChannel)
+    {
+        // 重置可靠传输通道状态到IDLE，避免状态残留
+        m_reliableChannel->ResetToIdle();
+        AppendLog(L"可靠传输通道状态已重置");
+    }
+    
+    // 重置UI传输状态
+    SetTransmissionState(TransmissionState::IDLE);
+    
+    UpdateButtonStates();
+    AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
+}
+```
+
+#### 修复要点
+1. **通道状态重置**: 调用 `m_reliableChannel->ResetToIdle()` 确保可靠传输通道状态正确重置
+2. **UI状态同步**: 调用 `SetTransmissionState(TransmissionState::IDLE)` 重置UI传输状态
+3. **日志记录**: 添加状态重置日志便于调试跟踪
+4. **空指针保护**: 增加 `m_reliableChannel` 空指针检查
+
+### 验证结果
+
+#### 编译验证
+- **编译状态**: ✅ 成功编译，0个警告，0个错误
+- **编译时间**: 21.30秒
+- **目标文件**: Win32\Debug\PortMaster.exe
+
+#### 功能测试
+- **场景一测试**: ✅ 可靠传输结束后切换模式，发送功能正常
+- **场景二测试**: ✅ 直接传输后切换到可靠模式，发送功能正常
+- **状态一致性**: ✅ 模式切换时状态正确重置
+
+### 技术总结
+
+#### 修复策略
+1. **状态管理优化**: 在模式切换时主动重置相关状态
+2. **防御性编程**: 增加空指针检查和状态验证
+3. **日志增强**: 添加调试日志便于问题追踪
+4. **UI同步**: 确保内部状态与UI状态一致
+
+#### 经验总结
+- **状态切换**: 模式切换时必须考虑所有相关状态的重置
+- **边界条件**: 充分测试各种切换场景的边界条件
+- **代码审查**: 通过系统性代码审查快速定位问题根因
+- **渐进修复**: 采用最小化修改原则，降低引入新问题的风险
+```

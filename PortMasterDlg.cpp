@@ -1471,6 +1471,18 @@ void CPortMasterDlg::OnCbnSelchangePortType()
 void CPortMasterDlg::OnBnClickedReliableMode()
 {
 	m_bReliableMode = (m_ctrlReliableMode.GetCheck() == BST_CHECKED);
+	
+	// 🔑 关键修复：模式切换时重置可靠传输状态
+	if (m_reliableChannel)
+	{
+		// 重置可靠传输通道状态到IDLE，避免状态残留
+		m_reliableChannel->ResetToIdle();
+		AppendLog(L"可靠传输通道状态已重置");
+	}
+	
+	// 重置UI传输状态
+	SetTransmissionState(TransmissionState::IDLE);
+	
 	UpdateButtonStates();
 	AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
 }
