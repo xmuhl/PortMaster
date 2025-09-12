@@ -2758,46 +2758,112 @@ std::vector<uint8_t> CPortMasterDlg::ProcessTextInput(const CString& textInput)
 	return std::vector<uint8_t>(utf8Text.begin(), utf8Text.end());
 }
 
+// 🔑 统一传输架构核心：十六进制显示格式化
+// 优化性能和可读性
 CString CPortMasterDlg::FormatHexDisplay(const std::vector<uint8_t>& data)
 {
-	const size_t BYTES_PER_LINE = 16;
-	CString result;
+	if (data.empty()) {
+		return L"[空数据]";
+	}
 	
-	for (size_t i = 0; i < data.size(); i += BYTES_PER_LINE)
-	{
-		// 地址
-		CString line;
-		line.Format(L"%08X: ", (unsigned int)i);
+	const size_t BYTES_PER_LINE = 16;
+	const size_t MAX_LINES = 10000; // 限制最大行数防止内存溢出
+	
+	// 🔑 优化1：预分配内存提升性能
+	size_t totalLines = (data.size() + BYTES_PER_LINE - 1) / BYTES_PER_LINE;
+	if (totalLines > MAX_LINES) {
+		totalLines = MAX_LINES;
+	}
+	
+	CString result;
+	result.Preallocate(static_cast<int>(totalLines * 80)); // 预估每行80字符
+	
+	try {
+		size_t processedLines = 0;
 		
-		// 十六进制数据
-		for (size_t j = 0; j < BYTES_PER_LINE && (i + j) < data.size(); j++)
+		for (size_t i = 0; i < data.size() && processedLines < MAX_LINES; i += BYTES_PER_LINE, ++processedLines)
 		{
-			CString byteStr;
-			byteStr.Format(L"%02X ", data[i + j]);
-			line += byteStr;
+			// 🔑 优化2：使用StringBuilder模式减少字符串拼接
+			CString line;
+			line.Preallocate(80); // 预分配行缓冲区
+			
+			// 地址部分 - 8位十六进制
+			line.Format(L"%08X: ", static_cast<unsigned int>(i));
+			
+			// 🔑 优化3：十六进制数据部分 - 批量处理
+			CString hexPart;
+			hexPart.Preallocate(48); // 16字节 * 3字符/字节
+			
+			size_t actualBytes = std::min(BYTES_PER_LINE, data.size() - i);
+			
+			for (size_t j = 0; j < actualBytes; j++)
+			{
+				CString byteStr;
+				byteStr.Format(L"%02X ", data[i + j]);
+				hexPart += byteStr;
+			}
+			
+			// 🔑 优化4：智能对齐填充
+			for (size_t j = actualBytes; j < BYTES_PER_LINE; j++)
+			{
+				hexPart += L"   ";
+			}
+			
+			line += hexPart + L" |";
+			
+			// 🔑 优化5：ASCII字符部分 - 增强字符处理
+			CString asciiPart;
+			asciiPart.Preallocate(16);
+			
+			for (size_t j = 0; j < actualBytes; j++)
+			{
+				uint8_t byte = data[i + j];
+				
+				// 扩展可显示字符范围
+				if (byte >= 32 && byte <= 126) {
+					// 标准ASCII可打印字符
+					asciiPart += static_cast<WCHAR>(byte);
+				} else if (byte == 9) {
+					// Tab字符显示为特殊符号
+					asciiPart += L'→';
+				} else if (byte == 10 || byte == 13) {
+					// 换行符显示为特殊符号
+					asciiPart += L'↵';
+				} else if (byte == 0) {
+					// NULL字符
+					asciiPart += L'∅';
+				} else {
+					// 其他不可显示字符
+					asciiPart += L'·';
+				}
+			}
+			
+			// 🔑 优化6：ASCII部分对齐填充
+			for (size_t j = actualBytes; j < BYTES_PER_LINE; j++)
+			{
+				asciiPart += L' ';
+			}
+			
+			line += asciiPart + L"|\r\n";
+			result += line;
 		}
 		
-		// 填充对齐
-		size_t actualBytes = std::min(BYTES_PER_LINE, data.size() - i);
-		for (size_t j = actualBytes; j < BYTES_PER_LINE; j++)
-		{
-			line += L"   ";
+		// 🔑 优化7：数据截断提示
+		if (data.size() > MAX_LINES * BYTES_PER_LINE) {
+			CString truncateMsg;
+			truncateMsg.Format(L"\r\n[数据已截断] 显示前%zu行，总计%zu字节\r\n", 
+				MAX_LINES, data.size());
+			result += truncateMsg;
 		}
 		
-		line += L" |";
+	} catch (const std::exception& e) {
+		// 🔑 优化8：异常处理
+		CString errorMsg;
+		errorMsg.Format(L"[格式化错误] FormatHexDisplay异常: %s\r\n", CA2W(e.what()));
+		return errorMsg;
 		
-		// ASCII字符
-		for (size_t j = 0; j < BYTES_PER_LINE && (i + j) < data.size(); j++)
-		{
-			uint8_t byte = data[i + j];
-			if (byte >= 32 && byte <= 126)
-				line += (WCHAR)byte;
-			else
-				line += L'.';
-		}
-		
-		line += L"|";
-		result += line + L"\r\n";
+	} catch (...) {
+		return L"[格式化错误] FormatHexDisplay发生未知异常\r\n";
 	}
 	
 	return result;
@@ -2845,95 +2911,145 @@ bool CPortMasterDlg::IsValidUTF8Sequence(const std::vector<uint8_t>& data, size_
 	return true;
 }
 
+// 🔑 统一传输架构核心：文本显示格式化
+// 优化编码检测和文本处理
 CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
 {
-	if (data.empty()) return L"";
-	
-	// 🔑 策略1：增强的UTF-8检测和解码
-	bool hasValidUTF8 = true;
-	size_t i = 0;
-	while (i < data.size()) {
-		size_t seqLength;
-		if (!IsValidUTF8Sequence(data, i, seqLength)) {
-			hasValidUTF8 = false;
-			break;
-		}
-		i += seqLength;
+	if (data.empty()) {
+		return L"[空数据]";
 	}
 	
-	if (hasValidUTF8) {
-		std::string utf8Str(data.begin(), data.end());
-		int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, 
-			utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+	try {
+		// 🔑 优化1：数据大小限制和预处理
+		const size_t MAX_TEXT_SIZE = 512 * 1024; // 512KB文本显示限制
+		std::vector<uint8_t> processData;
+		
+		if (data.size() > MAX_TEXT_SIZE) {
+			// 显示最新数据
+			processData.assign(data.end() - MAX_TEXT_SIZE, data.end());
+			WriteDebugLog("[INFO] FormatTextDisplay: 大数据量优化，显示最新512KB");
+		} else {
+			processData = data;
+		}
+		
+		// 🔑 优化2：增强的UTF-8检测和解码
+		bool hasValidUTF8 = true;
+		size_t utf8ErrorCount = 0;
+		size_t i = 0;
+		
+		while (i < processData.size()) {
+			size_t seqLength;
+			if (!IsValidUTF8Sequence(processData, i, seqLength)) {
+				utf8ErrorCount++;
+				// 允许少量UTF-8错误（可能是混合编码）
+				if (utf8ErrorCount > processData.size() / 10) {
+					hasValidUTF8 = false;
+					break;
+				}
+				i++; // 跳过无效字节
+			} else {
+				i += seqLength;
+			}
+		}
+		
+		// 🔑 优化3：UTF-8解码策略
+		if (hasValidUTF8 && utf8ErrorCount == 0) {
+			std::string utf8Str(processData.begin(), processData.end());
+			int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
+				utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
+			
+			if (wideStrLen > 0) {
+				std::vector<wchar_t> wideStr(wideStrLen + 1);
+				int actualLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+					utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+					wideStr.data(), wideStrLen);
+					
+				if (actualLen > 0) {
+					wideStr[actualLen] = L'\0';
+					CString result(wideStr.data());
+					
+					// 🔑 优化4：结果验证
+					if (!result.IsEmpty() && result.Find(L'\uFFFD') == -1) {
+						WriteDebugLog("[INFO] UTF-8解码成功");
+						return result;
+					}
+				}
+			}
+		}
+		
+		// 🔑 优化5：GBK/GB2312解码策略（支持简体中文）
+		std::string gbkStr(processData.begin(), processData.end());
+		int wideStrLen = MultiByteToWideChar(CP_ACP, 0,
+			gbkStr.c_str(), static_cast<int>(gbkStr.length()), nullptr, 0);
 		
 		if (wideStrLen > 0) {
 			std::vector<wchar_t> wideStr(wideStrLen + 1);
-			int actualLen = MultiByteToWideChar(CP_UTF8, 0,
-				utf8Str.c_str(), static_cast<int>(utf8Str.length()),
+			int actualLen = MultiByteToWideChar(CP_ACP, 0,
+				gbkStr.c_str(), static_cast<int>(gbkStr.length()),
 				wideStr.data(), wideStrLen);
 				
 			if (actualLen > 0) {
 				wideStr[actualLen] = L'\0';
-				return CString(wideStr.data());
+				CString result(wideStr.data());
+				
+				// 🔑 优化6：GBK解码结果验证
+				if (!result.IsEmpty() && result != L"?" && 
+					result.Find(L'\uFFFD') == -1) {
+					WriteDebugLog("[INFO] GBK/GB2312解码成功");
+					return result;
+				}
 			}
 		}
+		
+		// 🔑 优化7：智能混合显示（保持可读性）
+		WriteDebugLog("[INFO] 使用智能混合显示模式");
+		return FormatMixedDisplay(processData);
+		
+	} catch (const std::exception& e) {
+		// 🔑 优化8：异常处理
+		CString errorMsg;
+		errorMsg.Format(L"[格式化错误] FormatTextDisplay异常: %s\r\n", CA2W(e.what()));
+		WriteDebugLog(CW2A(errorMsg));
+		return errorMsg;
+		
+	} catch (...) {
+		WriteDebugLog("[ERROR] FormatTextDisplay发生未知异常");
+		return L"[格式化错误] FormatTextDisplay发生未知异常\r\n";
 	}
-	
-	// 🔑 策略2：GBK/GB2312解码（支持简体中文）
-	std::string gbkStr(data.begin(), data.end());
-	int wideStrLen = MultiByteToWideChar(CP_ACP, 0,
-		gbkStr.c_str(), static_cast<int>(gbkStr.length()), nullptr, 0);
-	
-	if (wideStrLen > 0) {
-		std::vector<wchar_t> wideStr(wideStrLen + 1);
-		int actualLen = MultiByteToWideChar(CP_ACP, 0,
-			gbkStr.c_str(), static_cast<int>(gbkStr.length()),
-			wideStr.data(), wideStrLen);
-			
-		if (actualLen > 0) {
-			wideStr[actualLen] = L'\0';
-			// 验证转换结果是否包含有效字符
-			CString result(wideStr.data());
-			if (!result.IsEmpty() && result != L"?") {
-				return result;
-			}
-		}
-	}
-	
-	// 🔑 策略3：智能混合显示（保持可读性）
-	return FormatMixedDisplay(data);
 }
 
 // 🔑 智能混合显示策略（SOLID-S: 单一职责 - 混合格式显示）
+// 统一传输架构优化：增强编码检测和字符处理逻辑
 CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
 {
 	CString result;
-	result.Preallocate(static_cast<int>(data.size() * 2));
+	result.Preallocate(static_cast<int>(data.size() * 3)); // 增加预分配空间
 	
 	for (size_t i = 0; i < data.size(); ) {
 		uint8_t byte = data[i];
 		
-		// 检查是否为有效的UTF-8序列起始
+		// 🔑 优化1：增强UTF-8序列检测和处理
 		size_t utf8Length;
 		if (IsValidUTF8Sequence(data, i, utf8Length) && utf8Length > 1) {
 			// 尝试解码UTF-8序列
 			std::vector<uint8_t> utf8Bytes(data.begin() + i, data.begin() + i + utf8Length);
 			std::string utf8Str(utf8Bytes.begin(), utf8Bytes.end());
 			
-			int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, 
+			int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
 				utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
 			
 			if (wideStrLen > 0) {
 				std::vector<wchar_t> wideStr(wideStrLen + 1);
-				int actualLen = MultiByteToWideChar(CP_UTF8, 0,
+				int actualLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
 					utf8Str.c_str(), static_cast<int>(utf8Str.length()),
 					wideStr.data(), wideStrLen);
 					
 				if (actualLen > 0) {
 					wideStr[actualLen] = L'\0';
 					CString decodedChar(wideStr.data());
-					// 验证解码结果是否为有效字符
-					if (!decodedChar.IsEmpty() && decodedChar != L"?") {
+					// 🔑 优化2：更严格的有效字符验证
+					if (!decodedChar.IsEmpty() && decodedChar != L"?" && 
+						decodedChar.GetLength() > 0 && decodedChar[0] != L'\uFFFD') {
 						result += decodedChar;
 						i += utf8Length;
 						continue;
@@ -2942,22 +3058,39 @@ CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
 			}
 		}
 		
-		// 单字节处理
+		// 🔑 优化3：增强单字节处理逻辑
 		if (byte >= 32 && byte <= 126) {
 			// 可打印ASCII字符
 			result += static_cast<wchar_t>(byte);
-		} else if (byte >= 0x80) {
-			// 非UTF-8的高位字节，显示为十六进制
+		} else if (byte >= 0xA0 && byte <= 0xFF) {
+			// 🔑 优化4：尝试GBK/GB2312单字节扩展字符解码
+			char singleByte[2] = { static_cast<char>(byte), '\0' };
+			int wideLen = MultiByteToWideChar(CP_ACP, 0, singleByte, 1, nullptr, 0);
+			if (wideLen > 0) {
+				wchar_t wideChar;
+				if (MultiByteToWideChar(CP_ACP, 0, singleByte, 1, &wideChar, 1) > 0) {
+					result += wideChar;
+					i++;
+					continue;
+				}
+			}
+			// 如果解码失败，显示为十六进制
+			CString hexByte;
+			hexByte.Format(L"[%02X]", byte);
+			result += hexByte;
+		} else if (byte >= 0x80 && byte < 0xA0) {
+			// 非标准高位字节，显示为十六进制
 			CString hexByte;
 			hexByte.Format(L"[%02X]", byte);
 			result += hexByte;
 		} else {
-			// 控制字符，显示为可读转义序列
+			// 🔑 优化5：改进控制字符显示
 			switch (byte) {
-			case 0x0A: result += L"⏎"; break;      // 换行符号
-			case 0x0D: result += L"↵"; break;      // 回车符号  
-			case 0x09: result += L"→"; break;      // 制表符号
-			case 0x00: result += L"∅"; break;      // 空字符符号
+			case 0x0A: result += L"\r\n"; break;    // 换行符直接换行
+			case 0x0D: break;                      // 回车符忽略（避免重复换行）
+			case 0x09: result += L"    "; break;    // 制表符转为4个空格
+			case 0x00: result += L"[NULL]"; break;  // 空字符明确标识
+			case 0x1B: result += L"[ESC]"; break;   // ESC字符
 			default:
 				CString ctrlChar;
 				ctrlChar.Format(L"[%02X]", byte);
@@ -3350,28 +3483,89 @@ LRESULT CPortMasterDlg::OnUpdateFileReceived(WPARAM wParam, LPARAM lParam)
 }
 
 // 🔑 线程安全的数据显示更新消息处理函数
+// 🔑 统一传输架构核心：数据显示消息处理
+// 优化线程安全性和数据处理逻辑
 LRESULT CPortMasterDlg::OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam)
 {
-	// wParam未使用，lParam包含数据向量指针
+	// 🔑 优化1：增强参数验证
+	if (lParam == 0) {
+		WriteDebugLog("[WARNING] OnDisplayReceivedDataMsg: 接收到空数据指针");
+		return -1;
+	}
+	
 	std::vector<uint8_t>* dataPtr = reinterpret_cast<std::vector<uint8_t>*>(lParam);
 	
-	if (dataPtr) {
-		// 追加模式显示数据
+	// 🔑 优化2：数据有效性检查
+	if (!dataPtr || dataPtr->empty()) {
+		WriteDebugLog("[WARNING] OnDisplayReceivedDataMsg: 数据向量为空或无效");
+		if (dataPtr) {
+			delete dataPtr; // 确保内存清理
+		}
+		return -1;
+	}
+	
+	try {
+		// 🔑 优化3：增强线程安全的数据追加
 		{
 			std::lock_guard<std::mutex> lock(m_displayDataMutex);
+			
+			// 检查数据大小限制（防止内存溢出）
+			const size_t MAX_DISPLAY_SIZE = 10 * 1024 * 1024; // 10MB限制
+			if (m_displayedData.size() + dataPtr->size() > MAX_DISPLAY_SIZE) {
+				// 保留最新的数据，删除旧数据
+				size_t keepSize = MAX_DISPLAY_SIZE / 2;
+				if (m_displayedData.size() > keepSize) {
+					m_displayedData.erase(m_displayedData.begin(), 
+						m_displayedData.end() - keepSize);
+					WriteDebugLog("[INFO] 显示数据缓冲区已清理，保留最新数据");
+				}
+			}
+			
+			// 追加新数据
 			m_displayedData.insert(m_displayedData.end(), 
 								 dataPtr->begin(), dataPtr->end());
+			
+			// 记录数据接收日志
+			CString logMsg;
+			logMsg.Format(L"[INFO] 接收数据 %zu 字节，总计 %zu 字节", 
+				dataPtr->size(), m_displayedData.size());
+			WriteDebugLog(CW2A(logMsg));
 		}
 		
-		// 更新显示
+		// 🔑 优化4：统一显示更新流程
 		UpdateDataDisplay();
 		ScrollToBottom();
 		
-		// 🔑 关键修复：更新按钮状态，确保复制和保存按钮能正确启用
+		// 🔑 优化5：状态同步更新
 		UpdateButtonStates();
+		UpdateStatusBar(); // 确保状态栏显示最新信息
 		
-		// 清理内存
+		// 🔑 优化6：安全内存清理
 		delete dataPtr;
+		dataPtr = nullptr;
+		
+	} catch (const std::exception& e) {
+		// 🔑 优化7：异常处理
+		CString errorMsg;
+		errorMsg.Format(L"[ERROR] OnDisplayReceivedDataMsg异常: %s", CA2W(e.what()));
+		WriteDebugLog(CW2A(errorMsg));
+		
+		// 确保内存清理
+		if (dataPtr) {
+			delete dataPtr;
+			dataPtr = nullptr;
+		}
+		return -1;
+	} catch (...) {
+		// 处理未知异常
+		WriteDebugLog("[ERROR] OnDisplayReceivedDataMsg发生未知异常");
+		
+		// 确保内存清理
+		if (dataPtr) {
+			delete dataPtr;
+			dataPtr = nullptr;
+		}
+		return -1;
 	}
 	
 	return 0;
@@ -3397,44 +3591,87 @@ CString CPortMasterDlg::FormatDataAsText(const std::vector<uint8_t>& data)
 // 统一显示管理方法实现 (SOLID-S: 单一职责)
 // =====================================
 
+// 🔑 统一传输架构核心：数据显示更新
+// 优化性能和稳定性
 void CPortMasterDlg::UpdateDataDisplay()
 {
-	// 统一的数据显示更新逻辑，根据当前显示模式格式化数据
-	std::lock_guard<std::mutex> lock(m_displayDataMutex); // 线程安全访问
-	
-	if (m_displayedData.empty()) {
-		// 清空显示控件
-		if (IsWindow(m_ctrlDataView.GetSafeHwnd())) {
-			m_ctrlDataView.SetWindowText(L"");
-		}
+	// 🔑 优化1：控件有效性预检查
+	if (!IsWindow(m_ctrlDataView.GetSafeHwnd())) {
+		WriteDebugLog("[WARNING] UpdateDataDisplay: 数据视图控件无效");
 		return;
 	}
 	
-	CString formattedData;
+	// 🔑 优化2：线程安全的数据访问
+	std::lock_guard<std::mutex> lock(m_displayDataMutex);
 	
-	// 🔑 关键修复：统一使用详细格式化方法，确保显示一致性
-	if (m_bHexDisplay) {
-		formattedData = FormatHexDisplay(m_displayedData);
-	} else {
-		formattedData = FormatTextDisplay(m_displayedData);
+	if (m_displayedData.empty()) {
+		// 清空显示控件
+		m_ctrlDataView.SetWindowText(L"");
+		WriteDebugLog("[INFO] 数据显示已清空");
+		return;
 	}
 	
-	// 更新显示控件
-	RefreshDataView();
+	// 🔑 优化3：性能优化 - 大数据量时限制显示范围
+	const size_t MAX_DISPLAY_BYTES = 1024 * 1024; // 1MB显示限制
+	std::vector<uint8_t> displayData;
 	
-	if (IsWindow(m_ctrlDataView.GetSafeHwnd())) {
+	if (m_displayedData.size() > MAX_DISPLAY_BYTES) {
+		// 显示最新的数据
+		displayData.assign(m_displayedData.end() - MAX_DISPLAY_BYTES, m_displayedData.end());
+		WriteDebugLog("[INFO] 大数据量优化：显示最新1MB数据");
+	} else {
+		displayData = m_displayedData;
+	}
+	
+	try {
+		CString formattedData;
+		
+		// 🔑 优化4：统一格式化处理
+		if (m_bHexDisplay) {
+			formattedData = FormatHexDisplay(displayData);
+		} else {
+			formattedData = FormatTextDisplay(displayData);
+		}
+		
+		// 🔑 优化5：批量更新减少闪烁
+		m_ctrlDataView.SetRedraw(FALSE); // 暂停重绘
+		
+		// 更新显示内容
 		m_ctrlDataView.SetWindowText(formattedData);
 		
-		// 滚动到底部显示最新数据
+		// 🔑 优化6：智能滚动到底部
 		int textLength = m_ctrlDataView.GetWindowTextLength();
-		m_ctrlDataView.SetSel(textLength, textLength);
-		m_ctrlDataView.LineScroll(m_ctrlDataView.GetLineCount());
+		if (textLength > 0) {
+			m_ctrlDataView.SetSel(textLength, textLength);
+			m_ctrlDataView.LineScroll(m_ctrlDataView.GetLineCount());
+		}
 		
-		// 记录显示更新
+		m_ctrlDataView.SetRedraw(TRUE); // 恢复重绘
+		m_ctrlDataView.Invalidate(); // 强制重绘
+		
+		// 🔑 优化7：详细日志记录
 		CString logMsg;
-		logMsg.Format(L"数据显示已更新 (%s模式, %zu字节)", 
-			m_bHexDisplay ? L"十六进制" : L"文本", m_displayedData.size());
+		logMsg.Format(L"[INFO] 数据显示已更新 (%s模式, 显示%zu/%zu字节)", 
+			m_bHexDisplay ? L"十六进制" : L"文本", 
+			displayData.size(), m_displayedData.size());
 		WriteDebugLog(CW2A(logMsg));
+		
+	} catch (const std::exception& e) {
+		// 🔑 优化8：异常处理
+		m_ctrlDataView.SetRedraw(TRUE); // 确保重绘状态恢复
+		
+		CString errorMsg;
+		errorMsg.Format(L"[ERROR] UpdateDataDisplay异常: %s", CA2W(e.what()));
+		WriteDebugLog(CW2A(errorMsg));
+		
+		// 显示错误信息
+		m_ctrlDataView.SetWindowText(L"[显示错误] 数据格式化失败");
+		
+	} catch (...) {
+		// 处理未知异常
+		m_ctrlDataView.SetRedraw(TRUE); // 确保重绘状态恢复
+		WriteDebugLog("[ERROR] UpdateDataDisplay发生未知异常");
+		m_ctrlDataView.SetWindowText(L"[显示错误] 未知异常");
 	}
 }
 
