@@ -492,8 +492,9 @@ void ReliableChannel::SendDataFrame()
 {
     size_t maxPayload = m_frameCodec.GetMaxPayloadSize();
     
-    // 滑动窗口批量发送：尽可能填满发送窗口
-    while (CanSendNewFrame() && m_sendOffset < m_sendData.size())
+    // 🔑 修复可视化传输问题：改为单帧发送模式，提供分段传输视觉效果
+    // 只发送一个帧而不是批量发送，让协议线程的定时调用提供渐进效果
+    if (CanSendNewFrame() && m_sendOffset < m_sendData.size())
     {
         size_t remainingBytes = m_sendData.size() - m_sendOffset;
         size_t chunkSize = (maxPayload < remainingBytes) ? maxPayload : remainingBytes;

@@ -2075,11 +2075,16 @@ void CPortMasterDlg::UpdateStatusDisplay(const CString& connectionStatus,
 	static StatusPriority s_currentPriority = StatusPriority::NORMAL;
 	static DWORD s_lastHighPriorityTime = 0;
 	
-	// 高优先级状态保持至少2秒钟
+	// 🔑 修复状态栏信息矛盾问题：完成状态始终优先显示
+	bool isCompletionStatus = (!transferStatus.IsEmpty() && 
+		(transferStatus.Find(L"完成") >= 0 || transferStatus.Find(L"失败") >= 0 || transferStatus.Find(L"已连接") >= 0));
+		
+	// 高优先级状态保持至少2秒钟，但完成状态可立即覆盖
 	DWORD currentTime = GetTickCount();
 	if (s_currentPriority > StatusPriority::NORMAL && 
 		currentTime - s_lastHighPriorityTime < 2000 && 
-		priority < s_currentPriority) {
+		priority < s_currentPriority && 
+		!isCompletionStatus) { // 完成状态不受优先级阻塞限制
 		return; // 跳过低优先级更新
 	}
 	
@@ -2087,7 +2092,13 @@ void CPortMasterDlg::UpdateStatusDisplay(const CString& connectionStatus,
 	if (priority > StatusPriority::NORMAL) {
 		s_lastHighPriorityTime = currentTime;
 	}
-	s_currentPriority = priority;
+	
+	// 🔑 完成状态重置优先级阻塞，确保后续状态正常更新
+	if (isCompletionStatus) {
+		s_currentPriority = StatusPriority::NORMAL;
+	} else {
+		s_currentPriority = priority;
+	}
 	
 	// 线程安全的UI更新
 	if (!connectionStatus.IsEmpty() && IsWindow(m_ctrlConnectionStatus.GetSafeHwnd())) {

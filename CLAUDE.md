@@ -262,3 +262,70 @@ sed 's/old/new/' file
 - [x] `cmd.exe` 可正常调用
 - [x] Git远程仓库 `/mnt/d/GitBackups/PortMaster.git` 可访问
 - [x] 编译脚本 `autobuild_x86_debug.bat` 和 `autobuild.bat` 存在
+
+## 第六轮修订技术总结与工作流程优化 
+
+### 关键技术发现
+
+#### 可靠传输状态管理模式缺陷
+**问题特征：** `IsTransmissionActive()` 函数未正确处理 `RELIABLE_DONE` 状态
+- **表现症状：** 传输完成后按钮仍显示"停止"状态，点击弹出"是否停止传输"对话框
+- **根本原因：** 函数逻辑中 `RELIABLE_DONE` 状态被当作活跃状态处理
+- **标准修复：** 明确将 `RELIABLE_DONE` 和 `RELIABLE_FAILED` 状态返回 `false`（非活跃）
+
+```cpp
+// 🔑 标准修复模式：完成状态特殊处理
+if (reliableState == RELIABLE_DONE || reliableState == RELIABLE_FAILED)
+{
+    return false;  // 强制返回非活跃状态
+}
+```
+
+#### Git远程仓库配置优化
+**发现问题：** `backup` 远程仓库路径格式错误 (`/mnt/__DRIVE:~0,1:1/...`)
+- **解决方案：** 使用 `PortMaster` 远程仓库 (`/mnt/d/GitBackups/PortMaster.git`)
+- **推送策略：** `git push PortMaster HEAD` 替代 `git push backup HEAD`
+- **验证方法：** `git remote -v` 检查远程仓库配置正确性
+
+### 工作流程改进记录
+
+#### 修订文档化标准
+- **创建专用修订文档** (`第N轮修订工作记录.md`) 记录详细问题分析和修复过程
+- **任务分解原则：** 每个修订轮次包含8个标准任务
+- **进度跟踪要求：** 实时更新执行日志，记录开始/完成时间和关键结果
+
+#### 编译验证流程优化
+- **编译命令：** `cmd.exe /c "autobuild_x86_debug.bat"` (WSL环境)
+- **标准要求：** 必须达到 **0 error 0 warning**
+- **验证展示：** 在聊天中展示关键编译成功日志段落
+
+#### 版本控制流程固化
+- **提交规范：** `类型: 简述修改内容` (简体中文，不超过50字符)
+- **推送策略：** 使用 `PortMaster` 远程仓库而非 `backup`
+- **标签生成：** `save-YYYYMMDD-HHMMSS` 格式的时间戳标签
+- **推送验证：** 确认commit ID和远程推送状态
+
+### 技术调试经验总结
+
+#### 状态管理函数调试方法
+1. **定位症状函数：** 从UI异常行为反推到状态判断函数
+2. **状态枚举分析：** 检查所有状态枚举值的处理逻辑
+3. **边界状态测试：** 重点关注完成、失败等边界状态处理
+4. **日志验证：** 通过编译运行验证状态转换正确性
+
+#### 多层状态同步模式
+- **UI层状态：** `TransmissionState::TRANSMITTING/PAUSED`
+- **协议层状态：** `RELIABLE_STARTING/SENDING/ENDING/RECEIVING/DONE/FAILED`
+- **同步策略：** 任一层面活跃即认为传输活跃，但完成状态强制非活跃
+
+### 持续改进建议
+
+#### 预防性修复检查点
+- 每次修改状态管理相关函数后，检查所有状态枚举值的处理逻辑
+- 重点验证边界状态（完成、失败、超时）的UI同步机制
+- 确保状态转换的原子性和一致性
+
+#### 文档同步强化
+- 修订文档与代码变更保持实时同步
+- 建立标准的问题分析→修复→验证→记录工作循环
+- 每轮修订后更新 `Code_Revision_Progress.md` 累积经验
