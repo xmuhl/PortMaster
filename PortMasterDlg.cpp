@@ -690,7 +690,7 @@ void CPortMasterDlg::UpdateButtonStates()
 	else
 		connectionStatus = L"○ 未连接";
 	
-	// 协议状态
+	// 🔑 第八轮修订：增强协议状态检查，特别处理RELIABLE_DONE状态
 	if (m_reliableChannel)
 	{
 		ReliableState state = m_reliableChannel->GetState();
@@ -701,7 +701,15 @@ void CPortMasterDlg::UpdateButtonStates()
 		case RELIABLE_SENDING: protocolStatus = L"传输中"; priority = StatusPriority::HIGH; break;
 		case RELIABLE_ENDING: protocolStatus = L"结束传输"; priority = StatusPriority::HIGH; break;
 		case RELIABLE_RECEIVING: protocolStatus = L"接收中"; priority = StatusPriority::HIGH; break;
-		case RELIABLE_DONE: protocolStatus = L"完成"; priority = StatusPriority::HIGH; break;
+		case RELIABLE_DONE: 
+			// 🔑 关键修复：RELIABLE_DONE状态应立即触发状态重置
+			protocolStatus = L"完成"; 
+			priority = StatusPriority::HIGH;
+			// 检测到RELIABLE_DONE状态时，确保传输状态同步
+			if (GetTransmissionState() == TransmissionState::TRANSMITTING) {
+				SetTransmissionState(TransmissionState::COMPLETED);
+			}
+			break;
 		case RELIABLE_FAILED: protocolStatus = L"失败"; priority = StatusPriority::CRITICAL; break;
 		default: protocolStatus = L"未知"; break;
 		}
@@ -3275,6 +3283,13 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 		delete message; // 释放动态分配的内存
 	}
 	
+	// 🔑 第八轮修订：优化状态同步时序，确保ReliableChannel状态重置在UI更新前完成
+	// 先处理可靠传输状态重置，避免时序竞争
+	if (success && m_reliableChannel && m_reliableChannel->GetState() == RELIABLE_DONE) {
+		// 立即重置ReliableChannel状态，确保后续UI更新能获取到正确状态
+		m_reliableChannel->ResetToIdle();
+	}
+	
 	// 📊 使用统一状态管理更新传输完成状态
 	if (success) {
 		if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
@@ -3282,26 +3297,16 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 		}
 		// 传输完成后更新所有状态
 		UpdateStatusDisplay(L"● 已连接", L"完成", L"传输完成", L"", StatusPriority::HIGH);
+		SetTransmissionState(TransmissionState::COMPLETED);
 	} else {
 		// 传输失败后更新所有状态
 		UpdateStatusDisplay(L"● 已连接", L"失败", L"传输失败", L"", StatusPriority::CRITICAL);
-	}
-	
-	// 🔑 关键修复：使用统一的状态管理并同步ReliableChannel状态
-	if (success) {
-		SetTransmissionState(TransmissionState::COMPLETED);
-		
-		// 🔑 修复状态同步问题：在UI处理完成通知后，立即重置ReliableChannel到IDLE状态
-		if (m_reliableChannel && m_reliableChannel->GetState() == RELIABLE_DONE) {
-			// 直接重置ReliableChannel状态，确保状态一致性
-			m_reliableChannel->ResetToIdle();
-		}
-	} else {
 		SetTransmissionState(TransmissionState::FAILED);
 	}
 	
-	// 🔑 DEBUGGER AGENT发现的关键修复：传输完成后必须更新按钮状态
+	// 🔑 关键修复：传输完成后必须更新按钮状态
 	// 确保"发送"按钮从"停止"状态恢复到正常的"发送"状态
+	// 此时ReliableChannel状态已重置，UpdateButtonStates能获取到正确状态
 	UpdateButtonStates();
 	
 	return 0;
@@ -3490,13 +3495,20 @@ TransmissionState CPortMasterDlg::GetTransmissionState() const
 
 bool CPortMasterDlg::IsTransmissionActive() const
 {
-	// 🔑 第六轮修复：彻底修复可靠传输状态判断逻辑
+	// 🔑 第八轮修复：强化边界条件处理和状态判断准确性
 	bool uiActive = (m_transmissionState == TransmissionState::TRANSMITTING || 
 					 m_transmissionState == TransmissionState::PAUSED);
 	
 	// 在可靠传输模式下，需要精确检查ReliableChannel的状态
-	if (m_bReliableMode && m_reliableChannel)
+	if (m_bReliableMode)
 	{
+		// 🔑 边界条件检查：确保ReliableChannel指针有效
+		if (!m_reliableChannel)
+		{
+			// 可靠模式但通道无效，仅依赖UI状态
+			return uiActive;
+		}
+		
 		ReliableState reliableState = m_reliableChannel->GetState();
 		
 		// 🔑 关键修复：RELIABLE_DONE和RELIABLE_FAILED应被视为非活跃状态
@@ -3513,6 +3525,15 @@ bool CPortMasterDlg::IsTransmissionActive() const
 			// 可靠传输已完成或失败，强制设为非活跃
 			// 让UI有时间处理完成通知并更新按钮状态
 			return false;
+		}
+		
+		// 🔑 状态一致性验证：避免UI状态与可靠传输状态不一致
+		// 如果UI显示空闲但可靠传输活跃，优先信任可靠传输状态
+		if (!uiActive && reliableActive)
+		{
+			// 检测到状态不一致，记录调试信息并信任可靠传输状态
+			// 这种情况可能发生在状态同步延迟时
+			return true;
 		}
 		
 		// 可靠传输模式下，任一层面活跃即认为传输活跃
