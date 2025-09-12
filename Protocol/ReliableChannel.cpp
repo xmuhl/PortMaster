@@ -721,48 +721,31 @@ std::string ReliableChannel::GenerateUniqueFilename(const std::string& originalN
 
 bool ReliableChannel::SaveReceivedFile()
 {
-    // 🔧 修复文件重复生成问题：检查文件是否已经保存过
+    // 🔑 关键修复：简化文件保存流程 - 不直接保存到磁盘，改为后台缓存模式
+    // 文件数据将通过FileReceivedCallback传递给UI层，由TempDataManager处理缓存
+    // 用户可通过保存按钮手动保存文件到指定位置
+    
+    // 标记文件已"处理"（实际是已缓存），防止重复调用
     if (m_fileSaved) {
-        // 文件已保存，直接返回成功，避免重复保存
         return true;
     }
     
     try
     {
-        std::string filePath = GenerateUniqueFilename(m_receivedFilename);
+        // 记录文件接收信息用于日志
+        std::string logMsg = "文件接收完成，已缓存到后台: " + m_receivedFilename + 
+                           " (大小: " + std::to_string(m_receivedData.size()) + " 字节)";
+        // 注意：这里无法直接调用WriteDebugLog，因为它是UI层函数
+        // 日志记录将通过FileReceivedCallback在UI层完成
         
-        // 确保目录存在
-        std::filesystem::path parentDir = std::filesystem::path(filePath).parent_path();
-        if (!parentDir.empty() && !std::filesystem::exists(parentDir))
-        {
-            std::filesystem::create_directories(parentDir);
-        }
-        
-        // 写入文件
-        std::ofstream file(filePath, std::ios::binary);
-        if (!file.is_open())
-        {
-            SetError("无法创建文件: " + filePath);
-            return false;
-        }
-        
-        file.write(reinterpret_cast<const char*>(m_receivedData.data()), m_receivedData.size());
-        file.close();
-        
-        if (file.fail())
-        {
-            SetError("文件写入失败: " + filePath);
-            return false;
-        }
-        
-        // 标记文件已保存，防止重复保存
+        // 标记为已处理，避免重复处理
         m_fileSaved = true;
         
         return true;
     }
     catch (const std::exception& e)
     {
-        SetError("文件保存异常: " + std::string(e.what()));
+        SetError("文件缓存处理异常: " + std::string(e.what()));
         return false;
     }
 }
