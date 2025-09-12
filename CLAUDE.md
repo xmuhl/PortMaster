@@ -116,23 +116,53 @@ To add new transport types:
 - Real-time progress reporting via callback mechanisms
 - Splash screen integration during application startup
 
-## WSL环境自动执行工作流程
+## 跨环境自动执行工作流程
 
 ### 目标设定
 
-- **工作目录**：`/mnt/c/Users/huangl/Desktop/PortMaster`
+- **工作目录**：`C:\Users\huangl\Desktop\PortMaster` (Windows) 或 `/mnt/c/Users/huangl/Desktop/PortMaster` (WSL)
 - **核心目标**：修改代码并确保编译 0 error / 0 warning，之后自动版本化与远程推送
-- **环境特点**：WSL2环境下操作，兼容Windows文件系统，支持跨平台工具
+- **环境特点**：支持Windows PowerShell和WSL2环境，自动检测并适配当前运行环境
 
 ### 工作流程步骤（必须按顺序执行）
+
+#### 0. 环境自动检测与初始化
+
+**环境检测脚本（自动适配）：**
+
+```bash
+# 检测当前运行环境
+if [[ "$WSL_DISTRO_NAME" != "" ]] || [[ "$(uname -r)" == *microsoft* ]]; then
+    CURRENT_ENV="WSL"
+    WORK_DIR="/mnt/c/Users/huangl/Desktop/PortMaster"
+    WIN_PATH="C:\\Users\\huangl\\Desktop\\PortMaster"
+    DATE_CMD="date"
+    BACKUP_REPO="/mnt/d/GitBackups/PortMaster.git"
+else
+    CURRENT_ENV="PowerShell"
+    WORK_DIR="C:\\Users\\huangl\\Desktop\\PortMaster"
+    WIN_PATH="C:\\Users\\huangl\\Desktop\\PortMaster"
+    DATE_CMD="Get-Date -Format"
+    BACKUP_REPO="D:\\GitBackups\\PortMaster.git"
+fi
+
+echo "检测到环境: $CURRENT_ENV"
+echo "工作目录: $WORK_DIR"
+```
 
 #### 1. 创建修订工作记录文件
 
 **每轮修订工作正式开始前的必要准备：**
 
 ```bash
-# 生成修订记录文件名（基于当前时间戳）
-REVISION_FILE="第$(date +%Y%m%d-%H%M%S)轮修订工作记录.md"
+# 生成修订记录文件名（基于当前时间戳，跨环境兼容）
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    REVISION_FILE="修订工作记录$(date +%Y%m%d-%H%M%S).md"
+else
+    # PowerShell环境
+    TIMESTAMP=$(powershell.exe -Command "Get-Date -Format 'yyyyMMdd-HHmmss'")
+    REVISION_FILE="修订工作记录${TIMESTAMP}.md"
+fi
 echo "创建修订记录文件: $REVISION_FILE"
 
 # 创建修订工作记录文件模板
@@ -189,11 +219,17 @@ echo "📝 请在正式开始修订前完善问题分析和计划安排部分"
 #### 2. 环境准备与同步
 
 ```bash
-# 切换到工作目录
-cd "/mnt/c/Users/huangl/Desktop/PortMaster"
+# 切换到工作目录（跨环境兼容）
+cd "$WORK_DIR"
 
-# 同步远程变更（使用Git bash语法）
-git pull --rebase 2>/dev/null || echo "同步完成或无需同步"
+# 同步远程变更（跨环境兼容）
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # WSL环境使用标准Git命令
+    git pull --rebase 2>/dev/null || echo "同步完成或无需同步"
+else
+    # PowerShell环境
+    git pull --rebase 2>$null || echo "同步完成或无需同步"
+fi
 ```
 
 #### 3. 进度文档更新（优化策略）
@@ -224,13 +260,18 @@ git pull --rebase 2>/dev/null || echo "同步完成或无需同步"
 - **严禁提交以下目录**：`.vs/`、`bin/`、`obj/`、`Debug/`、`Release/` 等被 `.gitignore` 忽略的目录
 - 遵循现有代码标准：UTF-8 编码、中文注释、MFC 静态链接
 
-#### 5. 智能编译验证流程（WSL适配）
+#### 5. 智能编译验证流程（跨环境自适应）
 
 **编译检查前置步骤（重要）：**
 
 ```bash
-# 检查变更文件类型，判断是否需要编译
-CHANGED_FILES=$(git status --porcelain | awk '{print $2}')
+# 检查变更文件类型，判断是否需要编译（跨环境兼容）
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    CHANGED_FILES=$(git status --porcelain | awk '{print $2}')
+else
+    # PowerShell环境使用不同的命令
+    CHANGED_FILES=$(git status --porcelain | ForEach-Object { $_.Split()[1] })
+fi
 echo "变更文件: $CHANGED_FILES"
 
 # 源码文件扩展名（需要编译）: .cpp .h .rc .vcxproj .sln 等
@@ -243,14 +284,41 @@ echo "变更文件: $CHANGED_FILES"
 - 🚫 **仅文档文件变更时** - 跳过编译验证
 - ⚡ **效率优化** - 避免不必要的编译操作
 
-**编译命令（仅源码变更时执行）：**
+**编译命令（仅源码变更时执行，跨环境自适应）：**
 
 ```bash
-# 首选编译命令（WSL环境）
-cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
-
-# 备用编译命令
-cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild.bat" 2>&1 | tail -20
+# 跨环境编译命令选择
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # WSL环境：通过cmd.exe调用Windows编译脚本
+    echo "WSL环境：使用cmd.exe调用编译脚本"
+    cd "$WORK_DIR" && cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
+  
+    # 备用编译命令
+    if [[ $? -ne 0 ]]; then
+        echo "首选编译失败，尝试备用编译命令"
+        cd "$WORK_DIR" && cmd.exe /c "autobuild.bat" 2>&1 | tail -20
+    fi
+else
+    # PowerShell环境：直接调用编译脚本或使用Visual Studio工具
+    echo "PowerShell环境：直接调用编译脚本"
+    cd "$WORK_DIR"
+  
+    # 首选：使用autobuild脚本
+    if (Test-Path "autobuild_x86_debug.bat") {
+        .\autobuild_x86_debug.bat
+    } elseif (Test-Path "autobuild.bat") {
+        .\autobuild.bat
+    } else {
+        # 备用：直接使用Visual Studio devenv
+        $vsPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
+        if (Test-Path $vsPath) {
+            & "$vsPath" PortMaster.sln /build Debug
+        } else {
+            Write-Error "未找到编译工具，请检查Visual Studio安装"
+            exit 1
+        }
+    }
+fi
 ```
 
 **编译质量要求：**
@@ -260,17 +328,26 @@ cd "/mnt/c/Users/huangl/Desktop/PortMaster" && cmd.exe /c "autobuild.bat" 2>&1 |
 - 需在聊天中展示关键编译日志片段（包含 "0 error、0 warning" 确认信息）
 - 编译成功后立即更新进度文档中的编译验证历史表格
 
-#### 6. 版本控制与推送（WSL适配，优化流程）
+#### 6. 版本控制与推送（跨环境自适应，优化流程）
 
-**检查变更状态：**
+**检查变更状态（跨环境兼容）：**
 
 ```bash
-git status --porcelain
+# 检查是否有变更
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    CHANGES=$(git status --porcelain)
+else
+    # PowerShell环境
+    CHANGES=$(git status --porcelain)
+fi
+
+if [[ -z "$CHANGES" ]]; then
+    echo "无变更，无需提交"
+    exit 0
+fi
 ```
 
-- 若输出为空，回复 "无变更，无需提交" 并结束流程
-
-**统一提交策略（代码+文档一次性提交）：**
+**统一提交策略（代码+文档一次性提交，跨环境兼容）：**
 
 ```bash
 # 暂存所有变更（包括代码文件和文档文件）
@@ -283,11 +360,23 @@ git add -A
 # 混合变更示例：fix: 修复传输状态判断逻辑并更新技术文档
 git commit -m "类型: <根据实际修改内容自动生成的简练中文描述>"
 
-# 推送到PortMaster仓库（WSL路径已适配）
-git push PortMaster HEAD
-
-# 推送到主仓库（如果存在）
-git remote | grep -q origin && git push origin HEAD
+# 推送到远程仓库（跨环境自适应）
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # WSL环境：推送到指定的备份仓库
+    git push PortMaster HEAD
+  
+    # 推送到主仓库（如果存在）
+    git remote | grep -q origin && git push origin HEAD
+else
+    # PowerShell环境：检查并推送到可用的远程仓库
+    $remotes = git remote
+    if ($remotes -contains "PortMaster") {
+        git push PortMaster HEAD
+    }
+    if ($remotes -contains "origin") {
+        git push origin HEAD
+    }
+fi
 ```
 
 **提交信息规范：**
@@ -315,9 +404,11 @@ git push --tags
 - 编译成功的关键日志段落
 - 如有未能自动修复的问题，列出详细清单与建议修复方案
 
-### WSL环境特殊配置
+### 跨环境配置与适配
 
-#### 路径处理规范
+#### 路径处理规范（跨环境兼容）
+
+**WSL环境：**
 
 ```bash
 # WSL工作目录
@@ -330,7 +421,19 @@ WIN_PATH="C:\Users\huangl\Desktop\PortMaster"
 BACKUP_REPO="/mnt/d/GitBackups/PortMaster.git"
 ```
 
-#### 跨平台工具使用
+**PowerShell环境：**
+
+```powershell
+# PowerShell工作目录
+$WORK_DIR = "C:\Users\huangl\Desktop\PortMaster"
+
+# Git远程仓库路径
+$BACKUP_REPO = "D:\GitBackups\PortMaster.git"
+```
+
+#### 跨平台工具使用策略
+
+**WSL环境工具选择：**
 
 ```bash
 # Windows命令执行（编译脚本）
@@ -342,16 +445,90 @@ grep pattern file
 sed 's/old/new/' file
 ```
 
-### 异常处理策略
+**PowerShell环境工具选择：**
 
-#### 编译失败处理
+```powershell
+# 直接调用Windows工具
+& "C:\path\to\tool.exe" args
+
+# PowerShell内置命令
+Get-Content file | Select-String pattern
+(Get-Content file) -replace 'old','new' | Set-Content file
+```
+
+### 异常处理策略（跨环境自适应）
+
+#### 编译失败处理（跨环境兼容）
+
+```bash
+# 编译失败时的诊断步骤（跨环境适配）
+echo "编译失败，开始诊断..."
+
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # WSL环境诊断
+    echo "WSL环境诊断："
+  
+    # 检查Visual Studio环境
+    cmd.exe /c "where devenv.exe" 2>/dev/null || echo "Visual Studio未找到"
+  
+    # 检查项目文件完整性
+    ls -la *.sln *.vcxproj 2>/dev/null || echo "项目文件缺失"
+  
+    # 检查路径权限
+    chmod +x *.bat 2>/dev/null || echo "权限设置完成"
+else
+    # PowerShell环境诊断
+    echo "PowerShell环境诊断："
+  
+    # 检查Visual Studio环境
+    $vsPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
+    if (!(Test-Path $vsPath)) {
+        Write-Warning "Visual Studio 2022未找到，检查其他版本..."
+        Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -ErrorAction SilentlyContinue
+    }
+  
+    # 检查项目文件完整性
+    if (!(Test-Path "*.sln") -or !(Test-Path "*.vcxproj")) {
+        Write-Warning "项目文件可能缺失"
+    }
+fi
+
+# 输出详细错误信息
+echo "请检查编译输出中的具体错误信息"
+```
+
+**编译失败处理原则：**
 
 - **不允许提交或推送** 编译失败的代码
-- 返回详细错误信息，包含WSL环境特有的路径转换错误
+- 返回详细错误信息，包含环境特有的路径转换错误
 - 尝试自动修复常见问题（路径分隔符、编码问题）
 - 如无法自动修复，提供手动修复建议
 
-#### 合并冲突处理
+#### 合并冲突处理（跨环境兼容）
+
+```bash
+# 检测合并冲突（跨环境适配）
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # WSL环境冲突检测
+    git status | grep -q "both modified" && {
+        echo "检测到合并冲突，需要手动解决"
+        git status --porcelain | grep "^UU"
+        echo "请解决冲突后重新提交"
+        exit 1
+    }
+else
+    # PowerShell环境冲突检测
+    $conflictFiles = git status --porcelain | Where-Object { $_ -match "^UU" }
+    if ($conflictFiles) {
+        Write-Warning "检测到合并冲突，需要手动解决："
+        $conflictFiles
+        Write-Host "请解决冲突后重新提交"
+        exit 1
+    }
+fi
+```
+
+**合并冲突处理原则：**
 
 - 立即停止工作流程
 - 明确指出冲突文件位置
@@ -359,12 +536,64 @@ sed 's/old/new/' file
   - 执行 `git merge --abort` 回退
   - 或提供手动解决冲突的具体步骤
 
-#### WSL特有问题处理
+#### 环境特有问题处理
+
+**WSL特有问题处理：**
+
+```bash
+# WSL环境特殊处理
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # 路径权限问题
+    chmod +x *.bat 2>/dev/null || echo "权限设置完成"
+  
+    # Windows/Linux换行符问题
+    dos2unix *.cpp *.h 2>/dev/null || echo "换行符转换完成"
+  
+    # 文件系统同步问题
+    sync && echo "文件系统同步完成"
+  
+    # 路径转换验证
+    echo "WSL路径: $WORK_DIR"
+    echo "Windows路径: $WIN_PATH"
+fi
+```
+
+**PowerShell特有问题处理：**
+
+```powershell
+# PowerShell环境特殊处理
+if ($env:CURRENT_ENV -eq "PowerShell") {
+    # 执行策略问题
+    $policy = Get-ExecutionPolicy
+    if ($policy -eq "Restricted") {
+        Write-Warning "执行策略受限，可能影响脚本执行"
+        Write-Host "建议运行：Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+    }
+  
+    # 路径长度问题
+    $currentPath = Get-Location
+    if ($currentPath.Path.Length -gt 200) {
+        Write-Warning "当前路径过长，可能导致编译问题"
+    }
+  
+    # 编码问题检查
+    Write-Host "检查文件编码..."
+    Get-ChildItem -Filter "*.cpp" | ForEach-Object {
+        $content = Get-Content $_.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        if (!$content) {
+            Write-Warning "文件 $($_.Name) 可能存在编码问题"
+        }
+    }
+}
+```
+
+**环境问题处理要点：**
 
 - **路径转换错误**：自动检测并转换Windows/WSL路径格式
-- **文件权限问题**：使用 `chmod +x`修复执行权限
-- **编码问题**：确保UTF-8编码在WSL和Windows间正确转换
-- **Git远程路径**：验证WSL挂载路径可访问性
+- **文件权限问题**：使用 `chmod +x`修复执行权限（WSL）
+- **编码问题**：确保UTF-8编码在不同环境间正确转换
+- **Git远程路径**：验证挂载路径可访问性
+- **执行策略**：检查PowerShell执行策略限制
 
 ### 质量保证原则
 
@@ -373,15 +602,119 @@ sed 's/old/new/' file
 - **完整验证**：每次变更都必须通过完整的编译验证流程
 - **进度同步**：代码变更与文档更新保持同步，确保项目状态可追踪
 
-### 环境验证清单
+### 环境验证清单（跨环境自适应）
+
+#### 跨环境检查脚本
+
+```bash
+# 跨环境验证脚本
+echo "=== 跨环境验证开始 ==="
+
+# 环境检测
+if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    echo "当前环境: WSL (Windows Subsystem for Linux)"
+  
+    # WSL特有验证
+    echo "--- WSL环境验证 ---"
+  
+    # 1. 工作目录验证
+    echo "工作目录: $(pwd)"
+    ls -la PortMaster.sln 2>/dev/null && echo "✅ 项目文件存在" || echo "❌ 项目文件缺失"
+  
+    # 2. Git配置验证
+    git remote -v && echo "✅ Git远程仓库配置正常" || echo "❌ Git配置异常"
+  
+    # 3. Windows工具链验证
+    cmd.exe /c "where devenv.exe" 2>/dev/null && echo "✅ Visual Studio可访问" || echo "❌ Visual Studio不可访问"
+  
+    # 4. 编译脚本验证
+    ls -la autobuild*.bat 2>/dev/null && echo "✅ 编译脚本存在" || echo "❌ 编译脚本缺失"
+  
+    # 5. 文件权限验证
+    [[ -x autobuild_x86_debug.bat ]] && echo "✅ 编译脚本可执行" || echo "❌ 编译脚本权限不足"
+  
+    # 6. 路径转换验证
+    WIN_PATH=$(wslpath -w "$(pwd)")
+    echo "WSL路径: $(pwd)"
+    echo "Windows路径: $WIN_PATH"
+  
+else
+    echo "当前环境: PowerShell (Windows Native)"
+  
+    # PowerShell特有验证
+    echo "--- PowerShell环境验证 ---"
+  
+    # 1. 工作目录验证
+    $currentDir = Get-Location
+    Write-Host "工作目录: $currentDir"
+    if (Test-Path "PortMaster.sln") {
+        Write-Host "✅ 项目文件存在" -ForegroundColor Green
+    } else {
+        Write-Host "❌ 项目文件缺失" -ForegroundColor Red
+    }
+  
+    # 2. Git配置验证
+    try {
+        $remotes = git remote -v
+        if ($remotes) {
+            Write-Host "✅ Git远程仓库配置正常" -ForegroundColor Green
+        }
+    } catch {
+        Write-Host "❌ Git配置异常" -ForegroundColor Red
+    }
+  
+    # 3. Visual Studio验证
+    $vsPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
+    if (Test-Path $vsPath) {
+        Write-Host "✅ Visual Studio 2022可访问" -ForegroundColor Green
+    } else {
+        Write-Host "❌ Visual Studio 2022不可访问，检查其他版本..." -ForegroundColor Yellow
+        $vsInstalls = Get-ChildItem "${env:ProgramFiles}\Microsoft Visual Studio" -ErrorAction SilentlyContinue
+        if ($vsInstalls) {
+            Write-Host "发现Visual Studio安装: $($vsInstalls.Name -join ', ')" -ForegroundColor Yellow
+        }
+    }
+  
+    # 4. 编译脚本验证
+    $buildScripts = Get-ChildItem "autobuild*.bat" -ErrorAction SilentlyContinue
+    if ($buildScripts) {
+        Write-Host "✅ 编译脚本存在: $($buildScripts.Name -join ', ')" -ForegroundColor Green
+    } else {
+        Write-Host "❌ 编译脚本缺失" -ForegroundColor Red
+    }
+  
+    # 5. 执行策略验证
+    $policy = Get-ExecutionPolicy
+    if ($policy -ne "Restricted") {
+        Write-Host "✅ PowerShell执行策略允许脚本运行: $policy" -ForegroundColor Green
+    } else {
+        Write-Host "❌ PowerShell执行策略受限: $policy" -ForegroundColor Red
+        Write-Host "建议运行: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser" -ForegroundColor Yellow
+    }
+fi
+
+echo "=== 验证完成 ==="
+```
+
+#### 环境要求清单
 
 执行工作流程前，必须确认以下环境要求：
+
+**WSL环境要求：**
 
 - [X] WSL2环境正常工作
 - [X] `/mnt/c/Users/huangl/Desktop/PortMaster` 路径可访问
 - [X] `cmd.exe` 可正常调用
 - [X] Git远程仓库 `/mnt/d/GitBackups/PortMaster.git` 可访问
 - [X] 编译脚本 `autobuild_x86_debug.bat` 和 `autobuild.bat` 存在
+
+**PowerShell环境要求：**
+
+- [X] Windows 7-11 系统
+- [X] `C:\Users\huangl\Desktop\PortMaster` 路径可访问
+- [X] Visual Studio 2022 (Community/Professional/Enterprise) 已安装
+- [X] PowerShell执行策略允许脚本运行
+- [X] Git远程仓库 `D:\GitBackups\PortMaster.git` 可访问
 
 ## 修订记录管理
 
