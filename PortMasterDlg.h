@@ -360,6 +360,7 @@ private:
 	CString FormatHexDisplaySimple(const std::vector<uint8_t>& data);  // 用于复制的简化格式
 	CString FormatTextDisplay(const std::vector<uint8_t>& data);
 	CString FormatMixedDisplay(const std::vector<uint8_t>& data);      // 🔑 智能混合显示
+	CString FormatPlainTextDisplay(const std::vector<uint8_t>& data);  // 🔑 纯文本显示（直接传输模式）
 	bool IsValidUTF8Sequence(const std::vector<uint8_t>& data, size_t start, size_t& length); // 🔑 UTF-8序列验证
 	void ScrollToBottom();
 	void DisplayDataAppendMode(const std::vector<uint8_t>& data);

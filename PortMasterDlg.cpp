@@ -3001,9 +3001,16 @@ CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
 			}
 		}
 		
-		// 🔑 优化7：智能混合显示（保持可读性）
-		WriteDebugLog("[INFO] 使用智能混合显示模式");
-		return FormatMixedDisplay(processData);
+		// 🔑 优化7：根据传输模式选择显示策略
+		if (m_bReliableMode) {
+			// 可靠传输模式：使用智能混合显示（调试友好）
+			WriteDebugLog("[INFO] 可靠传输模式：使用智能混合显示");
+			return FormatMixedDisplay(processData);
+		} else {
+			// 直接传输模式：使用纯文本显示（用户友好）
+			WriteDebugLog("[INFO] 直接传输模式：使用纯文本显示");
+			return FormatPlainTextDisplay(processData);
+		}
 		
 	} catch (const std::exception& e) {
 		// 🔑 优化8：异常处理
@@ -3103,6 +3110,91 @@ CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
 	}
 	
 	return result;
+}
+
+// 🔑 新增：纯文本显示策略（SOLID-S: 单一职责 - 纯文本格式显示）
+// 直接传输模式专用：提供用户友好的纯文本显示
+CString CPortMasterDlg::FormatPlainTextDisplay(const std::vector<uint8_t>& data)
+{
+	if (data.empty()) {
+		return L"[空数据]";
+	}
+	
+	try {
+		CString result;
+		result.Preallocate(static_cast<int>(data.size()));
+		
+		// 🔑 策略1：优先尝试UTF-8解码
+		std::string utf8Data(reinterpret_cast<const char*>(data.data()), data.size());
+		int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
+			utf8Data.c_str(), static_cast<int>(utf8Data.length()), nullptr, 0);
+		
+		if (wideStrLen > 0) {
+			// UTF-8解码成功
+			std::vector<wchar_t> wideStr(wideStrLen + 1);
+			int actualLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+				utf8Data.c_str(), static_cast<int>(utf8Data.length()),
+				wideStr.data(), wideStrLen);
+			
+			if (actualLen > 0) {
+				wideStr[actualLen] = L'\0';
+				result = CString(wideStr.data());
+				WriteDebugLog("[INFO] UTF-8解码成功，使用UTF-8显示");
+				return result;
+			}
+		}
+		
+		// 🔑 策略2：UTF-8失败，尝试GBK/GB2312解码
+		wideStrLen = MultiByteToWideChar(CP_ACP, 0, 
+			reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()), nullptr, 0);
+		
+		if (wideStrLen > 0) {
+			std::vector<wchar_t> wideStr(wideStrLen + 1);
+			int actualLen = MultiByteToWideChar(CP_ACP, 0,
+				reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()),
+				wideStr.data(), wideStrLen);
+			
+			if (actualLen > 0) {
+				wideStr[actualLen] = L'\0';
+				result = CString(wideStr.data());
+				WriteDebugLog("[INFO] GBK解码成功，使用GBK显示");
+				return result;
+			}
+		}
+		
+		// 🔑 策略3：所有解码失败，按ASCII处理（过滤控制字符）
+		for (size_t i = 0; i < data.size(); ++i) {
+			uint8_t byte = data[i];
+			
+			if (byte >= 32 && byte <= 126) {
+				// 可打印ASCII字符
+				result += static_cast<wchar_t>(byte);
+			} else if (byte == 0x0A) {
+				// 保留换行符
+				result += L"\r\n";
+			} else if (byte == 0x09) {
+				// 制表符转为空格
+				result += L"    ";
+			} else if (byte == 0x0D) {
+				// 跳过回车符（避免重复换行）
+				continue;
+			}
+			// 其他控制字符直接忽略（不显示）
+		}
+		
+		WriteDebugLog("[INFO] 使用ASCII过滤显示");
+		return result;
+		
+	} catch (const std::exception& e) {
+		CString errorMsg;
+		errorMsg.Format(L"[格式化错误] FormatPlainTextDisplay异常: %s\r\n", CA2W(e.what()));
+		WriteDebugLog(CW2A(errorMsg));
+		return errorMsg;
+		
+	} catch (...) {
+		WriteDebugLog("[ERROR] FormatPlainTextDisplay发生未知异常");
+		return L"[格式化错误] FormatPlainTextDisplay发生未知异常\r\n";
+	}
 }
 
 void CPortMasterDlg::ScrollToBottom()
