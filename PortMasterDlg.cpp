@@ -3001,14 +3001,14 @@ CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
 			}
 		}
 		
-		// 🔑 优化7：根据传输模式选择显示策略
-		if (m_bReliableMode) {
-			// 可靠传输模式：使用智能混合显示（调试友好）
-			WriteDebugLog("[INFO] 可靠传输模式：使用智能混合显示");
+		// 🔑 修复：根据用户显示模式选择显示策略（恢复m_bHexDisplay控制）
+		if (m_bHexDisplay) {
+			// 十六进制显示模式：使用智能混合显示（调试友好）
+			WriteDebugLog("[INFO] 十六进制显示模式：使用智能混合显示");
 			return FormatMixedDisplay(processData);
 		} else {
-			// 直接传输模式：使用纯文本显示（用户友好）
-			WriteDebugLog("[INFO] 直接传输模式：使用纯文本显示");
+			// 文本显示模式：使用纯文本显示（用户友好）
+			WriteDebugLog("[INFO] 文本显示模式：使用纯文本显示");
 			return FormatPlainTextDisplay(processData);
 		}
 		
