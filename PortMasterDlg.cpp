@@ -70,6 +70,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	, m_currentRetryCount(0)
 	, m_maxRetryCount(3)  // 默认最多重试3次
 	, m_lastProgressUpdate(std::chrono::steady_clock::now())  // 🔑 P1-4: 初始化回调频率限制时间戳
+	, m_tempDataManager(std::make_unique<TempDataManager>())  // 初始化临时数据管理器
 {
 	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数开始");
 	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
@@ -3617,6 +3618,14 @@ LRESULT CPortMasterDlg::OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam)
 			m_displayedData.insert(m_displayedData.end(), 
 								 dataPtr->begin(), dataPtr->end());
 			
+			// 🔑 优化8: 缓存接收到的数据到临时数据管理器
+			if (m_tempDataManager) {
+				std::string identifier = "received_data_" + std::to_string(
+					std::chrono::duration_cast<std::chrono::milliseconds>(
+						std::chrono::system_clock::now().time_since_epoch()).count());
+				m_tempDataManager->CacheData(*dataPtr, identifier);
+			}
+			
 			// 记录数据接收日志
 			CString logMsg;
 			logMsg.Format(L"[INFO] 接收数据 %zu 字节，总计 %zu 字节", 
@@ -3720,9 +3729,13 @@ void CPortMasterDlg::UpdateDataDisplay()
 		
 		// 🔑 优化4：统一格式化处理
 		if (m_bHexDisplay) {
-			formattedData = FormatHexDisplay(displayData);
+			// 十六进制显示开启：使用智能混合显示
+			WriteDebugLog("[UpdateDataDisplay] 十六进制显示开启：智能混合显示");
+			formattedData = FormatMixedDisplay(displayData);
 		} else {
-			formattedData = FormatTextDisplay(displayData);
+			// 十六进制显示关闭：使用纯文本显示
+			WriteDebugLog("[UpdateDataDisplay] 十六进制显示关闭：纯文本显示");
+			formattedData = FormatPlainTextDisplay(displayData);
 		}
 		
 		// 🔑 优化5：批量更新减少闪烁

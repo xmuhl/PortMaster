@@ -5,6 +5,7 @@
 #include "afxdialogex.h"
 #include "Common/DataFormatter.h"
 #include "Common/DeviceManager.h"
+#include "Common/TempDataManager.h"
 #include "Protocol/ReliableChannel.h"
 #include "Protocol/ProtocolManager.h"
 #include "Transport/LoopbackTransport.h"
@@ -197,6 +198,7 @@ private:
 	// 设备和协议管理器
 	std::shared_ptr<DeviceManager> m_deviceManager;
 	std::shared_ptr<ProtocolManager> m_protocolManager;
+	std::unique_ptr<TempDataManager> m_tempDataManager;  // 临时数据管理器
 	
 	// 可靠传输
 	std::shared_ptr<ITransport> m_transport;
