@@ -3479,18 +3479,30 @@ TransmissionState CPortMasterDlg::GetTransmissionState() const
 
 bool CPortMasterDlg::IsTransmissionActive() const
 {
-	// 🔑 修复状态同步问题：同时检查UI状态和可靠传输状态
+	// 🔑 第六轮修复：彻底修复可靠传输状态判断逻辑
 	bool uiActive = (m_transmissionState == TransmissionState::TRANSMITTING || 
 					 m_transmissionState == TransmissionState::PAUSED);
 	
-	// 在可靠传输模式下，还需要检查ReliableChannel的状态
+	// 在可靠传输模式下，需要精确检查ReliableChannel的状态
 	if (m_bReliableMode && m_reliableChannel)
 	{
 		ReliableState reliableState = m_reliableChannel->GetState();
+		
+		// 🔑 关键修复：RELIABLE_DONE和RELIABLE_FAILED应被视为非活跃状态
+		// 只有真正在传输过程中的状态才被视为活跃
 		bool reliableActive = (reliableState == RELIABLE_STARTING || 
 							   reliableState == RELIABLE_SENDING || 
 							   reliableState == RELIABLE_ENDING ||
 							   reliableState == RELIABLE_RECEIVING);
+		
+		// ⚠️ 特殊处理：RELIABLE_DONE状态表示刚完成，应立即视为非活跃
+		// 这解决了"传输完成后仍显示停止按钮"的问题
+		if (reliableState == RELIABLE_DONE || reliableState == RELIABLE_FAILED)
+		{
+			// 可靠传输已完成或失败，强制设为非活跃
+			// 让UI有时间处理完成通知并更新按钮状态
+			return false;
+		}
 		
 		// 可靠传输模式下，任一层面活跃即认为传输活跃
 		return uiActive || reliableActive;
