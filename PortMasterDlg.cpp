@@ -1484,8 +1484,62 @@ void CPortMasterDlg::OnBnClickedReliableMode()
 	// 重置UI传输状态
 	SetTransmissionState(TransmissionState::IDLE);
 	
+	// 🔑 关键修复：切换传输模式后重新配置回调函数
+	ConfigureTransportCallback();
+	
 	UpdateButtonStates();
 	AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
+}
+
+void CPortMasterDlg::ConfigureTransportCallback()
+{
+	WriteDebugLog("[DEBUG] ConfigureTransportCallback: 开始配置Transport回调");
+	
+	if (!m_transport) {
+		WriteDebugLog("[ERROR] ConfigureTransportCallback: Transport未初始化");
+		return;
+	}
+	
+	// 根据当前传输模式设置回调
+	if (m_bReliableMode) {
+		// 可靠传输模式：确保ReliableChannel的回调被正确设置
+		if (m_reliableChannel) {
+			// 重新配置ReliableChannel的Transport回调，防止被直接传输模式覆盖
+			m_reliableChannel->ReconfigureTransportCallback();
+			WriteDebugLog("[DEBUG] ConfigureTransportCallback: 可靠传输模式 - ReliableChannel回调已重新配置");
+		} else {
+			WriteDebugLog("[ERROR] ConfigureTransportCallback: ReliableChannel未初始化");
+		}
+	} else {
+		// 直接传输模式：设置直接传输回调
+		WriteDebugLog("[DEBUG] ConfigureTransportCallback: 配置直接传输模式回调");
+		
+		// 初始化直接传输回调（如果还没有初始化）
+		if (!m_directTransportCallback) {
+			m_directTransportCallback = [this](const std::vector<uint8_t>& data) {
+				WriteDebugLog(("[DIRECT] 接收到直接传输数据，长度: " + std::to_string(data.size())).c_str());
+				
+				// 确保数据不为空
+				if (!data.empty()) {
+					// 复制数据到堆内存用于线程间传递
+					std::vector<uint8_t>* dataPtr = new std::vector<uint8_t>(data);
+					
+					// 使用SafePostMessage发送到UI线程处理
+					if (!SafePostMessage(WM_DISPLAY_RECEIVED_DATA, 0, reinterpret_cast<LPARAM>(dataPtr)))
+					{
+						// SafePostMessage失败，清理分配的内存
+						delete dataPtr;
+						WriteDebugLog("[WARNING] 直接传输数据接收回调SafePostMessage失败");
+					}
+				}
+			};
+			WriteDebugLog("[DEBUG] ConfigureTransportCallback: 直接传输回调已初始化");
+		}
+		
+		m_transport->SetDataReceivedCallback(m_directTransportCallback);
+	}
+	
+	WriteDebugLog("[DEBUG] ConfigureTransportCallback: Transport回调配置完成");
 }
 
 void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
