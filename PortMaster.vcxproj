@@ -228,6 +228,7 @@
     <ClInclude Include="Common\DataFormatter.h" />
     <ClInclude Include="Common\DeviceManager.h" />
     <ClInclude Include="Common\AsyncMessageManager.h" />
+    <ClInclude Include="Common\DataDisplayManager.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
@@ -259,6 +260,7 @@
     <ClCompile Include="Common\DeviceManager.cpp" />
     <ClCompile Include="Common\AsyncMessageManager.cpp" />
     <ClCompile Include="Common\TempDataManager.cpp" />
+    <ClCompile Include="Common\DataDisplayManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="PortMaster.rc" />
