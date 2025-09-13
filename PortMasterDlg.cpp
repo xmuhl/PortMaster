@@ -3510,24 +3510,26 @@ void CPortMasterDlg::DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk)
 		m_displayedData.insert(m_displayedData.end(), chunk.begin(), chunk.end());
 	}
 	
-	// 追加显示模式 - 不替换已有数据
-	CString hexDisplay = FormatHexDisplay(chunk);
-	CString textDisplay = FormatTextDisplay(chunk);
-	
-	// 追加到十六进制视图
-	CString currentHex;
-	m_ctrlDataView.GetWindowText(currentHex);
-	if (!currentHex.IsEmpty()) {
-		currentHex += L"\r\n";
+	// 🔑 关键修复：根据显示模式设置选择正确的格式化方式
+	CString formattedDisplay;
+	if (m_bHexDisplay) {
+		// 十六进制显示开启：使用智能混合显示
+		WriteDebugLog("[DisplayReceivedDataChunk] 十六进制显示开启：智能混合显示");
+		formattedDisplay = FormatMixedDisplay(chunk);
+	} else {
+		// 十六进制显示关闭：使用纯文本显示
+		WriteDebugLog("[DisplayReceivedDataChunk] 十六进制显示关闭：纯文本显示");
+		formattedDisplay = FormatPlainTextDisplay(chunk);
 	}
-	currentHex += hexDisplay;
-	m_ctrlDataView.SetWindowText(currentHex);
 	
-	// 追加到文本视图
-	CString currentText;
-	m_ctrlDataView.GetWindowText(currentText);
-	currentText += textDisplay;
-	m_ctrlDataView.SetWindowText(currentText);
+	// 追加到数据视图（统一处理，避免重复显示）
+	CString currentDisplay;
+	m_ctrlDataView.GetWindowText(currentDisplay);
+	if (!currentDisplay.IsEmpty()) {
+		currentDisplay += L"\r\n";
+	}
+	currentDisplay += formattedDisplay;
+	m_ctrlDataView.SetWindowText(currentDisplay);
 	
 	// 🔑 关键修复：更新按钮状态，确保复制和保存按钮能正确启用
 	UpdateButtonStates();
