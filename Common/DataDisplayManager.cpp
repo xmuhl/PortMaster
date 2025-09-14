@@ -59,7 +59,7 @@ CString DefaultDataDisplayFormatter::FormatAsText(const std::vector<uint8_t>& da
         }
     }
     
-    return CA2W(textData.c_str(), CP_UTF8);
+    return CString(CA2W(textData.c_str(), CP_UTF8));
 }
 
 CString DefaultDataDisplayFormatter::FormatAsHex(const std::vector<uint8_t>& data)

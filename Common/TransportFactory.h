@@ -1,4 +1,4 @@
-#pragma execution_character_set("utf-8")
+﻿#pragma execution_character_set("utf-8")
 #pragma once
 
 #include "../Transport/ITransport.h"
@@ -11,7 +11,7 @@
 #include <memory>
 #include <string>
 
-// 传输类型枚举
+// Transport type enumeration
 enum class TransportType : int
 {
     SERIAL = 0,
@@ -24,30 +24,30 @@ enum class TransportType : int
 };
 
 /**
- * 传输层工厂类 - 专职负责传输对象创建
- * SOLID-S: 单一职责 - 专注传输对象创建
- * SOLID-O: 开闭原则 - 可扩展新传输类型
+ * Transport Factory Class - Responsible for creating transport objects
+ * SOLID-S: Single Responsibility - Focus on transport object creation
+ * SOLID-O: Open/Closed Principle - Extensible for new transport types
  */
 class TransportFactory
 {
 public:
     /**
-     * 根据传输类型创建传输对象
+     * Create transport object by transport type
      */
     static std::shared_ptr<ITransport> Create(TransportType transportType);
     
     /**
-     * 根据索引创建传输对象（兼容现有代码）
+     * Create transport object by index (compatible with existing code)
      */
     static std::shared_ptr<ITransport> CreateByIndex(int transportIndex);
     
     /**
-     * 获取传输类型显示名称
+     * Get transport type display name
      */
     static const char* GetTransportName(TransportType transportType);
     
     /**
-     * 验证传输类型有效性
+     * Validate transport type validity
      */
     static bool IsValidTransportType(int transportIndex);
 
