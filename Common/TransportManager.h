@@ -265,7 +265,7 @@ private:
     mutable std::mutex m_stateMutex;                     // 状态访问互斥锁
     mutable std::mutex m_configMutex;                    // 配置访问互斥锁
     
-    // 内部方法
+    // 私有辅助方法
     TransportConfig ConvertToTransportConfig(const TransportConfiguration& config);
     std::shared_ptr<ITransport> CreateTransportInstance(const TransportConfiguration& config);
     void SetupTransportCallbacks();
@@ -274,6 +274,46 @@ private:
     void ReportError(const std::string& operation, const std::string& error);
     void UpdateTransferStats(size_t bytesTransferred);
     void CleanupTransportObjects();
+    
+    // 私有辅助方法 - 从UI控件获取配置
+    std::shared_ptr<ITransport> CreateTransportFromIndex(int transportIndex);
+    TransportConfiguration GetTransportConfigFromControls(int transportIndex, 
+                                                         const std::string& portName,
+                                                         const std::string& baudRate = "",
+                                                         const std::string& dataBits = "",
+                                                         int parityIndex = -1,
+                                                         int stopBitsIndex = -1,
+                                                         const std::string& endpoint = "");
+
+public:
+    // 🔑 架构重构：从PortMasterDlg转移的传输工厂方法
+    /**
+     * @brief 从UI控件创建传输对象（从PortMasterDlg::CreateTransportFromUI转移）
+     * @param transportIndex 传输类型索引
+     * @return 传输对象智能指针
+     */
+    std::shared_ptr<ITransport> CreateTransportFromUI(int transportIndex);
+    
+    /**
+     * @brief 从UI控件获取传输配置（从PortMasterDlg::GetTransportConfigFromUI转移）
+     * @param transportIndex 传输类型索引
+     * @param portName 端口名称
+     * @param baudRate 波特率字符串
+     * @param dataBits 数据位字符串
+     * @param parityIndex 校验位索引
+     * @param stopBitsIndex 停止位索引
+     * @param endpoint 网络端点
+     * @return TransportConfig配置对象
+     */
+    TransportConfig GetTransportConfigFromUI(int transportIndex,
+                                            const std::string& portName,
+                                            const std::string& baudRate = "",
+                                            const std::string& dataBits = "",
+                                            int parityIndex = -1,
+                                            int stopBitsIndex = -1,
+                                            const std::string& endpoint = "");
+
+private:
     
     // 回调处理方法
     void HandleTransportCallback(const std::vector<uint8_t>& data);

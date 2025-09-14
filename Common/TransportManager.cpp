@@ -6,6 +6,10 @@
 #include "../Transport/ITransport.h"
 #include "../Transport/SerialTransport.h"
 #include "../Transport/LoopbackTransport.h"
+#include "../Transport/LptSpoolerTransport.h"
+#include "../Transport/UsbPrinterTransport.h"
+#include "../Transport/TcpTransport.h"
+#include "../Transport/UdpTransport.h"
 #include "../Protocol/ReliableChannel.h"
 #include <algorithm>
 #include <fstream>
@@ -388,7 +392,302 @@ void TransportManager::HandleReliableChannelCallback(const std::vector<uint8_t>&
     }
 }
 
+// 🔑 架构重构：从PortMasterDlg转移的传输工厂方法实现
+
+std::shared_ptr<ITransport> TransportManager::CreateTransportFromUI(int transportIndex)
+{
+    // 直接调用现有的CreateTransportFromIndex方法
+    return CreateTransportFromIndex(transportIndex);
+}
+
+TransportConfig TransportManager::GetTransportConfigFromUI(int transportIndex,
+                                                          const std::string& portName,
+                                                          const std::string& baudRate,
+                                                          const std::string& dataBits,
+                                                          int parityIndex,
+                                                          int stopBitsIndex,
+                                                          const std::string& endpoint)
+{
+    TransportConfig config; // 使用默认构造函数提供的基础默认值
+    
+    // SOLID-S: 单一职责 - 分类型配置采集
+    switch (transportIndex)
+    {
+    case 0: // 串口
+        {
+            // 端口名称
+            config.portName = portName;
+            
+            // 波特率
+            if (!baudRate.empty()) {
+                config.baudRate = std::stoi(baudRate);
+            }
+            
+            // 数据位
+            if (!dataBits.empty()) {
+                config.dataBits = std::stoi(dataBits);
+            }
+            
+            // 校验位
+            if (parityIndex != -1) {
+                config.parity = parityIndex; // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
+            }
+            
+            // 停止位
+            if (stopBitsIndex != -1) {
+                config.stopBits = (stopBitsIndex == 0) ? 1 : ((stopBitsIndex == 1) ? 2 : 2); // 1, 1.5->2, 2
+            }
+        }
+        break;
+        
+    case 1: // 并口
+    case 2: // USB打印机
+        {
+            // 获取打印机名称
+            config.portName = portName;
+        }
+        break;
+        
+    case 3: // TCP客户端
+        {
+            config.isServer = false;
+            
+            // 从端点解析IP:端口
+            if (!endpoint.empty()) {
+                size_t colonPos = endpoint.find(':');
+                if (colonPos != std::string::npos) {
+                    config.ipAddress = endpoint.substr(0, colonPos);
+                    config.port = std::stoi(endpoint.substr(colonPos + 1));
+                } else {
+                    // 默认值
+                    config.ipAddress = "127.0.0.1";
+                    config.port = 8080;
+                }
+            } else {
+                config.ipAddress = "127.0.0.1";
+                config.port = 8080;
+            }
+        }
+        break;
+        
+    case 4: // TCP服务器
+        {
+            config.isServer = true;
+            
+            // 从端点解析端口
+            if (!endpoint.empty()) {
+                size_t colonPos = endpoint.find(':');
+                if (colonPos != std::string::npos) {
+                    config.port = std::stoi(endpoint.substr(colonPos + 1));
+                } else {
+                    config.port = 8080;
+                }
+            } else {
+                config.port = 8080;
+            }
+            
+            // 服务器绑定到所有接口
+            config.ipAddress = "0.0.0.0";
+        }
+        break;
+        
+    case 5: // UDP
+        {
+            // 从端点解析端口
+            if (!endpoint.empty()) {
+                size_t colonPos = endpoint.find(':');
+                if (colonPos != std::string::npos) {
+                    config.port = std::stoi(endpoint.substr(colonPos + 1));
+                } else {
+                    config.port = 8080;
+                }
+            } else {
+                config.port = 8080;
+            }
+            
+            // UDP默认配置
+            config.ipAddress = "127.0.0.1";
+        }
+        break;
+        
+    case 6: // 回环测试
+        {
+            // 回环测试使用默认配置
+            config.portName = "loopback";
+        }
+        break;
+    }
+    
+    WriteDebugLog("[DEBUG] TransportManager::GetTransportConfigFromUI: 配置获取完成");
+    return config;
+}
+
 // TransportManagerFactory 实现
+
+// 🔑 架构重构：从UI创建传输工厂逻辑 (从PortMasterDlg转移)
+std::shared_ptr<ITransport> TransportManager::CreateTransportFromIndex(int transportIndex)
+{
+    try {
+        // SOLID-O: 开闭原则 - 可扩展的传输类型工厂
+        switch (transportIndex)
+        {
+        case 0: // 串口
+            return std::make_shared<SerialTransport>();
+            
+        case 1: // 并口 
+            return std::make_shared<LptSpoolerTransport>();
+            
+        case 2: // USB打印机
+            return std::make_shared<UsbPrinterTransport>();
+            
+        case 3: // TCP客户端
+            {
+                auto tcp = std::make_shared<TcpTransport>();
+                return tcp;
+            }
+            
+        case 4: // TCP服务器
+            {
+                auto tcp = std::make_shared<TcpTransport>();
+                return tcp;
+            }
+            
+        case 5: // UDP
+            return std::make_shared<UdpTransport>();
+            
+        case 6: // 回环测试
+            return std::make_shared<LoopbackTransport>();
+            
+        default:
+            WriteDebugLog("[ERROR] TransportManager::CreateTransportFromIndex: 无效的传输类型索引");
+            return nullptr;
+        }
+    }
+    catch (const std::exception& e) {
+        ReportError("创建传输实例", e.what());
+        return nullptr;
+    }
+}
+
+TransportConfiguration TransportManager::GetTransportConfigFromControls(int transportIndex, 
+                                                                       const std::string& portName,
+                                                                       const std::string& baudRate,
+                                                                       const std::string& dataBits,
+                                                                       int parityIndex,
+                                                                       int stopBitsIndex,
+                                                                       const std::string& endpoint)
+{
+    TransportConfiguration config; // 使用默认构造函数提供的基础默认值
+    
+    try {
+        // SOLID-S: 单一职责 - 分类型配置采集
+        switch (transportIndex)
+        {
+        case 0: // 串口
+            {
+                config.endpoint = portName;
+                
+                // 波特率
+                if (!baudRate.empty()) {
+                    config.baudRate = std::stoi(baudRate);
+                }
+                
+                // 数据位
+                if (!dataBits.empty()) {
+                    config.dataBits = std::stoi(dataBits);
+                }
+                
+                // 校验位
+                if (parityIndex >= 0) {
+                    config.parity = parityIndex; // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
+                }
+                
+                // 停止位
+                if (stopBitsIndex >= 0) {
+                    config.stopBits = (stopBitsIndex == 0) ? 1 : ((stopBitsIndex == 1) ? 2 : 2); // 1, 1.5->2, 2
+                }
+            }
+            break;
+            
+        case 1: // 并口
+        case 2: // USB打印机
+            {
+                config.endpoint = portName;
+            }
+            break;
+            
+        case 3: // TCP客户端
+            {
+                config.mode = TransportMode::DIRECT;
+                
+                // 从端点解析IP:端口
+                if (!endpoint.empty()) {
+                    size_t colonPos = endpoint.find(':');
+                    if (colonPos != std::string::npos) {
+                        std::string ipStr = endpoint.substr(0, colonPos);
+                        std::string portStr = endpoint.substr(colonPos + 1);
+                        
+                        config.endpoint = ipStr + ":" + portStr;
+                    } else {
+                        config.endpoint = "127.0.0.1:8080";
+                    }
+                } else {
+                    config.endpoint = "127.0.0.1:8080";
+                }
+            }
+            break;
+            
+        case 4: // TCP服务器
+            {
+                config.mode = TransportMode::DIRECT;
+                
+                // 从端点解析端口
+                if (!endpoint.empty()) {
+                    size_t colonPos = endpoint.find(':');
+                    if (colonPos != std::string::npos) {
+                        std::string portStr = endpoint.substr(colonPos + 1);
+                        config.endpoint = "0.0.0.0:" + portStr;
+                    } else {
+                        config.endpoint = "0.0.0.0:8080";
+                    }
+                } else {
+                    config.endpoint = "0.0.0.0:8080";
+                }
+            }
+            break;
+            
+        case 5: // UDP
+            {
+                // 从端点解析端口
+                if (!endpoint.empty()) {
+                    size_t colonPos = endpoint.find(':');
+                    if (colonPos != std::string::npos) {
+                        std::string portStr = endpoint.substr(colonPos + 1);
+                        config.endpoint = "127.0.0.1:" + portStr;
+                    } else {
+                        config.endpoint = "127.0.0.1:8080";
+                    }
+                } else {
+                    config.endpoint = "127.0.0.1:8080";
+                }
+            }
+            break;
+            
+        case 6: // 回环测试
+            {
+                config.endpoint = "loopback";
+            }
+            break;
+        }
+        
+        WriteDebugLog("[DEBUG] TransportManager::GetTransportConfigFromControls: 配置创建成功");
+        return config;
+    }
+    catch (const std::exception& e) {
+        ReportError("获取传输配置", e.what());
+        return config; // 返回默认配置
+    }
+}
 
 std::unique_ptr<TransportManager> TransportManagerFactory::Create(
     std::shared_ptr<DeviceManager> deviceManager,

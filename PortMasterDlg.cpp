@@ -1566,107 +1566,92 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 {
 	WriteDebugLog("[DEBUG] OnDropFiles: 接收到文件拖放事件");
 	
-	try 
-	{
-		UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, NULL, 0);
+	// 🔑 架构重构：委托给FileOperationManager处理文件拖放逻辑
+	if (m_managerIntegration && m_managerIntegration->GetFileOperationManager()) {
+		std::vector<std::wstring> filePaths;
 		
-		if (fileCount == 0)
-		{
-			ShowUserMessage(L"拖放失败", L"未检测到有效文件", MB_ICONWARNING);
-			WriteDebugLog("[WARNING] OnDropFiles: 未检测到有效文件");
-			return;
-		}
-		
-		// 多文件拖放处理
-		if (fileCount > 1)
-		{
-			CString message;
-			message.Format(L"检测到 %u 个文件，只能处理第一个文件。\n请一次只拖放一个文件。", fileCount);
-			ShowUserMessage(L"多文件拖放", message, MB_ICONINFORMATION);
-		}
-		
-		// 处理第一个文件
-		TCHAR filePath[MAX_PATH];
-		UINT pathLength = DragQueryFile(hDropInfo, 0, filePath, MAX_PATH);
-		
-		if (pathLength == 0)
-		{
-			ShowUserMessage(L"拖放错误", L"无法获取文件路径", MB_ICONERROR);
-			WriteDebugLog("[ERROR] OnDropFiles: DragQueryFile 返回路径长度为0");
-			return;
-		}
-		
-		// 显示拖放的文件路径
-		CString fileName = PathFindFileName(filePath);
-		CString message;
-		message.Format(L"正在处理文件: %s", fileName);
-		AppendLog(message);
-		
-		// 检查文件是否存在
-		DWORD attributes = GetFileAttributes(filePath);
-		if (attributes == INVALID_FILE_ATTRIBUTES)
-		{
-			message.Format(L"文件不存在或无法访问:\n%s", filePath);
-			ShowUserMessage(L"文件访问错误", message, MB_ICONERROR);
-			WriteDebugLog(CT2A(message));
-			return;
-		}
-		
-		// 检查是否为目录
-		if (attributes & FILE_ATTRIBUTE_DIRECTORY)
-		{
-			ShowUserMessage(L"目录拖放", L"暂不支持目录拖放，请选择具体文件进行传输", MB_ICONWARNING);
-			WriteDebugLog("[INFO] OnDropFiles: 跳过目录拖放");
-			return;
-		}
-		
-		// 获取文件大小并显示
-		RAIIHandle hFile(CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL));
-		if (hFile.IsValid())
-		{
-			LARGE_INTEGER fileSize;
-			if (GetFileSizeEx(hFile.Get(), &fileSize))
-			{
-				CString sizeMessage;
-				if (fileSize.QuadPart < 1024)
-					sizeMessage.Format(L"文件大小: %I64d 字节", fileSize.QuadPart);
-				else if (fileSize.QuadPart < 1024 * 1024)
-					sizeMessage.Format(L"文件大小: %.2f KB", fileSize.QuadPart / 1024.0);
-				else
-					sizeMessage.Format(L"文件大小: %.2f MB", fileSize.QuadPart / (1024.0 * 1024.0));
+		// 委托给FileOperationManager处理拖放
+		if (m_managerIntegration->GetFileOperationManager()->HandleDropFiles(hDropInfo, filePaths)) {
+			if (!filePaths.empty()) {
+				// 处理第一个文件
+				std::wstring firstFile = filePaths[0];
+				CString filePath(firstFile.c_str());
 				
-				AppendLog(sizeMessage);
-				UpdateDataSourceDisplay(L"文件: " + fileName);
+				// 显示文件信息
+				CString fileName = PathFindFileName(filePath);
+				CString message;
+				message.Format(L"正在处理文件: %s", fileName);
+				AppendLog(message);
+				
+				// 加载文件用于传输
+				std::vector<uint8_t> fileData;
+				std::wstring displayInfo;
+				
+				if (m_managerIntegration->GetFileOperationManager()->LoadFileForTransmission(firstFile, fileData, displayInfo)) {
+					// 更新传输数据
+					m_transmissionData = fileData;
+					m_currentFileName = fileName;
+					
+					// 显示文件信息
+					AppendLog(CString(displayInfo.c_str()));
+					UpdateDataSourceDisplay(L"文件: " + fileName);
+					
+					// 更新数据显示
+					if (m_managerIntegration->GetDataDisplayManager()) {
+						m_managerIntegration->UpdateDataDisplay(fileData, m_bHexDisplay ? DisplayMode::HEX : DisplayMode::TEXT);
+					}
+					
+					ShowUserMessage(L"文件加载成功", 
+						L"文件已加载并准备传输。\n可以在下方查看文件内容预览，\n点击发送按钮开始传输。", 
+						MB_ICONINFORMATION);
+					
+					// 更新按钮状态
+					UpdateButtonStates();
+					WriteDebugLog("[SUCCESS] OnDropFiles: 文件加载成功");
+				} else {
+					ShowUserMessage(L"文件加载失败", L"无法读取文件内容，请检查文件是否损坏或权限不足", MB_ICONERROR);
+					WriteDebugLog("[ERROR] OnDropFiles: 文件加载失败");
+				}
+			}
+		} else {
+			ShowUserMessage(L"拖放处理失败", L"文件拖放处理失败，请重试", MB_ICONERROR);
+			WriteDebugLog("[ERROR] OnDropFiles: FileOperationManager处理失败");
+		}
+		
+		DragFinish(hDropInfo);
+		CDialogEx::OnDropFiles(hDropInfo);
+		WriteDebugLog("[DEBUG] OnDropFiles: 文件拖放事件处理完成");
+		return;
+	}
+	
+	// 备用方案：如果FileOperationManager未初始化，使用简化逻辑
+	WriteDebugLog("[WARNING] FileOperationManager未初始化，使用备用文件拖放处理");
+	
+	try {
+		UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, NULL, 0);
+		if (fileCount > 0) {
+			TCHAR filePath[MAX_PATH];
+			if (DragQueryFile(hDropInfo, 0, filePath, MAX_PATH) > 0) {
+				CString fileName = PathFindFileName(filePath);
+				AppendLog(L"拖放文件: " + fileName);
+				
+				// 尝试加载文件
+				if (LoadFileForTransmission(filePath)) {
+					ShowUserMessage(L"文件加载成功", L"文件已加载", MB_ICONINFORMATION);
+					UpdateButtonStates();
+				} else {
+					ShowUserMessage(L"文件加载失败", L"无法加载文件", MB_ICONERROR);
+				}
 			}
 		}
-		
-		// 读取文件内容
-		WriteDebugLog("[INFO] OnDropFiles: 开始加载文件内容");
-		if (LoadFileForTransmission(filePath))
-		{
-			ShowUserMessage(L"文件加载成功", 
-				L"文件已加载并准备传输。\n可以在下方查看文件内容预览，\n点击发送按钮开始传输。", 
-				MB_ICONINFORMATION);
-			
-			// 更新按钮状态
-			UpdateButtonStates();
-			WriteDebugLog("[SUCCESS] OnDropFiles: 文件加载成功");
-		}
-		else
-		{
-			ShowUserMessage(L"文件加载失败", L"无法读取文件内容，请检查文件是否损坏或权限不足", MB_ICONERROR);
-			WriteDebugLog("[ERROR] OnDropFiles: 文件加载失败");
-		}
-	}
-	catch (...) 
-	{
-		ShowUserMessage(L"拖放异常", L"文件拖放处理过程中发生异常", MB_ICONERROR);
-		WriteDebugLog("[ERROR] OnDropFiles: 处理拖放文件时发生异常");
+	} catch (...) {
+		ShowUserMessage(L"拖放异常", L"文件拖放处理异常", MB_ICONERROR);
+		WriteDebugLog("[ERROR] OnDropFiles: 备用处理异常");
 	}
 	
 	DragFinish(hDropInfo);
 	CDialogEx::OnDropFiles(hDropInfo);
-	WriteDebugLog("[DEBUG] OnDropFiles: 文件拖放事件处理完成");
+	WriteDebugLog("[DEBUG] OnDropFiles: 备用文件拖放事件处理完成");
 }
 
 // SOLID-S: 单一职责 - 专门负责获取详细错误建议
@@ -1880,198 +1865,74 @@ std::shared_ptr<ITransport> CPortMasterDlg::CreateTransportFromUI()
 	if (transportIndex == CB_ERR)
 		return nullptr;
 
-	// SOLID-O: 开闭原则 - 可扩展的传输类型工厂
+	// 🔑 架构重构：委托给TransportManager处理传输工厂逻辑
+	if (m_managerIntegration && m_managerIntegration->GetTransportManager()) {
+		return m_managerIntegration->GetTransportManager()->CreateTransportFromUI(transportIndex);
+	}
+	
+	// 备用方案：如果管理器未初始化，使用原有逻辑
+	WriteDebugLog("[WARNING] TransportManager未初始化，使用备用传输工厂");
 	switch (transportIndex)
 	{
-	case 0: // 串口
-		return std::make_shared<SerialTransport>();
-		
-	case 1: // 并口 
-		return std::make_shared<LptSpoolerTransport>();
-		
-	case 2: // USB打印机
-		return std::make_shared<UsbPrinterTransport>();
-		
-	case 3: // TCP客户端
-		{
-			auto tcp = std::make_shared<TcpTransport>();
-			return tcp;
-		}
-		
-	case 4: // TCP服务器
-		{
-			auto tcp = std::make_shared<TcpTransport>();
-			return tcp;
-		}
-		
-	case 5: // UDP
-		return std::make_shared<UdpTransport>();
-		
-	case 6: // 回环测试
-		return std::make_shared<LoopbackTransport>();
-		
-	default:
-		return nullptr;
+	case 0: return std::make_shared<SerialTransport>();
+	case 1: return std::make_shared<LptSpoolerTransport>();
+	case 2: return std::make_shared<UsbPrinterTransport>();
+	case 3: case 4: return std::make_shared<TcpTransport>();
+	case 5: return std::make_shared<UdpTransport>();
+	case 6: return std::make_shared<LoopbackTransport>();
+	default: return nullptr;
 	}
 }
 
-// SOLID-S: 单一职责 - 配置参数采集 (DRY: 消除重复配置获取)
+// 🔑 架构重构：委托给TransportManager处理配置获取逻辑
 TransportConfig CPortMasterDlg::GetTransportConfigFromUI()
 {
-	TransportConfig config; // 使用默认构造函数提供的基础默认值
-	
 	int transportIndex = m_ctrlPortType.GetCurSel();
-	
-	// SOLID-S: 单一职责 - 分类型配置采集
-	switch (transportIndex)
-	{
-	case 0: // 串口
-		{
-			// 端口名称
-			CString portName;
-			if (m_ctrlPortList.GetCurSel() != CB_ERR)
-			{
-				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), portName);
-				config.portName = CT2A(portName);
-			}
-			
-			// 波特率
-			CString baudRateStr;
-			if (m_ctrlBaudRate.GetCurSel() != CB_ERR)
-			{
-				m_ctrlBaudRate.GetLBText(m_ctrlBaudRate.GetCurSel(), baudRateStr);
-				config.baudRate = _ttoi(baudRateStr);
-			}
-			
-			// 数据位
-			CString dataBitsStr;
-			if (m_ctrlDataBits.GetCurSel() != CB_ERR)
-			{
-				m_ctrlDataBits.GetLBText(m_ctrlDataBits.GetCurSel(), dataBitsStr);
-				config.dataBits = _ttoi(dataBitsStr);
-			}
-			
-			// 校验位
-			int parityIndex = m_ctrlParity.GetCurSel();
-			if (parityIndex != CB_ERR)
-			{
-				config.parity = parityIndex; // 0=None, 1=Odd, 2=Even, 3=Mark, 4=Space
-			}
-			
-			// 停止位
-			int stopBitsIndex = m_ctrlStopBits.GetCurSel();
-			if (stopBitsIndex != CB_ERR)
-			{
-				config.stopBits = (stopBitsIndex == 0) ? 1 : ((stopBitsIndex == 1) ? 2 : 2); // 1, 1.5->2, 2
-			}
-		}
-		break;
-		
-	case 1: // 并口
-	case 2: // USB打印机
-		{
-			// 获取打印机名称
-			CString printerName;
-			if (m_ctrlPortList.GetCurSel() != CB_ERR)
-			{
-				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), printerName);
-				config.portName = CT2A(printerName);
-			}
-		}
-		break;
-		
-	case 3: // TCP客户端
-		{
-			config.isServer = false;
-			
-			// 从端口列表中解析IP:端口
-			CString endpoint;
-			if (m_ctrlPortList.GetCurSel() != CB_ERR)
-			{
-				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), endpoint);
-				
-				// 解析 "127.0.0.1:8080" 格式
-				int colonPos = endpoint.Find(':');
-				if (colonPos != -1)
-				{
-					CString ipStr = endpoint.Left(colonPos);
-					CString portStr = endpoint.Mid(colonPos + 1);
-					
-					config.ipAddress = CT2A(ipStr);
-					config.port = _ttoi(portStr);
-				}
-				else
-				{
-					// 默认值
-					config.ipAddress = "127.0.0.1";
-					config.port = 8080;
-				}
-			}
-		}
-		break;
-		
-	case 4: // TCP服务器
-		{
-			config.isServer = true;
-			
-			// 从端口列表中解析端口
-			CString endpoint;
-			if (m_ctrlPortList.GetCurSel() != CB_ERR)
-			{
-				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), endpoint);
-				
-				// 解析 "监听端口:8080" 格式
-				int colonPos = endpoint.Find(':');
-				if (colonPos != -1)
-				{
-					CString portStr = endpoint.Mid(colonPos + 1);
-					config.port = _ttoi(portStr);
-				}
-				else
-				{
-					config.port = 8080;
-				}
-			}
-			
-			// 服务器绑定到所有接口
-			config.ipAddress = "0.0.0.0";
-		}
-		break;
-		
-	case 5: // UDP
-		{
-			// 从端口列表中解析端口
-			CString endpoint;
-			if (m_ctrlPortList.GetCurSel() != CB_ERR)
-			{
-				m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), endpoint);
-				
-				// 解析 "UDP:8080" 格式
-				int colonPos = endpoint.Find(':');
-				if (colonPos != -1)
-				{
-					CString portStr = endpoint.Mid(colonPos + 1);
-					config.port = _ttoi(portStr);
-				}
-				else
-				{
-					config.port = 8080;
-				}
-			}
-			
-			// UDP默认配置
-			config.ipAddress = "127.0.0.1";
-		}
-		break;
-		
-	case 6: // 回环测试
-		{
-			// 回环测试使用默认配置
-			config.portName = "loopback";
-		}
-		break;
+	if (transportIndex == CB_ERR) {
+		return TransportConfig(); // 返回默认配置
 	}
 	
+	// 从UI控件获取参数
+	CString portName, baudRateStr, dataBitsStr, endpoint;
+	int parityIndex = -1, stopBitsIndex = -1;
+	
+	// 获取端口名称/端点
+	if (m_ctrlPortList.GetCurSel() != CB_ERR) {
+		m_ctrlPortList.GetLBText(m_ctrlPortList.GetCurSel(), portName);
+		endpoint = portName; // 对于网络传输，端点就是选择的项
+	}
+	
+	// 获取串口参数
+	if (m_ctrlBaudRate.GetCurSel() != CB_ERR) {
+		m_ctrlBaudRate.GetLBText(m_ctrlBaudRate.GetCurSel(), baudRateStr);
+	}
+	if (m_ctrlDataBits.GetCurSel() != CB_ERR) {
+		m_ctrlDataBits.GetLBText(m_ctrlDataBits.GetCurSel(), dataBitsStr);
+	}
+	parityIndex = m_ctrlParity.GetCurSel();
+	stopBitsIndex = m_ctrlStopBits.GetCurSel();
+	
+	// 委托给TransportManager处理
+	if (m_managerIntegration && m_managerIntegration->GetTransportManager()) {
+		return m_managerIntegration->GetTransportManager()->GetTransportConfigFromUI(
+			transportIndex,
+			std::string(CT2A(portName)),
+			std::string(CT2A(baudRateStr)),
+			std::string(CT2A(dataBitsStr)),
+			parityIndex,
+			stopBitsIndex,
+			std::string(CT2A(endpoint))
+		);
+	}
+	
+	// 备用方案：如果管理器未初始化，返回基本配置
+	WriteDebugLog("[WARNING] TransportManager未初始化，使用备用配置获取");
+	TransportConfig config;
+	config.portName = CT2A(portName);
+	if (!baudRateStr.IsEmpty()) config.baudRate = _ttoi(baudRateStr);
+	if (!dataBitsStr.IsEmpty()) config.dataBits = _ttoi(dataBitsStr);
+	if (parityIndex != -1) config.parity = parityIndex;
+	if (stopBitsIndex != -1) config.stopBits = (stopBitsIndex == 0) ? 1 : 2;
 	return config;
 }
 
@@ -2166,36 +2027,45 @@ void CPortMasterDlg::UpdateStatusDisplay(const CString& connectionStatus,
                                          const CString& speedInfo,
                                          StatusPriority priority)
 {
-	// 静态变量记录当前状态优先级，防止低优先级覆盖高优先级状态
-	static StatusPriority s_currentPriority = StatusPriority::NORMAL;
-	static DWORD s_lastHighPriorityTime = 0;
-	
-	// 🔑 修复状态栏信息矛盾问题：完成状态始终优先显示
-	bool isCompletionStatus = (!transferStatus.IsEmpty() && 
-		(transferStatus.Find(L"完成") >= 0 || transferStatus.Find(L"失败") >= 0 || transferStatus.Find(L"已连接") >= 0));
+	// 🔑 架构重构：委托给StateManager处理状态显示逻辑
+	if (m_managerIntegration && m_managerIntegration->GetStateManager()) {
+		// 转换StatusPriority到StatePriority
+		StatePriority statePriority = StatePriority::NORMAL;
+		switch (priority) {
+		case StatusPriority::NORMAL: statePriority = StatePriority::NORMAL; break;
+		case StatusPriority::HIGH: statePriority = StatePriority::HIGH; break;
+		case StatusPriority::CRITICAL: statePriority = StatePriority::CRITICAL; break;
+		}
 		
-	// 高优先级状态保持至少2秒钟，但完成状态可立即覆盖
-	DWORD currentTime = GetTickCount();
-	if (s_currentPriority > StatusPriority::NORMAL && 
-		currentTime - s_lastHighPriorityTime < 2000 && 
-		priority < s_currentPriority && 
-		!isCompletionStatus) { // 完成状态不受优先级阻塞限制
-		return; // 跳过低优先级更新
+		// 委托给StateManager处理
+		m_managerIntegration->GetStateManager()->UpdateStatusDisplay(
+			std::string(CT2A(connectionStatus)),
+			std::string(CT2A(protocolStatus)),
+			std::string(CT2A(transferStatus)),
+			std::string(CT2A(speedInfo)),
+			statePriority
+		);
+		
+		// 更新UI控件（StateManager处理逻辑，UI更新仍在主对话框）
+		if (!connectionStatus.IsEmpty() && IsWindow(m_ctrlConnectionStatus.GetSafeHwnd())) {
+			m_ctrlConnectionStatus.SetWindowText(connectionStatus);
+		}
+		if (!protocolStatus.IsEmpty() && IsWindow(m_ctrlProtocolStatus.GetSafeHwnd())) {
+			m_ctrlProtocolStatus.SetWindowText(protocolStatus);
+		}
+		if (!transferStatus.IsEmpty() && IsWindow(m_ctrlTransferStatus.GetSafeHwnd())) {
+			m_ctrlTransferStatus.SetWindowText(transferStatus);
+		}
+		if (!speedInfo.IsEmpty() && IsWindow(m_ctrlTransferSpeed.GetSafeHwnd())) {
+			m_ctrlTransferSpeed.SetWindowText(speedInfo);
+		}
+		return;
 	}
 	
-	// 更新优先级和时间戳
-	if (priority > StatusPriority::NORMAL) {
-		s_lastHighPriorityTime = currentTime;
-	}
+	// 备用方案：如果StateManager未初始化，使用原有逻辑
+	WriteDebugLog("[WARNING] StateManager未初始化，使用备用状态显示");
 	
-	// 🔑 完成状态重置优先级阻塞，确保后续状态正常更新
-	if (isCompletionStatus) {
-		s_currentPriority = StatusPriority::NORMAL;
-	} else {
-		s_currentPriority = priority;
-	}
-	
-	// 线程安全的UI更新
+	// 简化的备用状态显示逻辑
 	if (!connectionStatus.IsEmpty() && IsWindow(m_ctrlConnectionStatus.GetSafeHwnd())) {
 		m_ctrlConnectionStatus.SetWindowText(connectionStatus);
 	}
@@ -2211,12 +2081,11 @@ void CPortMasterDlg::UpdateStatusDisplay(const CString& connectionStatus,
 	
 	// 记录调试日志
 	CString debugMsg;
-	debugMsg.Format(L"[DEBUG] 状态更新 - 连接:%s 协议:%s 传输:%s 速度:%s 优先级:%d", 
+	debugMsg.Format(L"[DEBUG] 备用状态更新 - 连接:%s 协议:%s 传输:%s 速度:%s", 
 		connectionStatus.IsEmpty() ? L"" : connectionStatus,
 		protocolStatus.IsEmpty() ? L"" : protocolStatus, 
 		transferStatus.IsEmpty() ? L"" : transferStatus,
-		speedInfo.IsEmpty() ? L"" : speedInfo,
-		static_cast<int>(priority));
+		speedInfo.IsEmpty() ? L"" : speedInfo);
 	WriteDebugLog(CT2A(debugMsg));
 }
 

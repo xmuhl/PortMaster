@@ -232,6 +232,8 @@
     <ClInclude Include="Common\StateManager.h" />
     <ClInclude Include="Common\TransportManager.h" />
     <ClInclude Include="Common\ManagerIntegration.h" />
+    <ClInclude Include="Common\TransportFactory.h" />
+    <ClInclude Include="Common\FileOperationManager.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
@@ -267,6 +269,8 @@
     <ClCompile Include="Common\StateManager.cpp" />
     <ClCompile Include="Common\TransportManager.cpp" />
     <ClCompile Include="Common\ManagerIntegration.cpp" />
+    <ClCompile Include="Common\TransportFactory.cpp" />
+    <ClCompile Include="Common\FileOperationManager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="PortMaster.rc" />

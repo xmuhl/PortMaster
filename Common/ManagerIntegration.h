@@ -3,6 +3,8 @@
 
 #include "DataDisplayManager.h"
 #include "StateManager.h"
+#include "TransportManager.h"
+#include "FileOperationManager.h"
 #include <memory>
 
 #ifndef NOMINMAX
@@ -108,6 +110,18 @@ public:
     StateManager* GetStateManager() const;
     
     /**
+     * @brief 获取传输管理器
+     * @return 传输管理器指针
+     */
+    TransportManager* GetTransportManager() const;
+    
+    /**
+     * @brief 获取文件操作管理器
+     * @return 文件操作管理器指针
+     */
+    FileOperationManager* GetFileOperationManager() const;
+    
+    /**
      * @brief 设置应用状态
      * @param state 新状态
      * @param message 状态消息
@@ -169,6 +183,8 @@ private:
     // 核心管理器实例
     std::unique_ptr<DataDisplayManager> m_dataDisplayManager;  // 数据显示管理器
     std::unique_ptr<StateManager> m_stateManager;             // 状态管理器
+    std::unique_ptr<TransportManager> m_transportManager;     // 传输管理器
+    std::unique_ptr<FileOperationManager> m_fileOperationManager; // 文件操作管理器
     
     // 回调实现
     std::shared_ptr<PortMasterUIStateUpdater> m_uiUpdater;    // UI状态更新器

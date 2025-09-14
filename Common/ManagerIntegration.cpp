@@ -2,6 +2,8 @@
 #include "pch.h"
 #include "ManagerIntegration.h"
 #include "../PortMasterDlg.h"
+#include "DeviceManager.h"
+#include "../Protocol/ProtocolManager.h"
 #include <afxwin.h>
 
 extern void WriteDebugLog(const char* message);
@@ -142,6 +144,14 @@ ManagerIntegration::ManagerIntegration(CPortMasterDlg* dialog)
         m_dataDisplayManager = DataDisplayManagerFactory::CreateDefault();
         m_stateManager = StateManagerFactory::CreateDefault();
         
+        // 创建传输管理器（需要DeviceManager和ProtocolManager）
+        auto deviceManager = std::make_shared<DeviceManager>();
+        auto protocolManager = std::make_shared<ProtocolManager>();
+        m_transportManager = TransportManagerFactory::Create(deviceManager, protocolManager);
+        
+        // 创建文件操作管理器
+        m_fileOperationManager = std::make_unique<FileOperationManager>();
+        
         // 创建回调实现
         m_uiUpdater = std::make_shared<PortMasterUIStateUpdater>(dialog);
         m_stateCallback = std::make_shared<PortMasterStateCallback>(dialog);
@@ -152,6 +162,8 @@ ManagerIntegration::ManagerIntegration(CPortMasterDlg* dialog)
         WriteDebugLog("[ERROR] ManagerIntegration构造异常");
         m_dataDisplayManager.reset();
         m_stateManager.reset();
+        m_transportManager.reset();
+        m_fileOperationManager.reset();
         m_uiUpdater.reset();
         m_stateCallback.reset();
     }
@@ -216,6 +228,16 @@ DataDisplayManager* ManagerIntegration::GetDataDisplayManager() const
 StateManager* ManagerIntegration::GetStateManager() const
 {
     return m_stateManager.get();
+}
+
+TransportManager* ManagerIntegration::GetTransportManager() const
+{
+    return m_transportManager.get();
+}
+
+FileOperationManager* ManagerIntegration::GetFileOperationManager() const
+{
+    return m_fileOperationManager.get();
 }
 
 void ManagerIntegration::SetApplicationState(ApplicationState state, const std::string& message, const std::string& source)

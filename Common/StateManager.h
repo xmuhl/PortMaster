@@ -275,10 +275,24 @@ public:
     void Reset();
     
     /**
-     * @brief 启用/禁用自动UI更新
-     * @param enable 是否启用
+     * @brief 设置自动UI更新
+     * @param enable 是否启用自动UI更新
      */
     void SetAutoUIUpdate(bool enable);
+    
+    /**
+     * @brief 统一状态显示更新 (从PortMasterDlg转移)
+     * @param connectionStatus 连接状态信息
+     * @param protocolStatus 协议状态信息
+     * @param transferStatus 传输状态信息
+     * @param speedInfo 速度信息
+     * @param priority 状态优先级
+     */
+    void UpdateStatusDisplay(const std::string& connectionStatus,
+                           const std::string& protocolStatus,
+                           const std::string& transferStatus,
+                           const std::string& speedInfo,
+                           StatePriority priority = StatePriority::NORMAL);
 
 private:
     // 核心状态数据

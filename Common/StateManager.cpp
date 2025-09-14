@@ -245,6 +245,110 @@ void StateManager::SetAutoUIUpdate(bool enable)
     }
 }
 
+// 🔑 架构重构：统一状态显示更新 (从PortMasterDlg转移)
+void StateManager::UpdateStatusDisplay(const std::string& connectionStatus,
+                                     const std::string& protocolStatus,
+                                     const std::string& transferStatus,
+                                     const std::string& speedInfo,
+                                     StatePriority priority)
+{
+    // 静态变量记录当前状态优先级，防止低优先级覆盖高优先级状态
+    static StatePriority s_currentPriority = StatePriority::NORMAL;
+    static std::chrono::steady_clock::time_point s_lastHighPriorityTime = std::chrono::steady_clock::now();
+    
+    try {
+        std::lock_guard<std::mutex> lock(m_stateMutex);
+        
+        // 🔑 修复状态栏信息矛盾问题：完成状态始终优先显示
+        bool isCompletionStatus = (!transferStatus.empty() && 
+            (transferStatus.find("完成") != std::string::npos || 
+             transferStatus.find("失败") != std::string::npos || 
+             transferStatus.find("已连接") != std::string::npos));
+             
+        // 高优先级状态保持至少2秒钟，但完成状态可立即覆盖
+        auto currentTime = std::chrono::steady_clock::now();
+        auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - s_lastHighPriorityTime);
+        
+        if (s_currentPriority > StatePriority::NORMAL && 
+            timeDiff.count() < 2000 && 
+            priority < s_currentPriority && 
+            !isCompletionStatus) { // 完成状态不受优先级阻塞限制
+            WriteDebugLog("[DEBUG] StateManager::UpdateStatusDisplay: 跳过低优先级更新");
+            return; // 跳过低优先级更新
+        }
+        
+        // 更新优先级和时间戳
+        if (priority > StatePriority::NORMAL) {
+            s_lastHighPriorityTime = currentTime;
+        }
+        
+        // 🔑 完成状态重置优先级阻塞，确保后续状态正常更新
+        if (isCompletionStatus) {
+            s_currentPriority = StatePriority::NORMAL;
+        } else {
+            s_currentPriority = priority;
+        }
+        
+        // 通过UI更新器进行线程安全的UI更新
+        if (m_uiUpdater && m_autoUIUpdate) {
+            // 更新连接状态
+            if (!connectionStatus.empty()) {
+                bool connected = (connectionStatus.find("已连接") != std::string::npos);
+                m_uiUpdater->UpdateConnectionStatus(connected, connectionStatus);
+            }
+            
+            // 更新传输状态
+            if (!transferStatus.empty()) {
+                ApplicationState state = m_currentState.state;
+                if (transferStatus.find("传输中") != std::string::npos) {
+                    state = ApplicationState::TRANSMITTING;
+                } else if (transferStatus.find("已连接") != std::string::npos) {
+                    state = ApplicationState::CONNECTED;
+                } else if (transferStatus.find("连接中") != std::string::npos) {
+                    state = ApplicationState::CONNECTING;
+                }
+                m_uiUpdater->UpdateTransmissionStatus(state);
+            }
+            
+            // 更新状态栏
+            std::string statusMessage;
+            if (!transferStatus.empty()) {
+                statusMessage = transferStatus;
+                if (!speedInfo.empty()) {
+                    statusMessage += " - " + speedInfo;
+                }
+            } else if (!connectionStatus.empty()) {
+                statusMessage = connectionStatus;
+            } else if (!protocolStatus.empty()) {
+                statusMessage = protocolStatus;
+            }
+            
+            if (!statusMessage.empty()) {
+                m_uiUpdater->UpdateStatusBar(statusMessage, priority);
+            }
+        }
+        
+        // 更新内部状态消息
+        std::string combinedMessage;
+        if (!transferStatus.empty()) {
+            combinedMessage = transferStatus;
+        } else if (!connectionStatus.empty()) {
+            combinedMessage = connectionStatus;
+        } else if (!protocolStatus.empty()) {
+            combinedMessage = protocolStatus;
+        }
+        
+        if (!combinedMessage.empty()) {
+            UpdateStateMessage(combinedMessage, priority, "StatusDisplay");
+        }
+        
+        WriteDebugLog("[DEBUG] StateManager::UpdateStatusDisplay: 状态显示更新完成");
+    }
+    catch (const std::exception& e) {
+        WriteDebugLog(("[ERROR] StateManager::UpdateStatusDisplay: 更新异常 - " + std::string(e.what())).c_str());
+    }
+}
+
 // 私有方法实现
 
 void StateManager::InitializeTransitionRules()
