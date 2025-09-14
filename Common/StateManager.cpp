@@ -14,22 +14,22 @@ StateManager::StateManager()
     // 初始化状态转换规则
     InitializeTransitionRules();
     
-    // 添加初始状态到历史记录
-    AddToHistory(m_currentState);
+    // 🔑 死锁修复：延迟历史记录添加，避免构造函数中加锁冲突
+    // AddToHistory将在首次SetApplicationState调用时自动添加
     
     WriteDebugLog("[DEBUG] StateManager构造完成");
 }
 
 void StateManager::SetStateChangeCallback(std::shared_ptr<IStateChangeCallback> callback)
 {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     m_stateCallback = callback;
     WriteDebugLog("[DEBUG] StateManager::SetStateChangeCallback: 状态变化回调已设置");
 }
 
 void StateManager::SetUIStateUpdater(std::shared_ptr<IUIStateUpdater> uiUpdater)
 {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     m_uiUpdater = uiUpdater;
     WriteDebugLog("[DEBUG] StateManager::SetUIStateUpdater: UI状态更新器已设置");
 }
@@ -41,7 +41,14 @@ void StateManager::SetApplicationState(ApplicationState state, const std::string
     StateInfo newState(state, message, priority, source);
     
     {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
+        std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
+        
+        // 🔑 死锁修复：首次调用时初始化历史记录
+        static bool s_historyInitialized = false;
+        if (!s_historyInitialized) {
+            AddToHistory(m_currentState);  // 添加构造函数中的初始状态
+            s_historyInitialized = true;
+        }
         
         // 检查状态转换是否允许
         if (!IsStateTransitionAllowed(m_currentState.state, state)) {
@@ -78,19 +85,19 @@ void StateManager::SetApplicationState(ApplicationState state, const std::string
 
 StateInfo StateManager::GetCurrentState() const
 {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     return m_currentState;
 }
 
 ApplicationState StateManager::GetCurrentStateValue() const
 {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     return m_currentState.state;
 }
 
 bool StateManager::IsInState(ApplicationState state) const
 {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     return m_currentState.state == state;
 }
 
@@ -123,7 +130,7 @@ void StateManager::UpdateStateMessage(const std::string& message, StatePriority 
     StateInfo newState;
     
     {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
+        std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
         oldState = m_currentState;
         
         // 只更新消息和优先级，保持状态不变
@@ -168,7 +175,7 @@ void StateManager::ClearErrorState(ApplicationState newState, const std::string&
 
 std::vector<StateInfo> StateManager::GetStateHistory(size_t maxCount) const
 {
-    std::lock_guard<std::mutex> lock(m_historyMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_historyMutex);
     
     if (maxCount == 0 || maxCount >= m_stateHistory.size()) {
         return m_stateHistory;
@@ -184,7 +191,7 @@ std::vector<StateInfo> StateManager::GetStateHistory(size_t maxCount) const
 
 std::chrono::milliseconds StateManager::GetStateDuration() const
 {
-    std::lock_guard<std::mutex> lock(m_stateMutex);
+    std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
     
     auto now = std::chrono::steady_clock::now();
     return std::chrono::duration_cast<std::chrono::milliseconds>(now - m_currentState.timestamp);
@@ -220,8 +227,8 @@ std::string StateManager::GetPriorityString(StatePriority priority)
 void StateManager::Reset()
 {
     {
-        std::lock_guard<std::mutex> stateLock(m_stateMutex);
-        std::lock_guard<std::mutex> historyLock(m_historyMutex);
+        std::lock_guard<std::recursive_mutex> stateLock(m_stateMutex);
+        std::lock_guard<std::recursive_mutex> historyLock(m_historyMutex);
         
         // 重置当前状态
         m_currentState = StateInfo(ApplicationState::INITIALIZING, "系统重置", StatePriority::NORMAL, "Reset");
@@ -257,7 +264,8 @@ void StateManager::UpdateStatusDisplay(const std::string& connectionStatus,
     static std::chrono::steady_clock::time_point s_lastHighPriorityTime = std::chrono::steady_clock::now();
     
     try {
-        std::lock_guard<std::mutex> lock(m_stateMutex);
+        // 🔑 死锁修复：使用递归互斥锁，支持同一线程重复加锁
+        std::lock_guard<std::recursive_mutex> lock(m_stateMutex);
         
         // 🔑 修复状态栏信息矛盾问题：完成状态始终优先显示
         bool isCompletionStatus = (!transferStatus.empty() && 

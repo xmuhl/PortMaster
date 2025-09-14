@@ -307,9 +307,9 @@ private:
     // 配置选项
     std::atomic<bool> m_autoUIUpdate;                    // 自动UI更新标志
     
-    // 线程安全保护
-    mutable std::mutex m_stateMutex;                     // 状态访问互斥锁
-    mutable std::mutex m_historyMutex;                   // 历史访问互斥锁
+    // 线程安全保护（使用递归互斥锁解决死锁问题）
+    mutable std::recursive_mutex m_stateMutex;           // 状态访问递归互斥锁
+    mutable std::recursive_mutex m_historyMutex;         // 历史访问递归互斥锁
     
     // 状态转换规则表
     std::map<ApplicationState, std::vector<ApplicationState>> m_transitionRules;

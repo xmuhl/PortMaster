@@ -1865,23 +1865,15 @@ std::shared_ptr<ITransport> CPortMasterDlg::CreateTransportFromUI()
 	if (transportIndex == CB_ERR)
 		return nullptr;
 
-	// 🔑 架构重构：委托给TransportManager处理传输工厂逻辑
+	// 🔑 架构重构完成：完全委托给TransportManager处理传输工厂逻辑
+	// SOLID-S: 单一职责原则 - PortMasterDlg仅负责UI控制，不再承担传输创建职责
 	if (m_managerIntegration && m_managerIntegration->GetTransportManager()) {
 		return m_managerIntegration->GetTransportManager()->CreateTransportFromUI(transportIndex);
 	}
 	
-	// 备用方案：如果管理器未初始化，使用原有逻辑
-	WriteDebugLog("[WARNING] TransportManager未初始化，使用备用传输工厂");
-	switch (transportIndex)
-	{
-	case 0: return std::make_shared<SerialTransport>();
-	case 1: return std::make_shared<LptSpoolerTransport>();
-	case 2: return std::make_shared<UsbPrinterTransport>();
-	case 3: case 4: return std::make_shared<TcpTransport>();
-	case 5: return std::make_shared<UdpTransport>();
-	case 6: return std::make_shared<LoopbackTransport>();
-	default: return nullptr;
-	}
+	// 架构重构后的错误处理：如果管理器未初始化则报错
+	WriteDebugLog("[ERROR] TransportManager未初始化，无法创建传输对象");
+	return nullptr;
 }
 
 // 🔑 架构重构：委托给TransportManager处理配置获取逻辑
@@ -1912,7 +1904,8 @@ TransportConfig CPortMasterDlg::GetTransportConfigFromUI()
 	parityIndex = m_ctrlParity.GetCurSel();
 	stopBitsIndex = m_ctrlStopBits.GetCurSel();
 	
-	// 委托给TransportManager处理
+	// 🔑 架构重构完成：完全委托给TransportManager处理配置获取
+	// SOLID-S: 单一职责原则 - PortMasterDlg仅负责UI参数收集，配置逻辑由TransportManager处理
 	if (m_managerIntegration && m_managerIntegration->GetTransportManager()) {
 		return m_managerIntegration->GetTransportManager()->GetTransportConfigFromUI(
 			transportIndex,
@@ -1925,15 +1918,9 @@ TransportConfig CPortMasterDlg::GetTransportConfigFromUI()
 		);
 	}
 	
-	// 备用方案：如果管理器未初始化，返回基本配置
-	WriteDebugLog("[WARNING] TransportManager未初始化，使用备用配置获取");
-	TransportConfig config;
-	config.portName = CT2A(portName);
-	if (!baudRateStr.IsEmpty()) config.baudRate = _ttoi(baudRateStr);
-	if (!dataBitsStr.IsEmpty()) config.dataBits = _ttoi(dataBitsStr);
-	if (parityIndex != -1) config.parity = parityIndex;
-	if (stopBitsIndex != -1) config.stopBits = (stopBitsIndex == 0) ? 1 : 2;
-	return config;
+	// 架构重构后的错误处理：如果管理器未初始化则返回默认配置
+	WriteDebugLog("[ERROR] TransportManager未初始化，返回默认配置");
+	return TransportConfig();
 }
 
 // SOLID-S: 单一职责 - 从配置管理器设置可靠通道参数 (DRY: 统一配置管理)
@@ -2230,8 +2217,8 @@ void CPortMasterDlg::OnBnClickedCopyHex()
 		return;
 	}
 	
-	// 使用新的格式化方法，基于原始数据源
-	CString hexText = FormatDataAsHex(m_displayedData);
+	// 🔑 架构重构：直接调用详细格式化函数，移除冗余包装
+	CString hexText = FormatHexDisplay(m_displayedData);
 	
 	if (!hexText.IsEmpty())
 	{
@@ -2276,8 +2263,8 @@ void CPortMasterDlg::OnBnClickedCopyText()
 		return;
 	}
 	
-	// 使用新的格式化方法，基于原始数据源
-	CString textData = FormatDataAsText(m_displayedData);
+	// 🔑 架构重构：直接调用详细格式化函数，移除冗余包装
+	CString textData = FormatTextDisplay(m_displayedData);
 	
 	if (!textData.IsEmpty())
 	{
@@ -2658,6 +2645,7 @@ bool CPortMasterDlg::LoadFileForTransmission(const CString& filePath)
 		m_currentFileName = PathFindFileName(filePath);
 		
 		// 显示文件内容到输入框（实现真正共用设计）
+		// TODO: 待后续优化 - 通过DataDisplayManager统一格式化
 		if (m_bHexDisplay) {
 			CString hexDisplay = FormatHexDisplay(m_transmissionData);
 			m_ctrlInputHex.SetWindowText(hexDisplay);
@@ -3632,17 +3620,8 @@ LRESULT CPortMasterDlg::OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam)
 // 数据格式化方法实现 (SOLID-S: 单一职责)
 // =====================================
 
-CString CPortMasterDlg::FormatDataAsHex(const std::vector<uint8_t>& data)
-{
-	// 🔑 关键修复：直接调用详细版本，确保一致性
-	return FormatHexDisplay(data);
-}
-
-CString CPortMasterDlg::FormatDataAsText(const std::vector<uint8_t>& data)
-{
-	// 🔑 关键修复：直接调用详细版本，确保一致性
-	return FormatTextDisplay(data);
-}
+// 🔑 架构重构完成：已删除FormatDataAsHex和FormatDataAsText包装函数
+// 直接调用FormatHexDisplay和FormatTextDisplay以减少代码冗余
 
 // =====================================
 // 统一显示管理方法实现 (SOLID-S: 单一职责)
