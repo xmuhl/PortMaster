@@ -71,6 +71,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	, m_maxRetryCount(3)  // 默认最多重试3次
 	, m_lastProgressUpdate(std::chrono::steady_clock::now())  // 🔑 P1-4: 初始化回调频率限制时间戳
 	, m_tempDataManager(std::make_unique<TempDataManager>())  // 初始化临时数据管理器
+	, m_managerIntegration(ManagerIntegrationFactory::Create(this))  // 🔑 架构重构：初始化管理器集成器
 {
 	WriteDebugLog("[DEBUG] CPortMasterDlg::CPortMasterDlg: 主对话框构造函数开始");
 	m_hIcon = AfxGetApp()->LoadIcon(IDI_MAIN_ICON);
@@ -299,6 +300,23 @@ BOOL CPortMasterDlg::OnInitDialog()
 	catch (...) {
 		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 初始化控件异常");
 		return FALSE;
+	}
+
+	// 🔑 架构重构：初始化管理器集成器
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始初始化管理器集成器");
+		if (m_managerIntegration && m_managerIntegration->Initialize()) {
+			// 设置UI控件到管理器
+			m_managerIntegration->SetUIControls(&m_ctrlDataView, &m_ctrlProgress, 
+												&m_ctrlStatus, &m_ctrlConnectionStatus);
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 管理器集成器初始化完成");
+		}
+		else {
+			WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 管理器集成器初始化失败");
+		}
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 管理器集成器初始化异常");
 	}
 
 	try {
@@ -1453,11 +1471,13 @@ void CPortMasterDlg::OnBnClickedSend()
 
 void CPortMasterDlg::OnBnClickedClear()
 {
-	// 这个是"清除显示"按钮，只清除显示区域
-	m_ctrlDataView.SetWindowText(L"");
+	// 🔑 架构重构：使用ManagerIntegration清空显示
+	// SOLID-S: 单一职责 - 委托清空操作给专职管理器
+	if (m_managerIntegration) {
+		m_managerIntegration->ClearDataDisplay();
+	}
 	
-	
-	AppendLog(L"显示区域已清空");
+	AppendLog(L"显示区域已清空（通过管理器）");
 }
 
 
@@ -2220,15 +2240,19 @@ void CPortMasterDlg::OnBnClickedClearInput()
 
 void CPortMasterDlg::OnBnClickedClearDisplay()
 {
-	m_ctrlDataView.SetWindowText(L"");
+	// 🔑 架构重构：使用ManagerIntegration清空显示
+	// SOLID-S: 单一职责 - 委托清空操作给专职管理器
+	if (m_managerIntegration) {
+		m_managerIntegration->ClearDataDisplay();
+	}
 	
-	// 清空显示数据缓冲区 (SOLID-S: 单一职责)
+	// 清空显示数据缓冲区（保持兼容性）
 	{
 		std::lock_guard<std::mutex> lock(m_displayDataMutex);
 		m_displayedData.clear();
 	}
 	
-	AppendLog(L"显示区域已清空");
+	AppendLog(L"显示区域已清空（通过管理器）");
 	UpdateButtonStates(); // 更新保存按钮状态
 }
 
@@ -2431,21 +2455,37 @@ void CPortMasterDlg::DisplayReceivedData(const std::vector<uint8_t>& data)
 {
 	if (data.empty())
 		return;
-		
-	// 线程安全地更新显示数据缓冲区 (SOLID-S: 单一职责 - 数据管理)
-	{
-		std::lock_guard<std::mutex> lock(m_displayDataMutex);
-		m_displayedData = data; // 替换而不是追加
+	
+	// 🔑 架构重构：使用ManagerIntegration处理数据显示
+	// SOLID-S: 单一职责 - 委托数据管理给专职管理器
+	if (!m_managerIntegration) {
+		WriteDebugLog("[ERROR] DisplayReceivedData: ManagerIntegration未初始化");
+		return;
 	}
 	
-	// 🔑 关键修复：统一调用UpdateDataDisplay，消除格式不一致
-	UpdateDataDisplay();
-	
-	// 滚动到底部
-	ScrollToBottom();
-	
-	// 更新按钮状态
-	UpdateButtonStates();
+	try {
+		// 线程安全地更新显示数据缓冲区（保持兼容性）
+		{
+			std::lock_guard<std::mutex> lock(m_displayDataMutex);
+			m_displayedData = data; // 替换而不是追加
+		}
+		
+		// 🔑 架构优势：使用管理器的统一显示接口
+		// SOLID-D: 依赖抽象而非具体实现
+		DisplayMode mode = m_bHexDisplay ? DisplayMode::MIXED : DisplayMode::TEXT;
+		m_managerIntegration->UpdateDataDisplay(data, mode);
+		
+		// 🔑 架构优势：滚动由DataDisplayManager内部处理
+		// 更新按钮状态
+		UpdateButtonStates();
+		
+		WriteDebugLog("[INFO] DisplayReceivedData: 数据显示已更新（通过管理器）");
+		
+	} catch (const std::exception& e) {
+		CString errorMsg;
+		errorMsg.Format(L"[ERROR] DisplayReceivedData异常: %s", CA2W(e.what()));
+		WriteDebugLog(CW2A(errorMsg));
+	}
 }
 
 bool CPortMasterDlg::HasValidInputData()
@@ -3504,38 +3544,35 @@ void CPortMasterDlg::DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk)
 {
 	if (chunk.empty()) return;
 	
-	// 🔑 关键修复：更新显示数据缓冲区，确保按钮状态正确
-	{
-		std::lock_guard<std::mutex> lock(m_displayDataMutex);
-		m_displayedData.insert(m_displayedData.end(), chunk.begin(), chunk.end());
+	// 🔑 架构重构：使用ManagerIntegration处理数据分块显示
+	// SOLID-S: 单一职责 - 委托数据管理给专职管理器
+	if (!m_managerIntegration) {
+		WriteDebugLog("[ERROR] DisplayReceivedDataChunk: ManagerIntegration未初始化");
+		return;
 	}
 	
-	// 🔑 关键修复：根据显示模式设置选择正确的格式化方式
-	CString formattedDisplay;
-	if (m_bHexDisplay) {
-		// 十六进制显示开启：使用智能混合显示
-		WriteDebugLog("[DisplayReceivedDataChunk] 十六进制显示开启：智能混合显示");
-		formattedDisplay = FormatMixedDisplay(chunk);
-	} else {
-		// 十六进制显示关闭：使用纯文本显示
-		WriteDebugLog("[DisplayReceivedDataChunk] 十六进制显示关闭：纯文本显示");
-		formattedDisplay = FormatPlainTextDisplay(chunk);
+	try {
+		// 更新显示数据缓冲区（保持兼容性）
+		{
+			std::lock_guard<std::mutex> lock(m_displayDataMutex);
+			m_displayedData.insert(m_displayedData.end(), chunk.begin(), chunk.end());
+		}
+		
+		// 🔑 架构优势：使用管理器的追加显示接口
+		// SOLID-D: 依赖抽象而非具体实现
+		m_managerIntegration->AppendDataDisplay(chunk);
+		
+		// 🔑 架构优势：格式化和滚动由DataDisplayManager内部处理
+		// 更新按钮状态
+		UpdateButtonStates();
+		
+		WriteDebugLog("[INFO] DisplayReceivedDataChunk: 数据块显示已追加（通过管理器）");
+		
+	} catch (const std::exception& e) {
+		CString errorMsg;
+		errorMsg.Format(L"[ERROR] DisplayReceivedDataChunk异常: %s", CA2W(e.what()));
+		WriteDebugLog(CW2A(errorMsg));
 	}
-	
-	// 追加到数据视图（统一处理，避免重复显示）
-	CString currentDisplay;
-	m_ctrlDataView.GetWindowText(currentDisplay);
-	if (!currentDisplay.IsEmpty()) {
-		currentDisplay += L"\r\n";
-	}
-	currentDisplay += formattedDisplay;
-	m_ctrlDataView.SetWindowText(currentDisplay);
-	
-	// 🔑 关键修复：更新按钮状态，确保复制和保存按钮能正确启用
-	UpdateButtonStates();
-	
-	// 滚动到底部
-	ScrollToBottom();
 }
 
 // SOLID-S: 单一职责 - 线程安全的UI更新消息处理函数
@@ -3746,87 +3783,52 @@ CString CPortMasterDlg::FormatDataAsText(const std::vector<uint8_t>& data)
 // 优化性能和稳定性
 void CPortMasterDlg::UpdateDataDisplay()
 {
-	// 🔑 优化1：控件有效性预检查
-	if (!IsWindow(m_ctrlDataView.GetSafeHwnd())) {
-		WriteDebugLog("[WARNING] UpdateDataDisplay: 数据视图控件无效");
+	// 🔑 架构重构：使用ManagerIntegration的DataDisplayManager
+	// SOLID-S: 单一职责 - 委托显示管理给专职管理器
+	if (!m_managerIntegration) {
+		WriteDebugLog("[ERROR] UpdateDataDisplay: ManagerIntegration未初始化");
 		return;
-	}
-	
-	// 🔑 优化2：线程安全的数据访问
-	std::lock_guard<std::mutex> lock(m_displayDataMutex);
-	
-	if (m_displayedData.empty()) {
-		// 清空显示控件
-		m_ctrlDataView.SetWindowText(L"");
-		WriteDebugLog("[INFO] 数据显示已清空");
-		return;
-	}
-	
-	// 🔑 优化3：性能优化 - 大数据量时限制显示范围
-	const size_t MAX_DISPLAY_BYTES = 1024 * 1024; // 1MB显示限制
-	std::vector<uint8_t> displayData;
-	
-	if (m_displayedData.size() > MAX_DISPLAY_BYTES) {
-		// 显示最新的数据
-		displayData.assign(m_displayedData.end() - MAX_DISPLAY_BYTES, m_displayedData.end());
-		WriteDebugLog("[INFO] 大数据量优化：显示最新1MB数据");
-	} else {
-		displayData = m_displayedData;
 	}
 	
 	try {
-		CString formattedData;
+		// 🔑 优化：线程安全的数据访问
+		std::lock_guard<std::mutex> lock(m_displayDataMutex);
 		
-		// 🔑 优化4：统一格式化处理
-		if (m_bHexDisplay) {
-			// 十六进制显示开启：使用智能混合显示
-			WriteDebugLog("[UpdateDataDisplay] 十六进制显示开启：智能混合显示");
-			formattedData = FormatMixedDisplay(displayData);
-		} else {
-			// 十六进制显示关闭：使用纯文本显示
-			WriteDebugLog("[UpdateDataDisplay] 十六进制显示关闭：纯文本显示");
-			formattedData = FormatPlainTextDisplay(displayData);
+		if (m_displayedData.empty()) {
+			// 使用管理器清空显示
+			m_managerIntegration->ClearDataDisplay();
+			WriteDebugLog("[INFO] 数据显示已清空（通过管理器）");
+			return;
 		}
 		
-		// 🔑 优化5：批量更新减少闪烁
-		m_ctrlDataView.SetRedraw(FALSE); // 暂停重绘
+		// 🔑 架构优势：性能优化由DataDisplayManager内部处理
+		// 设置显示模式
+		m_managerIntegration->SetDisplayMode(m_bHexDisplay);
 		
-		// 更新显示内容
-		m_ctrlDataView.SetWindowText(formattedData);
+		// 更新显示数据 - SOLID-D: 依赖抽象而非具体实现
+		DisplayMode mode = m_bHexDisplay ? DisplayMode::MIXED : DisplayMode::TEXT;
+		m_managerIntegration->UpdateDataDisplay(m_displayedData, mode);
 		
-		// 🔑 优化6：智能滚动到底部
-		int textLength = m_ctrlDataView.GetWindowTextLength();
-		if (textLength > 0) {
-			m_ctrlDataView.SetSel(textLength, textLength);
-			m_ctrlDataView.LineScroll(m_ctrlDataView.GetLineCount());
-		}
-		
-		m_ctrlDataView.SetRedraw(TRUE); // 恢复重绘
-		m_ctrlDataView.Invalidate(); // 强制重绘
-		
-		// 🔑 优化7：详细日志记录
-		CString logMsg;
-		logMsg.Format(L"[INFO] 数据显示已更新 (%s模式, 显示%zu/%zu字节)", 
-			m_bHexDisplay ? L"十六进制" : L"文本", 
-			displayData.size(), m_displayedData.size());
-		WriteDebugLog(CW2A(logMsg));
+		// 🔑 架构优势：滚动和重绘由DataDisplayManager内部处理
+		WriteDebugLog("[INFO] 数据显示已更新（通过管理器）");
 		
 	} catch (const std::exception& e) {
-		// 🔑 优化8：异常处理
-		m_ctrlDataView.SetRedraw(TRUE); // 确保重绘状态恢复
-		
+		// 🔑 架构重构：异常处理简化
 		CString errorMsg;
 		errorMsg.Format(L"[ERROR] UpdateDataDisplay异常: %s", CA2W(e.what()));
 		WriteDebugLog(CW2A(errorMsg));
 		
-		// 显示错误信息
-		m_ctrlDataView.SetWindowText(L"[显示错误] 数据格式化失败");
+		// 通过管理器显示错误信息
+		if (m_managerIntegration) {
+			m_managerIntegration->ClearDataDisplay();
+		}
 		
 	} catch (...) {
 		// 处理未知异常
-		m_ctrlDataView.SetRedraw(TRUE); // 确保重绘状态恢复
 		WriteDebugLog("[ERROR] UpdateDataDisplay发生未知异常");
-		m_ctrlDataView.SetWindowText(L"[显示错误] 未知异常");
+		if (m_managerIntegration) {
+			m_managerIntegration->ClearDataDisplay();
+		}
 	}
 }
 

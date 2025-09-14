@@ -27,7 +27,7 @@ enum class ApplicationState
     TRANSMITTING,        // 传输中
     PAUSED,              // 暂停状态
     DISCONNECTING,       // 断开连接中
-    ERROR,               // 错误状态
+    APP_ERROR,           // 错误状态
     SHUTDOWN             // 关闭中
 };
 

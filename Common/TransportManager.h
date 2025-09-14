@@ -19,6 +19,7 @@ class ITransport;
 class ReliableChannel;
 class DeviceManager;
 class ProtocolManager;
+struct TransportConfig;
 
 /**
  * @brief 传输模式枚举
@@ -41,7 +42,7 @@ enum class TransportOperationState
     TRANSMITTING,    // 传输中
     PAUSED,          // 传输暂停
     DISCONNECTING,   // 断开连接中
-    ERROR,           // 错误状态
+    TRANSPORT_ERROR, // 错误状态
     COMPLETED        // 传输完成
 };
 
@@ -265,6 +266,7 @@ private:
     mutable std::mutex m_configMutex;                    // 配置访问互斥锁
     
     // 内部方法
+    TransportConfig ConvertToTransportConfig(const TransportConfiguration& config);
     std::shared_ptr<ITransport> CreateTransportInstance(const TransportConfiguration& config);
     void SetupTransportCallbacks();
     void SetupReliableChannelCallbacks();

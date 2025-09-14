@@ -33,7 +33,7 @@ TransportManager::~TransportManager()
     try {
         WriteDebugLog("[DEBUG] TransportManager析构完成");
     }
-    catch (const std::exception& e) {
+    catch (const std::exception&) {
         WriteDebugLog("[ERROR] TransportManager析构异常");
     }
 }
@@ -78,11 +78,16 @@ bool TransportManager::Connect()
     try {
         SetTransmissionState(TransportOperationState::CONNECTING);
         
+        // 转换配置格式
+        TransportConfig config = ConvertToTransportConfig(m_config);
+        
+        // 设置传输回调
+        SetupTransportCallbacks();
+        
         // 使用ITransport接口的Open方法
-        TransportConfig config;
         if (!m_transport->Open(config)) {
             ReportError("连接传输", "传输连接失败");
-            SetTransmissionState(TransportOperationState::ERROR);
+            SetTransmissionState(TransportOperationState::TRANSPORT_ERROR);
             return false;
         }
         
@@ -94,7 +99,7 @@ bool TransportManager::Connect()
     }
     catch (const std::exception& e) {
         ReportError("连接传输", e.what());
-        SetTransmissionState(TransportOperationState::ERROR);
+        SetTransmissionState(TransportOperationState::TRANSPORT_ERROR);
         return false;
     }
 }
@@ -143,7 +148,7 @@ bool TransportManager::SendData(const std::vector<uint8_t>& data)
             WriteDebugLog("[DEBUG] TransportManager::SendData: 数据发送成功");
         } else {
             ReportError("发送数据", "传输发送失败");
-            SetTransmissionState(TransportOperationState::ERROR);
+            SetTransmissionState(TransportOperationState::TRANSPORT_ERROR);
         }
         
         m_transmitting = false;
@@ -152,7 +157,7 @@ bool TransportManager::SendData(const std::vector<uint8_t>& data)
     catch (const std::exception& e) {
         m_transmitting = false;
         ReportError("发送数据", e.what());
-        SetTransmissionState(TransportOperationState::ERROR);
+        SetTransmissionState(TransportOperationState::TRANSPORT_ERROR);
         return false;
     }
 }
@@ -269,6 +274,27 @@ void TransportManager::Reset()
 }
 
 // 私有方法实现
+
+TransportConfig TransportManager::ConvertToTransportConfig(const TransportConfiguration& config)
+{
+    TransportConfig transportConfig;
+    
+    // 设置端点信息
+    transportConfig.portName = config.endpoint;
+    
+    // 设置串口参数
+    transportConfig.baudRate = config.baudRate;
+    transportConfig.dataBits = config.dataBits;
+    transportConfig.stopBits = config.stopBits;
+    transportConfig.parity = config.parity;
+    
+    // 设置网络参数（如果适用）
+    // transportConfig.host = config.endpoint;  // 根据需要设置
+    // transportConfig.port = 8080;             // 根据需要设置
+    
+    WriteDebugLog("[DEBUG] TransportManager::ConvertToTransportConfig: 配置转换完成");
+    return transportConfig;
+}
 
 std::shared_ptr<ITransport> TransportManager::CreateTransportInstance(const TransportConfiguration& config)
 {

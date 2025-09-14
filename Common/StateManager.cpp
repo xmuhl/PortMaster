@@ -102,7 +102,7 @@ bool StateManager::IsStateTransitionAllowed(ApplicationState fromState, Applicat
     }
     
     // 错误状态可以转换到任何状态
-    if (fromState == ApplicationState::ERROR) {
+    if (fromState == ApplicationState::APP_ERROR) {
         return true;
     }
     
@@ -151,7 +151,7 @@ void StateManager::UpdateStateMessage(const std::string& message, StatePriority 
 
 void StateManager::SetErrorState(const std::string& errorMessage, const std::string& source)
 {
-    SetApplicationState(ApplicationState::ERROR, errorMessage, StatePriority::CRITICAL, source);
+    SetApplicationState(ApplicationState::APP_ERROR, errorMessage, StatePriority::CRITICAL, source);
     
     // 额外的错误通知
     if (m_stateCallback) {
@@ -161,7 +161,7 @@ void StateManager::SetErrorState(const std::string& errorMessage, const std::str
 
 void StateManager::ClearErrorState(ApplicationState newState, const std::string& message)
 {
-    if (IsInState(ApplicationState::ERROR)) {
+    if (IsInState(ApplicationState::APP_ERROR)) {
         SetApplicationState(newState, message, StatePriority::NORMAL, "ErrorRecovery");
     }
 }
@@ -200,7 +200,7 @@ std::string StateManager::GetStateString(ApplicationState state)
     case ApplicationState::TRANSMITTING: return "传输中";
     case ApplicationState::PAUSED: return "已暂停";
     case ApplicationState::DISCONNECTING: return "断开连接中";
-    case ApplicationState::ERROR: return "错误";
+    case ApplicationState::APP_ERROR: return "错误";
     case ApplicationState::SHUTDOWN: return "关闭中";
     default: return "未知状态";
     }
@@ -251,34 +251,34 @@ void StateManager::InitializeTransitionRules()
 {
     // 定义状态转换规则
     m_transitionRules[ApplicationState::INITIALIZING] = {
-        ApplicationState::READY, ApplicationState::ERROR
+        ApplicationState::READY, ApplicationState::APP_ERROR
     };
     
     m_transitionRules[ApplicationState::READY] = {
-        ApplicationState::CONNECTING, ApplicationState::ERROR, ApplicationState::SHUTDOWN
+        ApplicationState::CONNECTING, ApplicationState::APP_ERROR, ApplicationState::SHUTDOWN
     };
     
     m_transitionRules[ApplicationState::CONNECTING] = {
-        ApplicationState::CONNECTED, ApplicationState::READY, ApplicationState::ERROR
+        ApplicationState::CONNECTED, ApplicationState::READY, ApplicationState::APP_ERROR
     };
     
     m_transitionRules[ApplicationState::CONNECTED] = {
-        ApplicationState::TRANSMITTING, ApplicationState::DISCONNECTING, ApplicationState::ERROR
+        ApplicationState::TRANSMITTING, ApplicationState::DISCONNECTING, ApplicationState::APP_ERROR
     };
     
     m_transitionRules[ApplicationState::TRANSMITTING] = {
-        ApplicationState::PAUSED, ApplicationState::CONNECTED, ApplicationState::ERROR
+        ApplicationState::PAUSED, ApplicationState::CONNECTED, ApplicationState::APP_ERROR
     };
     
     m_transitionRules[ApplicationState::PAUSED] = {
-        ApplicationState::TRANSMITTING, ApplicationState::CONNECTED, ApplicationState::ERROR
+        ApplicationState::TRANSMITTING, ApplicationState::CONNECTED, ApplicationState::APP_ERROR
     };
     
     m_transitionRules[ApplicationState::DISCONNECTING] = {
-        ApplicationState::READY, ApplicationState::ERROR
+        ApplicationState::READY, ApplicationState::APP_ERROR
     };
     
-    m_transitionRules[ApplicationState::ERROR] = {
+    m_transitionRules[ApplicationState::APP_ERROR] = {
         ApplicationState::READY, ApplicationState::CONNECTING, ApplicationState::CONNECTED,
         ApplicationState::TRANSMITTING, ApplicationState::PAUSED, ApplicationState::DISCONNECTING,
         ApplicationState::SHUTDOWN  // 错误状态可以转换到任何状态
@@ -338,7 +338,7 @@ void StateManager::UpdateUI(const StateInfo& stateInfo)
         m_uiUpdater->UpdateStatusBar(stateInfo.message, stateInfo.priority);
         
         // 如果是错误状态，显示错误消息
-        if (stateInfo.state == ApplicationState::ERROR) {
+        if (stateInfo.state == ApplicationState::APP_ERROR) {
             m_uiUpdater->ShowErrorMessage("状态错误", stateInfo.message);
         }
     }
