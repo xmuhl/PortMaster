@@ -689,6 +689,133 @@ TransportConfiguration TransportManager::GetTransportConfigFromControls(int tran
     }
 }
 
+// 🔑 架构重构：从PortMasterDlg迁移的工具函数 (SOLID-S: 单一职责)
+CString TransportManager::FormatTransportInfo(const std::string& transportType, const std::string& endpoint)
+{
+    // KISS原则：保持简单的字符串格式化逻辑
+    CString typeMsg = CA2W(transportType.c_str(), CP_UTF8);
+    
+    if (endpoint.empty())
+    {
+        return typeMsg + L" 连接";
+    }
+    else
+    {
+        CString endpointMsg = CA2W(endpoint.c_str(), CP_UTF8);
+        return typeMsg + L" (" + endpointMsg + L")";
+    }
+}
+
+CString TransportManager::GetDetailedErrorSuggestion(int transportIndex, const std::string& error)
+{
+    // SOLID-S: 单一职责 - 使用静态映射避免UI依赖 (YAGNI: 仅实现必要的传输类型)
+    static const wchar_t* transportTypes[] = {
+        L"串口", L"TCP客户端", L"TCP服务器", L"UDP", L"并口", L"USB打印机", L"回环测试"
+    };
+    
+    CString transportType = L"";
+    if (transportIndex >= 0 && transportIndex < _countof(transportTypes))
+    {
+        transportType = transportTypes[transportIndex];
+    }
+    
+    CString errorMsg = CA2W(error.c_str(), CP_UTF8);
+    errorMsg.MakeLower();
+    
+    // 串口相关错误建议
+    if (transportType == L"串口")
+    {
+        if (errorMsg.Find(L"access") != -1 || errorMsg.Find(L"占用") != -1)
+        {
+            return L"串口被其他程序占用，请关闭相关程序后重试";
+        }
+        else if (errorMsg.Find(L"find") != -1 || errorMsg.Find(L"exist") != -1)
+        {
+            return L"串口不存在，请检查设备连接并刷新端口列表";
+        }
+        else if (errorMsg.Find(L"parameter") != -1 || errorMsg.Find(L"baud") != -1)
+        {
+            return L"串口参数配置错误，请检查波特率、数据位等设置";
+        }
+        return L"请检查串口连接、权限和参数配置";
+    }
+    // 网络相关错误建议
+    else if (transportType == L"TCP客户端" || transportType == L"TCP服务器")
+    {
+        if (errorMsg.Find(L"connect") != -1 || errorMsg.Find(L"connection") != -1)
+        {
+            return L"无法建立TCP连接，请检查IP地址、端口号和网络状况";
+        }
+        else if (errorMsg.Find(L"bind") != -1 || errorMsg.Find(L"address") != -1)
+        {
+            return L"TCP端口绑定失败，请检查端口是否被占用或更换端口";
+        }
+        else if (errorMsg.Find(L"timeout") != -1)
+        {
+            return L"连接超时，请检查网络连通性和防火墙设置";
+        }
+        return L"请检查网络配置、防火墙设置和目标设备状态";
+    }
+    else if (transportType == L"UDP")
+    {
+        if (errorMsg.Find(L"bind") != -1)
+        {
+            return L"UDP端口绑定失败，请更换端口或检查权限";
+        }
+        else if (errorMsg.Find(L"address") != -1)
+        {
+            return L"UDP地址配置错误，请检查IP地址和端口设置";
+        }
+        return L"请检查UDP端口配置和网络权限";
+    }
+    // 打印机相关错误建议
+    else if (transportType == L"并口" || transportType == L"USB打印机")
+    {
+        if (errorMsg.Find(L"printer") != -1 || errorMsg.Find(L"打印") != -1)
+        {
+            return L"打印机不可用，请检查设备连接和驱动安装";
+        }
+        else if (errorMsg.Find(L"access") != -1 || errorMsg.Find(L"permission") != -1)
+        {
+            return L"打印机访问权限不足，请以管理员身份运行程序";
+        }
+        return L"请检查打印机连接、权限和驱动程序";
+    }
+    // 回环测试
+    else if (transportType == L"回环测试")
+    {
+        return L"回环测试失败，请检查程序配置和系统资源";
+    }
+    
+    // 通用错误建议
+    return L"请检查设备连接和配置参数，或联系技术支持";
+}
+
+CString TransportManager::GetConnectionStatusMessage(TransportState state, const std::string& error)
+{
+    // SOLID-S: 单一职责 - 状态到消息的纯映射函数
+    switch (state)
+    {
+    case TRANSPORT_CLOSED:
+        return L"未连接";
+    case TRANSPORT_OPENING:
+        return L"连接中...";
+    case TRANSPORT_OPEN:
+        return L"已连接";
+    case TRANSPORT_CLOSING:
+        return L"断开中...";
+    case TRANSPORT_ERROR:
+        {
+            if (error.empty())
+                return L"连接错误";
+            CString errorMsg = CA2W(error.c_str(), CP_UTF8);
+            return L"错误: " + errorMsg;
+        }
+    default:
+        return L"未知状态";
+    }
+}
+
 std::unique_ptr<TransportManager> TransportManagerFactory::Create(
     std::shared_ptr<DeviceManager> deviceManager,
     std::shared_ptr<ProtocolManager> protocolManager)

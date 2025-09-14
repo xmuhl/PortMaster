@@ -13,6 +13,7 @@
 #define NOMINMAX
 #endif
 #include <afxwin.h>  // For CString
+#include "../Transport/ITransport.h"  // For TransportState enum
 
 // 前置声明
 class ITransport;
@@ -236,6 +237,31 @@ public:
      * @brief 重置传输状态
      */
     void Reset();
+    
+    // 🔑 架构重构：从PortMasterDlg迁移的工具函数 (SOLID-S: 单一职责)
+    /**
+     * @brief 格式化传输信息显示字符串
+     * @param transportType 传输类型
+     * @param endpoint 端点信息  
+     * @return 格式化后的显示字符串
+     */
+    static CString FormatTransportInfo(const std::string& transportType, const std::string& endpoint);
+    
+    /**
+     * @brief 获取详细错误建议
+     * @param transportIndex 传输类型索引
+     * @param error 错误信息
+     * @return 详细的错误建议字符串
+     */
+    static CString GetDetailedErrorSuggestion(int transportIndex, const std::string& error);
+    
+    /**
+     * @brief 获取连接状态消息
+     * @param state 传输状态
+     * @param error 错误信息（可选）
+     * @return 用户友好的状态消息
+     */
+    static CString GetConnectionStatusMessage(TransportState state, const std::string& error = "");
 
 private:
     // 核心组件

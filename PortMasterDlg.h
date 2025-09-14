@@ -254,10 +254,7 @@ private:
 	std::shared_ptr<ITransport> CreateTransportFromUI();
 	TransportConfig GetTransportConfigFromUI();
 	
-	// 状态反馈优化 (SOLID-S: 单一职责)
-	CString GetConnectionStatusMessage(TransportState state, const std::string& error = "");
-	CString FormatTransportInfo(const std::string& transportType, const std::string& endpoint = "");
-	CString GetDetailedErrorSuggestion(int transportIndex, const std::string& error);
+	// 🔑 架构重构：工具函数已迁移至TransportManager (FormatTransportInfo, GetDetailedErrorSuggestion, GetConnectionStatusMessage)
 	void SetupReceiveDirectory();
 	void ConfigureReliableChannelFromConfig(); // 新增：从配置管理器设置可靠通道参数 (SOLID-S: 单一职责)
 	void ConfigureReliableChannelForLoopback(); // 🚀 性能优化：本地回路快速配置函数
@@ -352,9 +349,9 @@ private:
 	void SaveTransmissionContext(const CString& filePath, size_t totalBytes, size_t transmittedBytes); // 保存传输断点
 	bool LoadTransmissionContext();                                 // 加载传输断点
 	void ClearTransmissionContext();                               // 清除传输断点
-	CString GetTransmissionContextFilePath() const;                // 获取断点文件路径
+	// 🔑 架构重构：已删除未使用的GetTransmissionContextFilePath函数
 	bool ResumeTransmission();                                      // 续传功能实现
-	bool ShouldEchoTransmittedData() const;                        // 第四阶段新增：回显策略判断
+	// 🔑 架构重构：已删除ShouldEchoTransmittedData函数，逻辑已内联
 	void DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk); // 第四阶段新增：分块数据显示
 	void HandleTransmissionError(const CString& operation, const std::string& error);
 	void ShowDetailedErrorMessage(const CString& operation, const CString& error, const CString& suggestion = L""); // Stage 3 新增：详细错误信息显示

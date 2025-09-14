@@ -1113,10 +1113,10 @@ void CPortMasterDlg::OnBnClickedConnect()
 	if (!newTransport->Open(config))
 	{
 		std::string error = newTransport->GetLastError();
-		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_ERROR, error);
+		CString statusMsg = TransportManager::GetConnectionStatusMessage(TRANSPORT_ERROR, error);
 		
-		// SOLID-S: 单一职责 - 提供针对性的错误建议
-		CString detailedError = GetDetailedErrorSuggestion(transportIndex, error);
+		// SOLID-S: 单一职责 - 提供针对性的错误建议 (使用迁移后的工具函数)
+		CString detailedError = TransportManager::GetDetailedErrorSuggestion(transportIndex, error);
 		AppendLog(L"连接失败: " + statusMsg);
 		if (!detailedError.IsEmpty())
 		{
@@ -1265,9 +1265,9 @@ void CPortMasterDlg::OnBnClickedConnect()
 			endpoint = currentConfig.portName;
 		}
 		
-		// 格式化连接信息
-		CString transportInfo = FormatTransportInfo(transportTypeStr, endpoint);
-		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_OPEN);
+		// 格式化连接信息 (SOLID-S: 使用迁移后的工具函数)
+		CString transportInfo = TransportManager::FormatTransportInfo(transportTypeStr, endpoint);
+		CString statusMsg = TransportManager::GetConnectionStatusMessage(TRANSPORT_OPEN);
 		
 		AppendLog(L"连接成功 - " + transportInfo);
 		
@@ -1277,7 +1277,7 @@ void CPortMasterDlg::OnBnClickedConnect()
 	else
 	{
 		std::string error = m_reliableChannel ? m_reliableChannel->GetLastError() : "可靠通道启动失败";
-		CString statusMsg = GetConnectionStatusMessage(TRANSPORT_ERROR, error);
+		CString statusMsg = TransportManager::GetConnectionStatusMessage(TRANSPORT_ERROR, error);
 		AppendLog(L"可靠通道启动失败: " + statusMsg);
 		
 		// 📊 使用统一状态管理更新可靠通道失败状态
@@ -1655,90 +1655,7 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 }
 
 // SOLID-S: 单一职责 - 专门负责获取详细错误建议
-CString CPortMasterDlg::GetDetailedErrorSuggestion(int transportIndex, const std::string& error)
-{
-	// SOLID-S: 单一职责 - 使用静态映射避免UI依赖 (YAGNI: 仅实现必要的传输类型)
-	static const wchar_t* transportTypes[] = {
-		L"串口", L"TCP客户端", L"TCP服务器", L"UDP", L"并口", L"USB打印机", L"回环测试"
-	};
-	
-	CString transportType = L"";
-	if (transportIndex >= 0 && transportIndex < _countof(transportTypes))
-	{
-		transportType = transportTypes[transportIndex];
-	}
-	
-	CString errorMsg = CA2W(error.c_str(), CP_UTF8);
-	errorMsg.MakeLower();
-	
-	// 串口相关错误建议
-	if (transportType == L"串口")
-	{
-		if (errorMsg.Find(L"access") != -1 || errorMsg.Find(L"占用") != -1)
-		{
-			return L"串口被其他程序占用，请关闭相关程序后重试";
-		}
-		else if (errorMsg.Find(L"find") != -1 || errorMsg.Find(L"exist") != -1)
-		{
-			return L"串口不存在，请检查设备连接并刷新端口列表";
-		}
-		else if (errorMsg.Find(L"parameter") != -1 || errorMsg.Find(L"baud") != -1)
-		{
-			return L"串口参数配置错误，请检查波特率、数据位等设置";
-		}
-		return L"请检查串口连接、权限和参数配置";
-	}
-	// 网络相关错误建议
-	else if (transportType == L"TCP客户端" || transportType == L"TCP服务器")
-	{
-		if (errorMsg.Find(L"connect") != -1 || errorMsg.Find(L"connection") != -1)
-		{
-			return L"无法建立TCP连接，请检查IP地址、端口号和网络状况";
-		}
-		else if (errorMsg.Find(L"bind") != -1 || errorMsg.Find(L"address") != -1)
-		{
-			return L"TCP端口绑定失败，请检查端口是否被占用或更换端口";
-		}
-		else if (errorMsg.Find(L"timeout") != -1)
-		{
-			return L"连接超时，请检查网络连通性和防火墙设置";
-		}
-		return L"请检查网络配置、防火墙设置和目标设备状态";
-	}
-	else if (transportType == L"UDP")
-	{
-		if (errorMsg.Find(L"bind") != -1)
-		{
-			return L"UDP端口绑定失败，请更换端口或检查权限";
-		}
-		else if (errorMsg.Find(L"address") != -1)
-		{
-			return L"UDP地址配置错误，请检查IP地址和端口设置";
-		}
-		return L"请检查UDP端口配置和网络权限";
-	}
-	// 打印机相关错误建议
-	else if (transportType == L"并口" || transportType == L"USB打印机")
-	{
-		if (errorMsg.Find(L"printer") != -1 || errorMsg.Find(L"打印") != -1)
-		{
-			return L"打印机不可用，请检查设备连接和驱动安装";
-		}
-		else if (errorMsg.Find(L"access") != -1 || errorMsg.Find(L"permission") != -1)
-		{
-			return L"打印机访问权限不足，请以管理员身份运行程序";
-		}
-		return L"请检查打印机连接、权限和驱动程序";
-	}
-	// 回环测试
-	else if (transportType == L"回环测试")
-	{
-		return L"回环测试失败，请检查程序配置和系统资源";
-	}
-	
-	// 通用建议
-	return L"请检查设备连接、权限设置和配置参数";
-}
+// 🔑 架构重构：GetDetailedErrorSuggestion已迁移至TransportManager::GetDetailedErrorSuggestion
 
 // SOLID-S: 单一职责 - 专门负责接收目录的设置和创建
 void CPortMasterDlg::SetupReceiveDirectory()
@@ -2353,44 +2270,8 @@ bool CPortMasterDlg::HasValidInputData()
 	return (!inputText.IsEmpty() || !m_transmissionData.empty());
 }
 
-CString CPortMasterDlg::GetConnectionStatusMessage(TransportState state, const std::string& error)
-{
-	switch (state)
-	{
-	case TRANSPORT_CLOSED:
-		return L"未连接";
-	case TRANSPORT_OPENING:
-		return L"连接中...";
-	case TRANSPORT_OPEN:
-		return L"已连接";
-	case TRANSPORT_CLOSING:
-		return L"断开中...";
-	case TRANSPORT_ERROR:
-		{
-			if (error.empty())
-				return L"连接错误";
-			CString errorMsg = CA2W(error.c_str(), CP_UTF8);
-			return L"错误: " + errorMsg;
-		}
-	default:
-		return L"未知状态";
-	}
-}
+// 🔑 架构重构：GetConnectionStatusMessage已迁移至TransportManager::GetConnectionStatusMessage
 
-CString CPortMasterDlg::FormatTransportInfo(const std::string& transportType, const std::string& endpoint)
-{
-	CString typeMsg = CA2W(transportType.c_str(), CP_UTF8);
-	
-	if (endpoint.empty())
-	{
-		return typeMsg + L" 连接";
-	}
-	else
-	{
-		CString endpointMsg = CA2W(endpoint.c_str(), CP_UTF8);
-		return typeMsg + L" (" + endpointMsg + L")";
-	}
-}
 
 std::vector<uint8_t> CPortMasterDlg::GetInputData()
 {
@@ -3266,7 +3147,8 @@ void CPortMasterDlg::OnChunkTransmissionTimer()
 				UpdateTransmissionProgress();
 				
 				// 显示传输的数据块到接收区域（用于回环测试模式）
-				if (ShouldEchoTransmittedData()) {
+				// 🔑 架构重构：内联简单函数，减少函数调用开销
+				if (m_ctrlPortType.GetCurSel() == 6) { // 6 = 回环测试
 					DisplayReceivedDataChunk(currentChunk);
 				}
 				
@@ -3388,13 +3270,7 @@ void CPortMasterDlg::UpdateTransmissionProgress()
 	}
 }
 
-// 第四阶段新增：判断是否应回显传输数据 (SOLID-S: 单一职责 - 回显策略)
-bool CPortMasterDlg::ShouldEchoTransmittedData() const
-{
-	// 只有在回环测试模式下才回显数据
-	int portType = m_ctrlPortType.GetCurSel();
-	return (portType == 6); // 6 = 回环测试
-}
+// 🔑 架构重构：已删除ShouldEchoTransmittedData函数，逻辑已内联到调用点
 
 // 第四阶段新增：显示传输数据块 (SOLID-S: 单一职责 - 分块数据显示)
 void CPortMasterDlg::DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk)
@@ -3867,11 +3743,7 @@ void CPortMasterDlg::ClearTransmissionContext()
 	AppendLog(L"清除传输断点信息");
 }
 
-CString CPortMasterDlg::GetTransmissionContextFilePath() const
-{
-	// 返回传输上下文文件路径，如果无效返回空字符串
-	return m_transmissionContext.isValidContext ? m_transmissionContext.sourceFilePath : CString(L"");
-}
+// 🔑 架构重构：已删除未使用的GetTransmissionContextFilePath函数
 
 bool CPortMasterDlg::ResumeTransmission()
 {
