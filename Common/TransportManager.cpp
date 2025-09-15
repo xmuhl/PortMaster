@@ -29,7 +29,12 @@ TransportManager::TransportManager(std::shared_ptr<DeviceManager> deviceManager,
     , m_bytesTransmitted(0)
     , m_totalBytes(0)
 {
-    WriteDebugLog("[DEBUG] TransportManager构造完成");
+    WriteDebugLog("[DEBUG] TransportManager构造开始");
+    
+    // 🔴 性能优化：移除启动时的重型初始化操作
+    // 延迟初始化策略：仅在实际需要时才创建传输对象
+    
+    WriteDebugLog("[DEBUG] TransportManager构造完成 - 快速启动模式");
 }
 
 TransportManager::~TransportManager()

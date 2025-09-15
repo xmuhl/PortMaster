@@ -89,11 +89,14 @@ BOOL CSplashDialog::OnInitDialog()
 	WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 开始设置定时器");
 	m_dwStartTime = GetTickCount(); // 记录启动时间
 	
+	// 🔴 性能优化：缩短最大显示时间，提升用户体验
+	const UINT OPTIMIZED_MAX_DISPLAY_TIME = 2000; // 从5000ms优化到2000ms
+	
 	// 设置最大显示时间定时器（防止死锁）
-	m_nTimer = SetTimer(SPLASH_TIMER_ID, MAX_DISPLAY_TIME, NULL);
+	m_nTimer = SetTimer(SPLASH_TIMER_ID, OPTIMIZED_MAX_DISPLAY_TIME, NULL);
 	if (m_nTimer != 0)
 	{
-		WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 最大显示时间定时器设置成功");
+		WriteDebugLog("[DEBUG] SplashDialog::OnInitDialog: 最大显示时间定时器设置成功 (2秒)");
 	}
 	else
 	{

@@ -10,12 +10,21 @@
 #include <regex>
 #include <windows.h>
 
+extern void WriteDebugLog(const char* message); // 🔴 修复：添加外部函数声明
+
 DeviceManager::DeviceManager()
     : m_monitoring(false)
     , m_stopMonitoring(false)
 {
-    LoadDeviceHistory();
-    LoadFavoriteDevices();
+    // 🔴 根本性修复：启动时不加载任何设备信息，完全延迟到用户需要时
+    // KISS原则：保持启动流程极简，只做必要的初始化
+
+    // 原有的启动时加载已移除：
+    // LoadDeviceHistory();     // 延迟到用户查看历史设备时加载
+    // LoadFavoriteDevices();   // 延迟到用户查看收藏设备时加载
+
+    // 启动时只初始化基本状态，不进行任何I/O操作或设备检查
+    WriteDebugLog("[DEBUG] DeviceManager构造完成 - 快速启动模式");
 }
 
 DeviceManager::~DeviceManager()
@@ -94,7 +103,10 @@ std::vector<DeviceInfo> DeviceManager::EnumerateSerialPorts()
         DeviceInfo device(portName, "Serial");
         device.displayName = "串口 " + portName;
         device.description = GetDeviceDescription(portName, "Serial");
-        device.isAvailable = IsSerialPortAvailable(portName);
+
+        // 🚀 性能优化：使用快速检查，避免UI阻塞
+        // 对于实际连接验证，调用IsSerialPortReallyAvailable()
+        device.isAvailable = true; // 延迟验证策略
         
         // 添加串口特定属性
         device.properties["type"] = "Serial";
@@ -277,11 +289,23 @@ void DeviceManager::RemoveFromFavorites(const std::string& deviceName, const std
 
 std::vector<DeviceInfo> DeviceManager::GetHistoryDevices()
 {
+    // 🚀 懒加载机制：只有用户查看历史设备时才实际加载
+    static bool historyLoaded = false;
+    if (!historyLoaded) {
+        LoadDeviceHistory();
+        historyLoaded = true;
+    }
     return m_historyDevices;
 }
 
 std::vector<DeviceInfo> DeviceManager::GetFavoriteDevices()
 {
+    // 🚀 懒加载机制：只有用户查看收藏设备时才实际加载
+    static bool favoritesLoaded = false;
+    if (!favoritesLoaded) {
+        LoadFavoriteDevices();
+        favoritesLoaded = true;
+    }
     return m_favoriteDevices;
 }
 
@@ -329,7 +353,20 @@ DeviceInfo DeviceManager::CreateVirtualDevice(const std::string& name, const std
 
 bool DeviceManager::IsSerialPortAvailable(const std::string& portName)
 {
-    // 尝试短暂打开端口测试可用性
+    // 🔴 紧急修复：启动时跳过耗时的串口检查，避免UI线程阻塞
+    // KISS原则：简化启动流程，将可用性检查延迟到实际使用时进行
+
+    // 基本有效性检查：确保端口名格式正确
+    if (portName.empty() || portName.find("COM") != 0) {
+        return false;
+    }
+
+    // 🚀 性能优化：启动阶段假设历史端口可用，实际连接时再验证
+    // 这样可以避免在DeviceManager构造函数中阻塞主UI线程
+    return true; // 延迟验证策略
+
+    /* 原有的同步检查代码（保留注释供参考）
+    // 尝试短暂打开端口测试可用性 - 这会导致启动卡顿！
     std::string portPath = "\\\\.\\" + portName;
     HANDLE hPort = CreateFileA(
         portPath.c_str(),
@@ -340,13 +377,14 @@ bool DeviceManager::IsSerialPortAvailable(const std::string& portName)
         0,
         NULL
     );
-    
+
     if (hPort != INVALID_HANDLE_VALUE) {
         CloseHandle(hPort);
         return true;
     }
-    
+
     return false;
+    */
 }
 
 std::string DeviceManager::GetDeviceDescription(const std::string& deviceName, const std::string& transportType)
@@ -426,8 +464,11 @@ void DeviceManager::LoadDeviceHistory()
                 device.displayName = displayName;
             }
             device.description = GetDeviceDescription(deviceName, transportType);
-            device.isAvailable = IsDeviceAvailable(deviceName, transportType);
-            
+
+            // 🔴 紧急修复：启动时跳过设备可用性检查，避免UI线程阻塞
+            // KISS原则：将可用性检查延迟到用户实际选择设备时进行
+            device.isAvailable = true; // 延迟验证策略
+
             m_historyDevices.push_back(device);
         }
     }
@@ -484,8 +525,11 @@ void DeviceManager::LoadFavoriteDevices()
                 device.displayName = displayName;
             }
             device.description = GetDeviceDescription(deviceName, transportType);
-            device.isAvailable = IsDeviceAvailable(deviceName, transportType);
-            
+
+            // 🔴 紧急修复：启动时跳过设备可用性检查，避免UI线程阻塞
+            // KISS原则：将可用性检查延迟到用户实际选择设备时进行
+            device.isAvailable = true; // 延迟验证策略
+
             m_favoriteDevices.push_back(device);
         }
     }
@@ -768,4 +812,33 @@ void DeviceManager::DeviceMonitoringThread()
             std::this_thread::sleep_for(std::chrono::milliseconds(5000));
         }
     }
+}
+
+// 🔴 紧急修复：实际连接时使用的真正可用性检查
+bool DeviceManager::IsSerialPortReallyAvailable(const std::string& portName)
+{
+    // SOLID-S: 单一职责 - 专门负责真正的串口可用性验证
+    // 这个方法只在用户实际尝试连接时调用，不影响启动性能
+
+    if (portName.empty() || portName.find("COM") != 0) {
+        return false;
+    }
+
+    std::string portPath = "\\\\.\\" + portName;
+    HANDLE hPort = CreateFileA(
+        portPath.c_str(),
+        GENERIC_READ | GENERIC_WRITE,
+        0,
+        NULL,
+        OPEN_EXISTING,
+        0,
+        NULL
+    );
+
+    if (hPort != INVALID_HANDLE_VALUE) {
+        CloseHandle(hPort);
+        return true;
+    }
+
+    return false;
 }

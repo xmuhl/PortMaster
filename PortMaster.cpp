@@ -226,7 +226,7 @@ BOOL CPortMasterApp::InitInstance()
 		// ⭐ 修复：等待启动画面自动关闭 - 增强超时机制防止死锁
 		WriteDebugLog("[DEBUG] InitInstance: 等待启动画面关闭");
 		DWORD dwWaitStart = GetTickCount();
-		const DWORD MAX_WAIT_TIME = 3000; // 缩短等待时间到3秒
+		const DWORD MAX_WAIT_TIME = 2500; // 🔴 优化：从3000ms缩短到2500ms，配合启动画面2秒定时器
 		int waitCount = 0;
 		
 		while (pSplash && pSplash->GetSafeHwnd() && IsWindow(pSplash->GetSafeHwnd())) {
@@ -273,12 +273,25 @@ BOOL CPortMasterApp::InitInstance()
 		
 		WriteDebugLog("[DEBUG] InitInstance: 启动画面已关闭，开始显示主对话框");
 		WriteDebugLog("[DEBUG] InitInstance: 调用DoModal前");
+		
+		// 🔴 主窗口显示优化：确保窗口正确显示和获得焦点
 		// 注意：对于模态对话框，不应在DoModal前设置m_pMainWnd
 		// m_pMainWnd会在DoModal内部自动设置
+		
+		// 确保主窗口能够正确显示
+		::SetForegroundWindow(::GetDesktopWindow()); // 重置前台窗口
+		
 		nResponse = dlg.DoModal(); // ⭐ 修改：使用赋值而不是重新声明
-		CString responseMsg;
-		responseMsg.Format(L"[DEBUG] InitInstance: DoModal返回值: %d", (int)nResponse);
-		WriteDebugLog(CW2A(responseMsg));
+		
+		// 🔴 新增：主窗口显示后的状态验证
+		if (nResponse == IDOK || nResponse == IDCANCEL) {
+			WriteDebugLog("[DEBUG] InitInstance: 主对话框正常关闭");
+		} else {
+			CString responseMsg;
+			responseMsg.Format(L"[WARNING] InitInstance: 主对话框异常关闭，返回值: %d", (int)nResponse);
+			WriteDebugLog(CW2A(responseMsg));
+		}
+		
 		WriteDebugLog("[DEBUG] InitInstance: 主对话框显示完成");
 		bSplashSuccess = true; // ⭐ 标记启动画面流程成功
 	} else {
