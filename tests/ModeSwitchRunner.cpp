@@ -1,4 +1,4 @@
-// Simple headless test runner focusing on mode switching and responsiveness.
+﻿// Simple headless test runner focusing on mode switching and responsiveness.
 // Builds against in-repo Protocol/ and Transport/ components without UI.
 
 #include <iostream>

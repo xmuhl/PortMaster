@@ -3942,7 +3942,7 @@ void CPortMasterDlg::UpdateTransmissionStatus(ApplicationState state, double pro
 
 		WriteDebugLog("[INFO] UpdateTransmissionStatus: 状态已更新");
 	}
-	catch (const std::exception& e)
+	catch (const std::exception&)
 	{
 		WriteDebugLog("[ERROR] UpdateTransmissionStatus异常");
 	}
@@ -4040,11 +4040,11 @@ void CPortMasterDlg::UpdateButtonStates(ApplicationState state)
 		if (IsWindow(m_ctrlClearDisplayBtn.GetSafeHwnd()))
 			m_ctrlClearDisplayBtn.EnableWindow(TRUE);
 
-		WriteDebugLog("[INFO] 操作完成");;
+		WriteDebugLog("[INFO] UpdateButtonStates: 操作完成");
 	}
-	catch (const std::exception& e)
+	catch (const std::exception&)
 	{
-		WriteDebugLog("[INFO] 操作完成");;
+		WriteDebugLog("[ERROR] UpdateButtonStates异常");
 		// 异常时回退到原有逻辑
 		UpdateButtonStatesLegacy();
 	}
@@ -4079,11 +4079,11 @@ void CPortMasterDlg::UpdateStatusBar(const std::string& message, StatePriority p
 		// 使用现有的状态显示机制
 		UpdateStatusDisplay(statusMsg, L"", L"", L"", StatusPriority::NORMAL);
 
-		WriteDebugLog("[INFO] 操作完成");;
+		WriteDebugLog("[INFO] UpdateStatusBar: 操作完成");
 	}
-	catch (const std::exception& e)
+	catch (const std::exception&)
 	{
-		WriteDebugLog("[INFO] 操作完成");;
+		WriteDebugLog("[ERROR] UpdateStatusBar异常");
 	}
 }
 
@@ -4098,10 +4098,10 @@ void CPortMasterDlg::ShowErrorMessage(const std::string& title, const std::strin
 		// 使用现有的错误显示机制
 		ShowUserMessage(titleStr, messageStr, MB_ICONERROR);
 
-		WriteDebugLog("[INFO] 操作完成");;
+		WriteDebugLog("[INFO] ShowErrorMessage: 操作完成");
 	}
-	catch (const std::exception& e)
+	catch (const std::exception&)
 	{
-		WriteDebugLog("[INFO] 操作完成");;
+		WriteDebugLog("[ERROR] ShowErrorMessage异常");
 	}
 }

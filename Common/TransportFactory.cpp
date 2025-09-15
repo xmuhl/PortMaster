@@ -1,9 +1,9 @@
-#pragma execution_character_set("utf-8")
+﻿#pragma execution_character_set("utf-8")
 #include "pch.h"
 #include "TransportFactory.h"
 
 // =====================================================================================
-// TransportFactory 实现 - 传输层工厂类
+// TransportFactory 瀹炵幇 - 浼犺緭灞傚伐鍘傜被
 // =====================================================================================
 
 std::shared_ptr<ITransport> TransportFactory::Create(TransportType transportType)

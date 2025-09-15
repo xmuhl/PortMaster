@@ -1,48 +1,48 @@
-#pragma once
+﻿#pragma once
 
 #include <memory>
 #include <vector>
 #include <string>
 
-// 🔑 架构重构：从PortMasterDlg提取的发送控制专职管理器
-// SOLID-S: 单一职责 - 专注发送操作的业务逻辑和流程控制
-// SOLID-O: 开闭原则 - 可扩展不同的发送策略和模式
-// SOLID-D: 依赖倒置 - 依赖抽象接口而非具体UI实现
+// 馃攽 鏋舵瀯閲嶆瀯锛氫粠PortMasterDlg鎻愬彇鐨勫彂閫佹帶鍒朵笓鑱岀鐞嗗櫒
+// SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鍙戦€佹搷浣滅殑涓氬姟閫昏緫鍜屾祦绋嬫帶鍒?
+// SOLID-O: 寮€闂師鍒?- 鍙墿灞曚笉鍚岀殑鍙戦€佺瓥鐣ュ拰妯″紡
+// SOLID-D: 渚濊禆鍊掔疆 - 渚濊禆鎶借薄鎺ュ彛鑰岄潪鍏蜂綋UI瀹炵幇
 
-// 前置声明
+// 鍓嶇疆澹版槑
 class ReliableChannel;
 class ITransport;
 
-// 发送结果状态枚举 (KISS原则：简单明确的状态定义)
+// 鍙戦€佺粨鏋滅姸鎬佹灇涓?(KISS鍘熷垯锛氱畝鍗曟槑纭殑鐘舵€佸畾涔?
 enum class SendResult : int
 {
-    SUCCESS = 0,        // 发送成功启动
-    NO_DATA,            // 无数据可发送
-    NOT_CONNECTED,      // 未连接
-    ALREADY_ACTIVE,     // 传输已激活
-    FAILED              // 发送失败
+    SUCCESS = 0,        // 鍙戦€佹垚鍔熷惎鍔?
+    NO_DATA,            // 鏃犳暟鎹彲鍙戦€?
+    NOT_CONNECTED,      // 鏈繛鎺?
+    ALREADY_ACTIVE,     // 浼犺緭宸叉縺娲?
+    FAILED              // 鍙戦€佸け璐?
 };
 
-// 发送控制器 - 专职管理发送相关的所有业务逻辑
+// 鍙戦€佹帶鍒跺櫒 - 涓撹亴绠＄悊鍙戦€佺浉鍏崇殑鎵€鏈変笟鍔￠€昏緫
 class SendController
 {
 public:
     SendController() = default;
     ~SendController() = default;
 
-    // 禁用拷贝构造和赋值 (RAII + 单例设计)
+    // 绂佺敤鎷疯礉鏋勯€犲拰璧嬪€?(RAII + 鍗曚緥璁捐)
     SendController(const SendController&) = delete;
     SendController& operator=(const SendController&) = delete;
 
     /**
-     * @brief 执行发送操作的主要入口点
-     * @param inputData 输入数据（从UI输入框获取）
-     * @param transmissionData 文件数据（拖放或加载的文件）
-     * @param currentFileName 当前文件名
-     * @param isConnected 连接状态
-     * @param isReliableMode 是否使用可靠传输模式
-     * @param reliableChannel 可靠传输通道实例
-     * @return SendResult 发送结果状态
+     * @brief 鎵ц鍙戦€佹搷浣滅殑涓昏鍏ュ彛鐐?
+     * @param inputData 杈撳叆鏁版嵁锛堜粠UI杈撳叆妗嗚幏鍙栵級
+     * @param transmissionData 鏂囦欢鏁版嵁锛堟嫋鏀炬垨鍔犺浇鐨勬枃浠讹級
+     * @param currentFileName 褰撳墠鏂囦欢鍚?
+     * @param isConnected 杩炴帴鐘舵€?
+     * @param isReliableMode 鏄惁浣跨敤鍙潬浼犺緭妯″紡
+     * @param reliableChannel 鍙潬浼犺緭閫氶亾瀹炰緥
+     * @return SendResult 鍙戦€佺粨鏋滅姸鎬?
      */
     SendResult ExecuteSend(
         const std::vector<uint8_t>& inputData,
@@ -54,28 +54,28 @@ public:
     );
 
     /**
-     * @brief 检查是否有断点续传的数据
-     * @return 如果有可恢复的传输上下文返回true
+     * @brief 妫€鏌ユ槸鍚︽湁鏂偣缁紶鐨勬暟鎹?
+     * @return 濡傛灉鏈夊彲鎭㈠鐨勪紶杈撲笂涓嬫枃杩斿洖true
      */
     bool HasResumableTransmission() const;
 
     /**
-     * @brief 处理断点续传逻辑
-     * @return 如果用户选择续传并成功启动返回true
+     * @brief 澶勭悊鏂偣缁紶閫昏緫
+     * @return 濡傛灉鐢ㄦ埛閫夋嫨缁紶骞舵垚鍔熷惎鍔ㄨ繑鍥瀟rue
      */
     bool HandleResumeTransmission();
 
     /**
-     * @brief 清除传输上下文
+     * @brief 娓呴櫎浼犺緭涓婁笅鏂?
      */
     void ClearTransmissionContext();
 
     /**
-     * @brief 验证发送前的条件检查
-     * @param data 要发送的数据
-     * @param isConnected 连接状态
-     * @param isTransmissionActive 传输是否激活
-     * @return SendResult 验证结果
+     * @brief 楠岃瘉鍙戦€佸墠鐨勬潯浠舵鏌?
+     * @param data 瑕佸彂閫佺殑鏁版嵁
+     * @param isConnected 杩炴帴鐘舵€?
+     * @param isTransmissionActive 浼犺緭鏄惁婵€娲?
+     * @return SendResult 楠岃瘉缁撴灉
      */
     static SendResult ValidateSendConditions(
         const std::vector<uint8_t>& data,
@@ -84,11 +84,11 @@ public:
     );
 
     /**
-     * @brief 启动可靠传输模式
-     * @param data 要发送的数据
-     * @param fileName 文件名（可选）
-     * @param reliableChannel 可靠传输通道
-     * @return 是否成功启动
+     * @brief 鍚姩鍙潬浼犺緭妯″紡
+     * @param data 瑕佸彂閫佺殑鏁版嵁
+     * @param fileName 鏂囦欢鍚嶏紙鍙€夛級
+     * @param reliableChannel 鍙潬浼犺緭閫氶亾
+     * @return 鏄惁鎴愬姛鍚姩
      */
     static bool StartReliableTransmission(
         const std::vector<uint8_t>& data,
@@ -97,27 +97,27 @@ public:
     );
 
     /**
-     * @brief 启动普通传输模式
-     * @param data 要发送的数据
-     * @return 是否成功启动
+     * @brief 鍚姩鏅€氫紶杈撴ā寮?
+     * @param data 瑕佸彂閫佺殑鏁版嵁
+     * @return 鏄惁鎴愬姛鍚姩
      */
     static bool StartNormalTransmission(
         const std::vector<uint8_t>& data
     );
 
     /**
-     * @brief 获取发送结果的用户友好描述
-     * @param result 发送结果
-     * @return 描述字符串
+     * @brief 鑾峰彇鍙戦€佺粨鏋滅殑鐢ㄦ埛鍙嬪ソ鎻忚堪
+     * @param result 鍙戦€佺粨鏋?
+     * @return 鎻忚堪瀛楃涓?
      */
     static std::wstring GetResultDescription(SendResult result);
 
     /**
-     * @brief 格式化发送操作的日志消息
-     * @param operation 操作描述
-     * @param dataSize 数据大小
-     * @param fileName 文件名（可选）
-     * @return 格式化后的日志消息
+     * @brief 鏍煎紡鍖栧彂閫佹搷浣滅殑鏃ュ織娑堟伅
+     * @param operation 鎿嶄綔鎻忚堪
+     * @param dataSize 鏁版嵁澶у皬
+     * @param fileName 鏂囦欢鍚嶏紙鍙€夛級
+     * @return 鏍煎紡鍖栧悗鐨勬棩蹇楁秷鎭?
      */
     static std::wstring FormatSendLogMessage(
         const std::wstring& operation,
@@ -126,18 +126,18 @@ public:
     );
 
 private:
-    // 🔑 YAGNI原则：仅保留必要的内部状态
+    // 馃攽 YAGNI鍘熷垯锛氫粎淇濈暀蹇呰鐨勫唴閮ㄧ姸鎬?
     bool m_hasActiveTransmission = false;
     
-    // 内部辅助方法 (SOLID-S: 单一职责的细分功能)
+    // 鍐呴儴杈呭姪鏂规硶 (SOLID-S: 鍗曚竴鑱岃矗鐨勭粏鍒嗗姛鑳?
     
     /**
-     * @brief 准备发送数据（选择输入数据或文件数据）
-     * @param inputData 输入框数据
-     * @param transmissionData 文件数据
-     * @param outData 输出数据引用
-     * @param outIsFileTransmission 输出是否为文件传输标志
-     * @return 是否成功准备数据
+     * @brief 鍑嗗鍙戦€佹暟鎹紙閫夋嫨杈撳叆鏁版嵁鎴栨枃浠舵暟鎹級
+     * @param inputData 杈撳叆妗嗘暟鎹?
+     * @param transmissionData 鏂囦欢鏁版嵁
+     * @param outData 杈撳嚭鏁版嵁寮曠敤
+     * @param outIsFileTransmission 杈撳嚭鏄惁涓烘枃浠朵紶杈撴爣蹇?
+     * @return 鏄惁鎴愬姛鍑嗗鏁版嵁
      */
     bool PrepareSendData(
         const std::vector<uint8_t>& inputData,
@@ -147,9 +147,9 @@ private:
     );
 
     /**
-     * @brief 验证可靠传输通道状态
-     * @param reliableChannel 可靠传输通道
-     * @return 通道是否可用
+     * @brief 楠岃瘉鍙潬浼犺緭閫氶亾鐘舵€?
+     * @param reliableChannel 鍙潬浼犺緭閫氶亾
+     * @return 閫氶亾鏄惁鍙敤
      */
     bool ValidateReliableChannel(std::shared_ptr<ReliableChannel> reliableChannel);
 };

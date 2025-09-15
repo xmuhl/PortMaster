@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "TransmissionController.h"
 #include "../Transport/ITransport.h"
 #include <sstream>
@@ -12,9 +12,9 @@
 #include <windows.h>
 #endif
 
-// 🔑 架构重构：TransmissionController专职管理器实现 (简化版本)
-// SOLID-S: 单一职责 - 专注传输控制和进度管理业务逻辑处理
-// KISS原则: 保持传输控制逻辑简单直观
+// 馃攽 鏋舵瀯閲嶆瀯锛歍ransmissionController涓撹亴绠＄悊鍣ㄥ疄鐜?(绠€鍖栫増鏈?
+// SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞浼犺緭鎺у埗鍜岃繘搴︾鐞嗕笟鍔￠€昏緫澶勭悊
+// KISS鍘熷垯: 淇濇寔浼犺緭鎺у埗閫昏緫绠€鍗曠洿瑙?
 
 TransmissionController::TransmissionController()
 {
@@ -23,7 +23,7 @@ TransmissionController::TransmissionController()
 
 TransmissionController::~TransmissionController()
 {
-    // 确保停止传输
+    // 纭繚鍋滄浼犺緭
     if (IsTransmissionActive())
     {
         StopTransmission(false);
@@ -34,7 +34,7 @@ bool TransmissionController::StartChunkedTransmission(
     const std::vector<uint8_t>& data, 
     size_t chunkSize)
 {
-    // SOLID-S: 单一职责 - 专注启动传输的条件检查和初始化
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鍚姩浼犺緭鐨勬潯浠舵鏌ュ拰鍒濆鍖?
     if (data.empty())
     {
         return false;
@@ -45,12 +45,12 @@ bool TransmissionController::StartChunkedTransmission(
         return false;
     }
 
-    // 初始化传输数据和参数
+    // 鍒濆鍖栦紶杈撴暟鎹拰鍙傛暟
     m_transmissionData = data;
     m_currentChunkIndex = 0;
-    m_chunkSize = std::max(size_t(1), chunkSize); // 确保块大小至少为1
+    m_chunkSize = std::max(size_t(1), chunkSize); // 纭繚鍧楀ぇ灏忚嚦灏戜负1
 
-    // 设置传输状态
+    // 璁剧疆浼犺緭鐘舵€?
     m_currentState = TransmissionControllerState::TRANSMITTING;
 
     return true;
@@ -58,23 +58,23 @@ bool TransmissionController::StartChunkedTransmission(
 
 void TransmissionController::StopTransmission(bool completed)
 {
-    // SOLID-S: 单一职责 - 专注传输停止的状态管理和清理
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞浼犺緭鍋滄鐨勭姸鎬佺鐞嗗拰娓呯悊
     
-    // 设置最终状态
+    // 璁剧疆鏈€缁堢姸鎬?
     m_currentState = completed ? 
         TransmissionControllerState::COMPLETED : TransmissionControllerState::IDLE;
 
-    // 清理传输数据 (YAGNI: 及时释放不需要的资源)
+    // 娓呯悊浼犺緭鏁版嵁 (YAGNI: 鍙婃椂閲婃斁涓嶉渶瑕佺殑璧勬簮)
     m_transmissionData.clear();
     m_currentChunkIndex = 0;
 }
 
 bool TransmissionController::PauseTransmission()
 {
-    // SOLID-S: 单一职责 - 专注暂停逻辑处理
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鏆傚仠閫昏緫澶勭悊
     if (m_currentState != TransmissionControllerState::TRANSMITTING)
     {
-        return false; // 只有传输中状态才能暂停
+        return false; // 鍙湁浼犺緭涓姸鎬佹墠鑳芥殏鍋?
     }
 
     m_currentState = TransmissionControllerState::PAUSED;
@@ -83,10 +83,10 @@ bool TransmissionController::PauseTransmission()
 
 bool TransmissionController::ResumeTransmission()
 {
-    // SOLID-S: 单一职责 - 专注恢复逻辑处理
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鎭㈠閫昏緫澶勭悊
     if (m_currentState != TransmissionControllerState::PAUSED)
     {
-        return false; // 只有暂停状态才能恢复
+        return false; // 鍙湁鏆傚仠鐘舵€佹墠鑳芥仮澶?
     }
 
     m_currentState = TransmissionControllerState::TRANSMITTING;
@@ -95,14 +95,14 @@ bool TransmissionController::ResumeTransmission()
 
 bool TransmissionController::IsTransmissionActive() const
 {
-    // SOLID-S: 单一职责 - 专注活跃状态判断逻辑
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞娲昏穬鐘舵€佸垽鏂€昏緫
     return m_currentState == TransmissionControllerState::TRANSMITTING || 
            m_currentState == TransmissionControllerState::PAUSED;
 }
 
 void TransmissionController::Reset()
 {
-    // KISS原则：简单的状态重置
+    // KISS鍘熷垯锛氱畝鍗曠殑鐘舵€侀噸缃?
     m_currentState = TransmissionControllerState::IDLE;
     m_transmissionData.clear();
     m_currentChunkIndex = 0;
@@ -110,7 +110,7 @@ void TransmissionController::Reset()
     m_totalBytesTransmitted = 0;
 }
 
-// 静态工具函数实现 (SOLID-S: 单一职责的工具方法)
+// 闈欐€佸伐鍏峰嚱鏁板疄鐜?(SOLID-S: 鍗曚竴鑱岃矗鐨勫伐鍏锋柟娉?
 
 double TransmissionController::CalculateSpeed(size_t bytes, uint32_t elapsedMs)
 {
@@ -120,7 +120,7 @@ double TransmissionController::CalculateSpeed(size_t bytes, uint32_t elapsedMs)
 
 std::wstring TransmissionController::FormatSpeed(double speedBps)
 {
-    // KISS原则：简单直观的速度格式化
+    // KISS鍘熷垯锛氱畝鍗曠洿瑙傜殑閫熷害鏍煎紡鍖?
     std::wostringstream oss;
     
     if (speedBps >= 1024 * 1024) // MB/s
@@ -144,7 +144,7 @@ std::wstring TransmissionController::FormatSpeed(double speedBps)
 
 std::wstring TransmissionController::GetStateDescription(TransmissionControllerState state)
 {
-    // SOLID-S: 单一职责 - 专注状态描述格式化
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鐘舵€佹弿杩版牸寮忓寲
     switch (state)
     {
         case TransmissionControllerState::IDLE:
@@ -164,62 +164,62 @@ std::wstring TransmissionController::GetStateDescription(TransmissionControllerS
 
 uint32_t TransmissionController::GetCurrentTimeMs() const
 {
-    // 跨平台时间获取 (SOLID-S: 单一职责的时间抽象)
+    // 璺ㄥ钩鍙版椂闂磋幏鍙?(SOLID-S: 鍗曚竴鑱岃矗鐨勬椂闂存娊璞?
 #ifdef _WIN32
     return GetTickCount();
 #else
-    return 0; // 简化实现
+    return 0; // 绠€鍖栧疄鐜?
 #endif
 }
 
-// 迁移的核心分块传输处理方法 (从PortMasterDlg::OnChunkTransmissionTimer迁移)
+// 杩佺Щ鐨勬牳蹇冨垎鍧椾紶杈撳鐞嗘柟娉?(浠嶱ortMasterDlg::OnChunkTransmissionTimer杩佺Щ)
 bool TransmissionController::ProcessChunkedTransmission(
     std::shared_ptr<class ITransport> transport,
     std::function<void()> progressCallback,
     std::function<void(const std::vector<uint8_t>&)> dataDisplayCallback,
     bool isLoopbackTest)
 {
-    // SOLID-S: 单一职责 - 专注分块传输逻辑处理
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鍒嗗潡浼犺緭閫昏緫澶勭悊
 
-    // 1. 基础状态验证
+    // 1. 鍩虹鐘舵€侀獙璇?
     if (m_currentState != TransmissionControllerState::TRANSMITTING &&
         m_currentState != TransmissionControllerState::PAUSED) {
-        return false; // 非传输状态，停止处理
+        return false; // 闈炰紶杈撶姸鎬侊紝鍋滄澶勭悊
     }
 
-    // 2. 数据有效性检查
+    // 2. 鏁版嵁鏈夋晥鎬ф鏌?
     if (m_transmissionData.empty()) {
         m_currentState = TransmissionControllerState::FAILED;
         return false;
     }
 
-    // 3. 暂停状态的智能处理
+    // 3. 鏆傚仠鐘舵€佺殑鏅鸿兘澶勭悊
     if (m_currentState == TransmissionControllerState::PAUSED) {
-        return true; // 暂停状态下保持定时器运行但不执行传输
+        return true; // 鏆傚仠鐘舵€佷笅淇濇寔瀹氭椂鍣ㄨ繍琛屼絾涓嶆墽琛屼紶杈?
     }
 
-    // 4. 传输完成检查
+    // 4. 浼犺緭瀹屾垚妫€鏌?
     if (m_currentChunkIndex >= m_transmissionData.size()) {
         m_currentState = TransmissionControllerState::COMPLETED;
-        return false; // 传输完成
+        return false; // 浼犺緭瀹屾垚
     }
 
-    // 5. 计算当前块的大小
+    // 5. 璁＄畻褰撳墠鍧楃殑澶у皬
     size_t remainingBytes = m_transmissionData.size() - m_currentChunkIndex;
     size_t currentChunkSize = std::min(m_chunkSize, remainingBytes);
 
     if (currentChunkSize == 0) {
         m_currentState = TransmissionControllerState::COMPLETED;
-        return false; // 传输完成
+        return false; // 浼犺緭瀹屾垚
     }
 
-    // 6. 提取当前数据块
+    // 6. 鎻愬彇褰撳墠鏁版嵁鍧?
     std::vector<uint8_t> currentChunk(
         m_transmissionData.begin() + m_currentChunkIndex,
         m_transmissionData.begin() + m_currentChunkIndex + currentChunkSize
     );
 
-    // 7. 执行数据传输 (SOLID-D: 依赖抽象 - 使用传输接口)
+    // 7. 鎵ц鏁版嵁浼犺緭 (SOLID-D: 渚濊禆鎶借薄 - 浣跨敤浼犺緭鎺ュ彛)
     bool transmissionSuccess = false;
     if (transport && transport->IsOpen()) {
         try {
@@ -227,37 +227,37 @@ bool TransmissionController::ProcessChunkedTransmission(
             transmissionSuccess = (written == currentChunk.size());
 
             if (transmissionSuccess) {
-                // 更新传输进度
+                // 鏇存柊浼犺緭杩涘害
                 m_currentChunkIndex += currentChunkSize;
                 m_totalBytesTransmitted += currentChunkSize;
 
-                // 调用进度更新回调
+                // 璋冪敤杩涘害鏇存柊鍥炶皟
                 if (progressCallback) {
                     progressCallback();
                 }
 
-                // 回环测试模式的数据显示
+                // 鍥炵幆娴嬭瘯妯″紡鐨勬暟鎹樉绀?
                 if (isLoopbackTest && dataDisplayCallback) {
                     dataDisplayCallback(currentChunk);
                 }
             } else {
-                // 写入失败 - 设置失败状态
+                // 鍐欏叆澶辫触 - 璁剧疆澶辫触鐘舵€?
                 m_currentState = TransmissionControllerState::FAILED;
                 return false;
             }
         }
         catch (const std::exception&) {
-            // 异常处理 - 设置失败状态
+            // 寮傚父澶勭悊 - 璁剧疆澶辫触鐘舵€?
             m_currentState = TransmissionControllerState::FAILED;
             return false;
         }
     } else {
-        // 传输通道错误 - 设置失败状态
+        // 浼犺緭閫氶亾閿欒 - 璁剧疆澶辫触鐘舵€?
         m_currentState = TransmissionControllerState::FAILED;
         return false;
     }
 
-    return true; // 继续传输
+    return true; // 缁х画浼犺緭
 }
 
 void TransmissionController::GetTransmissionProgress(
@@ -265,7 +265,7 @@ void TransmissionController::GetTransmissionProgress(
     size_t& outTransmittedBytes,
     double& outProgress) const
 {
-    // SOLID-S: 单一职责 - 专注进度信息提供
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞杩涘害淇℃伅鎻愪緵
     outTotalBytes = m_transmissionData.size();
     outTransmittedBytes = m_totalBytesTransmitted;
 

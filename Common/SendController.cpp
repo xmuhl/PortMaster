@@ -1,13 +1,13 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "SendController.h"
 #include "../Protocol/ReliableChannel.h"
 #include <sstream>
 #include <iomanip>
 
-// 🔑 架构重构：SendController专职管理器实现
-// SOLID-S: 单一职责 - 专注发送操作的业务逻辑处理
-// SOLID-L: 里氏替换 - 所有发送策略都能安全替换
-// KISS原则: 保持发送逻辑简单直观
+// 馃攽 鏋舵瀯閲嶆瀯锛歋endController涓撹亴绠＄悊鍣ㄥ疄鐜?
+// SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鍙戦€佹搷浣滅殑涓氬姟閫昏緫澶勭悊
+// SOLID-L: 閲屾皬鏇挎崲 - 鎵€鏈夊彂閫佺瓥鐣ラ兘鑳藉畨鍏ㄦ浛鎹?
+// KISS鍘熷垯: 淇濇寔鍙戦€侀€昏緫绠€鍗曠洿瑙?
 
 SendResult SendController::ExecuteSend(
     const std::vector<uint8_t>& inputData,
@@ -17,7 +17,7 @@ SendResult SendController::ExecuteSend(
     bool isReliableMode,
     std::shared_ptr<ReliableChannel> reliableChannel)
 {
-    // 1. 准备发送数据 (SOLID-S: 数据准备单一职责)
+    // 1. 鍑嗗鍙戦€佹暟鎹?(SOLID-S: 鏁版嵁鍑嗗鍗曚竴鑱岃矗)
     std::vector<uint8_t> dataToSend;
     bool isFileTransmission = false;
     
@@ -26,7 +26,7 @@ SendResult SendController::ExecuteSend(
         return SendResult::NO_DATA;
     }
 
-    // 2. 验证发送条件 (DRY原则: 统一的条件验证逻辑)
+    // 2. 楠岃瘉鍙戦€佹潯浠?(DRY鍘熷垯: 缁熶竴鐨勬潯浠堕獙璇侀€昏緫)
     SendResult validationResult = ValidateSendConditions(
         dataToSend, 
         isConnected, 
@@ -38,7 +38,7 @@ SendResult SendController::ExecuteSend(
         return validationResult;
     }
 
-    // 3. 根据模式执行发送 (SOLID-O: 开闭原则 - 可扩展发送策略)
+    // 3. 鏍规嵁妯″紡鎵ц鍙戦€?(SOLID-O: 寮€闂師鍒?- 鍙墿灞曞彂閫佺瓥鐣?
     bool transmissionStarted = false;
     
     if (isReliableMode && reliableChannel)
@@ -54,7 +54,7 @@ SendResult SendController::ExecuteSend(
         transmissionStarted = StartNormalTransmission(dataToSend);
     }
 
-    // 4. 更新内部状态并返回结果
+    // 4. 鏇存柊鍐呴儴鐘舵€佸苟杩斿洖缁撴灉
     if (transmissionStarted)
     {
         m_hasActiveTransmission = true;
@@ -68,19 +68,19 @@ SendResult SendController::ExecuteSend(
 
 bool SendController::HasResumableTransmission() const
 {
-    // YAGNI原则：目前简化实现，后续可扩展为完整的断点续传检查
+    // YAGNI鍘熷垯锛氱洰鍓嶇畝鍖栧疄鐜帮紝鍚庣画鍙墿灞曚负瀹屾暣鐨勬柇鐐圭画浼犳鏌?
     return false;
 }
 
 bool SendController::HandleResumeTransmission()
 {
-    // YAGNI原则：目前简化实现，后续可扩展为完整的断点续传处理
+    // YAGNI鍘熷垯锛氱洰鍓嶇畝鍖栧疄鐜帮紝鍚庣画鍙墿灞曚负瀹屾暣鐨勬柇鐐圭画浼犲鐞?
     return false;
 }
 
 void SendController::ClearTransmissionContext()
 {
-    // KISS原则：简单的状态清理
+    // KISS鍘熷垯锛氱畝鍗曠殑鐘舵€佹竻鐞?
     m_hasActiveTransmission = false;
 }
 
@@ -89,7 +89,7 @@ SendResult SendController::ValidateSendConditions(
     bool isConnected,
     bool isTransmissionActive)
 {
-    // SOLID-S: 单一职责 - 专注条件验证逻辑
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鏉′欢楠岃瘉閫昏緫
     if (data.empty())
     {
         return SendResult::NO_DATA;
@@ -113,13 +113,13 @@ bool SendController::StartReliableTransmission(
     const std::wstring& fileName,
     std::shared_ptr<ReliableChannel> reliableChannel)
 {
-    // SOLID-S: 单一职责 - 专注可靠传输启动逻辑
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鍙潬浼犺緭鍚姩閫昏緫
     if (!reliableChannel)
     {
         return false;
     }
 
-    // 验证可靠传输通道状态
+    // 楠岃瘉鍙潬浼犺緭閫氶亾鐘舵€?
     if (!reliableChannel->IsActive())
     {
         if (!reliableChannel->Start())
@@ -128,24 +128,24 @@ bool SendController::StartReliableTransmission(
         }
     }
 
-    // 检查通道状态
+    // 妫€鏌ラ€氶亾鐘舵€?
     ReliableState currentState = reliableChannel->GetState();
     if (currentState != RELIABLE_IDLE)
     {
         return false;
     }
 
-    // 执行发送操作
+    // 鎵ц鍙戦€佹搷浣?
     bool result = false;
     if (!fileName.empty())
     {
-        // 发送文件（带文件名）
+        // 鍙戦€佹枃浠讹紙甯︽枃浠跺悕锛?
         std::string fileNameStr(fileName.begin(), fileName.end());
         result = reliableChannel->SendFile(fileNameStr, data);
     }
     else
     {
-        // 发送数据
+        // 鍙戦€佹暟鎹?
         result = reliableChannel->SendData(data);
     }
 
@@ -154,21 +154,21 @@ bool SendController::StartReliableTransmission(
 
 bool SendController::StartNormalTransmission(const std::vector<uint8_t>& data)
 {
-    // SOLID-S: 单一职责 - 专注普通传输启动逻辑
-    // YAGNI原则：目前简化实现，后续可扩展为完整的普通传输处理
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鏅€氫紶杈撳惎鍔ㄩ€昏緫
+    // YAGNI鍘熷垯锛氱洰鍓嶇畝鍖栧疄鐜帮紝鍚庣画鍙墿灞曚负瀹屾暣鐨勬櫘閫氫紶杈撳鐞?
     
     if (data.empty())
     {
         return false;
     }
     
-    // 模拟发送成功（实际应连接到ITransport层）
+    // 妯℃嫙鍙戦€佹垚鍔燂紙瀹為檯搴旇繛鎺ュ埌ITransport灞傦級
     return true;
 }
 
 std::wstring SendController::GetResultDescription(SendResult result)
 {
-    // SOLID-S: 单一职责 - 专注结果描述格式化
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞缁撴灉鎻忚堪鏍煎紡鍖?
     switch (result)
     {
         case SendResult::SUCCESS:
@@ -191,8 +191,8 @@ std::wstring SendController::FormatSendLogMessage(
     size_t dataSize,
     const std::wstring& fileName)
 {
-    // SOLID-S: 单一职责 - 专注日志消息格式化
-    // KISS原则：简单直观的日志格式
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鏃ュ織娑堟伅鏍煎紡鍖?
+    // KISS鍘熷垯锛氱畝鍗曠洿瑙傜殑鏃ュ織鏍煎紡
     std::wostringstream oss;
     oss << operation;
     
@@ -206,7 +206,7 @@ std::wstring SendController::FormatSendLogMessage(
     return oss.str();
 }
 
-// 私有辅助方法实现
+// 绉佹湁杈呭姪鏂规硶瀹炵幇
 
 bool SendController::PrepareSendData(
     const std::vector<uint8_t>& inputData,
@@ -214,25 +214,25 @@ bool SendController::PrepareSendData(
     std::vector<uint8_t>& outData,
     bool& outIsFileTransmission)
 {
-    // SOLID-S: 单一职责 - 专注数据准备逻辑
-    // DRY原则：统一的数据优先级选择逻辑
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鏁版嵁鍑嗗閫昏緫
+    // DRY鍘熷垯锛氱粺涓€鐨勬暟鎹紭鍏堢骇閫夋嫨閫昏緫
     
     if (!transmissionData.empty())
     {
-        // 优先使用文件数据
+        // 浼樺厛浣跨敤鏂囦欢鏁版嵁
         outData = transmissionData;
         outIsFileTransmission = true;
         return true;
     }
     else if (!inputData.empty())
     {
-        // 使用输入框数据
+        // 浣跨敤杈撳叆妗嗘暟鎹?
         outData = inputData;
         outIsFileTransmission = false;
         return true;
     }
     
-    // 无可用数据
+    // 鏃犲彲鐢ㄦ暟鎹?
     outData.clear();
     outIsFileTransmission = false;
     return false;
@@ -240,7 +240,7 @@ bool SendController::PrepareSendData(
 
 bool SendController::ValidateReliableChannel(std::shared_ptr<ReliableChannel> reliableChannel)
 {
-    // SOLID-S: 单一职责 - 专注可靠传输通道验证
+    // SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞鍙潬浼犺緭閫氶亾楠岃瘉
     if (!reliableChannel)
     {
         return false;
@@ -248,11 +248,11 @@ bool SendController::ValidateReliableChannel(std::shared_ptr<ReliableChannel> re
 
     if (!reliableChannel->IsActive())
     {
-        // 尝试启动通道
+        // 灏濊瘯鍚姩閫氶亾
         return reliableChannel->Start();
     }
 
-    // 检查通道状态
+    // 妫€鏌ラ€氶亾鐘舵€?
     ReliableState currentState = reliableChannel->GetState();
     return (currentState == RELIABLE_IDLE);
 }

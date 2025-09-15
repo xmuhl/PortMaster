@@ -1,44 +1,44 @@
-#pragma once
+﻿#pragma once
 
 #include <memory>
 #include <vector>
 #include <string>
 #include <functional>
 
-// 🔑 架构重构：从PortMasterDlg提取的传输控制专职管理器
-// SOLID-S: 单一职责 - 专注传输进度控制和状态管理
-// SOLID-O: 开闭原则 - 可扩展不同的传输策略和进度算法
-// SOLID-D: 依赖倒置 - 依赖抽象接口而非具体UI实现
+// 馃攽 鏋舵瀯閲嶆瀯锛氫粠PortMasterDlg鎻愬彇鐨勪紶杈撴帶鍒朵笓鑱岀鐞嗗櫒
+// SOLID-S: 鍗曚竴鑱岃矗 - 涓撴敞浼犺緭杩涘害鎺у埗鍜岀姸鎬佺鐞?
+// SOLID-O: 寮€闂師鍒?- 鍙墿灞曚笉鍚岀殑浼犺緭绛栫暐鍜岃繘搴︾畻娉?
+// SOLID-D: 渚濊禆鍊掔疆 - 渚濊禆鎶借薄鎺ュ彛鑰岄潪鍏蜂綋UI瀹炵幇
 
-// 前置声明
+// 鍓嶇疆澹版槑
 class ITransport;
 
-// 传输状态枚举 (简化版本避免编译依赖问题)
+// 浼犺緭鐘舵€佹灇涓?(绠€鍖栫増鏈伩鍏嶇紪璇戜緷璧栭棶棰?
 enum class TransmissionControllerState : int
 {
-    IDLE = 0,           // 空闲
-    TRANSMITTING = 1,   // 传输中
-    PAUSED = 2,         // 暂停
-    COMPLETED = 3,      // 完成
-    FAILED = 4          // 失败
+    IDLE = 0,           // 绌洪棽
+    TRANSMITTING = 1,   // 浼犺緭涓?
+    PAUSED = 2,         // 鏆傚仠
+    COMPLETED = 3,      // 瀹屾垚
+    FAILED = 4          // 澶辫触
 };
 
-// 传输控制器 - 专职管理传输进度和状态控制的业务逻辑 (简化版本)
+// 浼犺緭鎺у埗鍣?- 涓撹亴绠＄悊浼犺緭杩涘害鍜岀姸鎬佹帶鍒剁殑涓氬姟閫昏緫 (绠€鍖栫増鏈?
 class TransmissionController
 {
 public:
     TransmissionController();
     ~TransmissionController();
 
-    // 禁用拷贝构造和赋值 (RAII + 单例设计)
+    // 绂佺敤鎷疯礉鏋勯€犲拰璧嬪€?(RAII + 鍗曚緥璁捐)
     TransmissionController(const TransmissionController&) = delete;
     TransmissionController& operator=(const TransmissionController&) = delete;
 
     /**
-     * @brief 启动分块传输
-     * @param data 要传输的完整数据
-     * @param chunkSize 每块大小（字节）
-     * @return 是否成功启动
+     * @brief 鍚姩鍒嗗潡浼犺緭
+     * @param data 瑕佷紶杈撶殑瀹屾暣鏁版嵁
+     * @param chunkSize 姣忓潡澶у皬锛堝瓧鑺傦級
+     * @return 鏄惁鎴愬姛鍚姩
      */
     bool StartChunkedTransmission(
         const std::vector<uint8_t>& data, 
@@ -46,67 +46,67 @@ public:
     );
 
     /**
-     * @brief 停止传输
-     * @param completed 是否为正常完成停止
+     * @brief 鍋滄浼犺緭
+     * @param completed 鏄惁涓烘甯稿畬鎴愬仠姝?
      */
     void StopTransmission(bool completed = false);
 
     /**
-     * @brief 暂停传输
-     * @return 是否成功暂停
+     * @brief 鏆傚仠浼犺緭
+     * @return 鏄惁鎴愬姛鏆傚仠
      */
     bool PauseTransmission();
 
     /**
-     * @brief 恢复传输
-     * @return 是否成功恢复
+     * @brief 鎭㈠浼犺緭
+     * @return 鏄惁鎴愬姛鎭㈠
      */
     bool ResumeTransmission();
 
     /**
-     * @brief 获取当前传输状态
+     * @brief 鑾峰彇褰撳墠浼犺緭鐘舵€?
      */
     TransmissionControllerState GetCurrentState() const { return m_currentState; }
 
     /**
-     * @brief 检查是否有活跃的传输
+     * @brief 妫€鏌ユ槸鍚︽湁娲昏穬鐨勪紶杈?
      */
     bool IsTransmissionActive() const;
 
     /**
-     * @brief 重置所有状态和数据
+     * @brief 閲嶇疆鎵€鏈夌姸鎬佸拰鏁版嵁
      */
     void Reset();
 
-    // 静态工具函数 (SOLID-S: 单一职责的工具方法)
+    // 闈欐€佸伐鍏峰嚱鏁?(SOLID-S: 鍗曚竴鑱岃矗鐨勫伐鍏锋柟娉?
 
     /**
-     * @brief 计算传输速度
-     * @param bytes 传输字节数
-     * @param elapsedMs 耗时毫秒数
-     * @return 速度 (B/s)
+     * @brief 璁＄畻浼犺緭閫熷害
+     * @param bytes 浼犺緭瀛楄妭鏁?
+     * @param elapsedMs 鑰楁椂姣鏁?
+     * @return 閫熷害 (B/s)
      */
     static double CalculateSpeed(size_t bytes, uint32_t elapsedMs);
 
     /**
-     * @brief 格式化速度显示
-     * @param speedBps 速度 (B/s)
-     * @return 格式化后的速度字符串
+     * @brief 鏍煎紡鍖栭€熷害鏄剧ず
+     * @param speedBps 閫熷害 (B/s)
+     * @return 鏍煎紡鍖栧悗鐨勯€熷害瀛楃涓?
      */
     static std::wstring FormatSpeed(double speedBps);
 
     /**
-     * @brief 获取传输状态的用户友好描述
+     * @brief 鑾峰彇浼犺緭鐘舵€佺殑鐢ㄦ埛鍙嬪ソ鎻忚堪
      */
     static std::wstring GetStateDescription(TransmissionControllerState state);
 
     /**
-     * @brief 处理定时器驱动的分块传输 (从PortMasterDlg迁移)
-     * @param transport 传输接口指针
-     * @param progressCallback 进度更新回调函数
-     * @param dataDisplayCallback 数据显示回调函数（回环测试）
-     * @param isLoopbackTest 是否为回环测试模式
-     * @return 传输处理结果：true=继续传输，false=传输完成或失败
+     * @brief 澶勭悊瀹氭椂鍣ㄩ┍鍔ㄧ殑鍒嗗潡浼犺緭 (浠嶱ortMasterDlg杩佺Щ)
+     * @param transport 浼犺緭鎺ュ彛鎸囬拡
+     * @param progressCallback 杩涘害鏇存柊鍥炶皟鍑芥暟
+     * @param dataDisplayCallback 鏁版嵁鏄剧ず鍥炶皟鍑芥暟锛堝洖鐜祴璇曪級
+     * @param isLoopbackTest 鏄惁涓哄洖鐜祴璇曟ā寮?
+     * @return 浼犺緭澶勭悊缁撴灉锛歵rue=缁х画浼犺緭锛宖alse=浼犺緭瀹屾垚鎴栧け璐?
      */
     bool ProcessChunkedTransmission(
         std::shared_ptr<class ITransport> transport,
@@ -116,27 +116,27 @@ public:
     );
 
     /**
-     * @brief 获取当前传输进度信息
-     * @param outTotalBytes 输出总字节数
-     * @param outTransmittedBytes 输出已传输字节数
-     * @param outProgress 输出进度百分比
+     * @brief 鑾峰彇褰撳墠浼犺緭杩涘害淇℃伅
+     * @param outTotalBytes 杈撳嚭鎬诲瓧鑺傛暟
+     * @param outTransmittedBytes 杈撳嚭宸蹭紶杈撳瓧鑺傛暟
+     * @param outProgress 杈撳嚭杩涘害鐧惧垎姣?
      */
     void GetTransmissionProgress(size_t& outTotalBytes, size_t& outTransmittedBytes, double& outProgress) const;
 
 private:
-    // 核心状态变量 (SOLID-S: 最小化状态复杂度)
+    // 鏍稿績鐘舵€佸彉閲?(SOLID-S: 鏈€灏忓寲鐘舵€佸鏉傚害)
     TransmissionControllerState m_currentState = TransmissionControllerState::IDLE;
     
-    // 传输数据管理
+    // 浼犺緭鏁版嵁绠＄悊
     std::vector<uint8_t> m_transmissionData;
     size_t m_currentChunkIndex = 0;
     size_t m_chunkSize = 256;
 
-    // 进度跟踪 (从PortMasterDlg迁移)
+    // 杩涘害璺熻釜 (浠嶱ortMasterDlg杩佺Щ)
     size_t m_totalBytesTransmitted = 0;
     
     /**
-     * @brief 获取当前时间戳（毫秒）
+     * @brief 鑾峰彇褰撳墠鏃堕棿鎴筹紙姣锛?
      */
     uint32_t GetCurrentTimeMs() const;
 };
