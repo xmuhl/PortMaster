@@ -8,6 +8,7 @@
 #include "Common/TempDataManager.h"
 #include "Common/ManagerIntegration.h"
 #include "Common/TransmissionController.h"
+#include "Common/StateManager.h"
 #include "Protocol/ReliableChannel.h"
 #include "Protocol/ProtocolManager.h"
 #include "Transport/LoopbackTransport.h"
@@ -95,12 +96,20 @@ struct TransmissionContext
 };
 
 // CPortMasterDlg 对话框
-class CPortMasterDlg : public CDialogEx
+class CPortMasterDlg : public CDialogEx, public IUIStateUpdater
 {
 // 构造
 public:
 	CPortMasterDlg(CWnd* pParent = nullptr);	// 标准构造函数
 	virtual ~CPortMasterDlg();					// 析构函数
+
+	// 🔑 架构重构：IUIStateUpdater接口实现 - StateManager驱动的UI状态管理
+	// SOLID-I: 接口隔离原则 - 实现UI状态更新专用接口
+	virtual void UpdateConnectionStatus(bool connected, const std::string& info = "") override;
+	virtual void UpdateTransmissionStatus(ApplicationState state, double progress = 0.0) override;
+	virtual void UpdateButtonStates(ApplicationState state) override;
+	virtual void UpdateStatusBar(const std::string& message, StatePriority priority = StatePriority::NORMAL) override;
+	virtual void ShowErrorMessage(const std::string& title, const std::string& message) override;
 
 // 对话框数据
 #ifdef AFX_DESIGN_TIME
@@ -284,7 +293,7 @@ private:
 	bool ProcessDeviceCommand(const CString& command); // 处理设备管理命令
 	void UpdateProtocolStatus(); // 更新协议状态显示
 	void ShowProtocolConfiguration(); // 显示协议配置信息
-    void UpdateButtonStates();
+    void UpdateButtonStatesLegacy();  // 🔑 架构重构：保留原有逻辑作为fallback
     void UpdateStatusBar();                    // Stage 3 新增：综合状态栏信息更新 (SOLID-S: 单一职责)
     
     // 🔑 P0-1: 安全的PostMessage封装函数 - 防止MFC断言崩溃

@@ -450,7 +450,7 @@ void CPortMasterDlg::InitializeControls()
 	
 		// 更新按钮状态
 		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 开始更新按钮状态");
-		UpdateButtonStates();
+		UpdateButtonStatesLegacy();
 		WriteDebugLog("[DEBUG] PortMasterDlg::InitializeControls: 按钮状态更新完成");
 
 		// 设置文件拖放区域提示文本
@@ -620,7 +620,7 @@ void CPortMasterDlg::UpdatePortList()
 		m_ctrlPortList.SetCurSel(0);
 }
 
-void CPortMasterDlg::UpdateButtonStates()
+void CPortMasterDlg::UpdateButtonStatesLegacy()
 {
 	// 🔑 P2-7: 异常处理和崩溃预防机制 - UI更新函数保护
 	try 
@@ -1246,7 +1246,7 @@ void CPortMasterDlg::OnBnClickedConnect()
 	if (m_reliableChannel && m_reliableChannel->Start())
 	{
 		m_bConnected = true;
-		UpdateButtonStates();
+		UpdateButtonStatesLegacy();
 		
 		// 获取传输类型和端点信息用于显示 (DRY: 复用格式化函数)
 		std::string transportTypeStr = m_transport->GetTransportType();
@@ -1513,7 +1513,7 @@ void CPortMasterDlg::OnBnClickedReliableMode()
 	// 🔑 关键修复：切换传输模式后重新配置回调函数
 	ConfigureTransportCallback();
 	
-	UpdateButtonStates();
+	UpdateButtonStatesLegacy();
 	AppendLog(m_bReliableMode ? L"启用可靠传输模式" : L"禁用可靠传输模式");
 }
 
@@ -1612,7 +1612,7 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 						MB_ICONINFORMATION);
 					
 					// 更新按钮状态
-					UpdateButtonStates();
+					UpdateButtonStatesLegacy();
 					WriteDebugLog("[SUCCESS] OnDropFiles: 文件加载成功");
 				} else {
 					ShowUserMessage(L"文件加载失败", L"无法读取文件内容，请检查文件是否损坏或权限不足", MB_ICONERROR);
@@ -1644,7 +1644,7 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 				// 尝试加载文件
 				if (LoadFileForTransmission(filePath)) {
 					ShowUserMessage(L"文件加载成功", L"文件已加载", MB_ICONINFORMATION);
-					UpdateButtonStates();
+					UpdateButtonStatesLegacy();
 				} else {
 					ShowUserMessage(L"文件加载失败", L"无法加载文件", MB_ICONERROR);
 				}
@@ -2032,7 +2032,7 @@ void CPortMasterDlg::OnBnClickedClearDisplay()
 	}
 	
 	AppendLog(L"显示区域已清空（通过管理器）");
-	UpdateButtonStates(); // 更新保存按钮状态
+	UpdateButtonStatesLegacy(); // 更新保存按钮状态
 }
 
 void CPortMasterDlg::OnBnClickedLoadFile()
@@ -2047,7 +2047,7 @@ void CPortMasterDlg::OnBnClickedLoadFile()
 		if (LoadFileForTransmission(filePath))
 		{
 			ShowUserMessage(L"文件加载成功", L"文件已加载并准备传输", MB_ICONINFORMATION);
-			UpdateButtonStates();
+			UpdateButtonStatesLegacy();
 		}
 		else
 		{
@@ -2256,7 +2256,7 @@ void CPortMasterDlg::DisplayReceivedData(const std::vector<uint8_t>& data)
 		
 		// 🔑 架构优势：滚动由DataDisplayManager内部处理
 		// 更新按钮状态
-		UpdateButtonStates();
+		UpdateButtonStatesLegacy();
 		
 		WriteDebugLog("[INFO] DisplayReceivedData: 数据显示已更新（通过管理器）");
 		
@@ -2456,7 +2456,7 @@ void CPortMasterDlg::StartDataTransmission(const std::vector<uint8_t>& data)
 	m_lastSpeedUpdateTime = m_transmissionStartTime;
 	
 	// 更新UI状态 (SOLID-S: 单一职责 - UI状态管理)
-	UpdateButtonStates();
+	UpdateButtonStatesLegacy();
 	
 	// 设置进度条 (SOLID-S: 修复大文件传输时的范围溢出问题)
 	if (::IsWindow(m_ctrlProgress.m_hWnd)) {
@@ -3142,7 +3142,7 @@ void CPortMasterDlg::StopDataTransmission(bool completed)
 	}
 	
 	// 更新UI状态
-	UpdateButtonStates();
+	UpdateButtonStatesLegacy();
 	
 	// 完成进度条
 	if (::IsWindow(m_ctrlProgress.m_hWnd) && completed) {
@@ -3237,7 +3237,7 @@ void CPortMasterDlg::DisplayReceivedDataChunk(const std::vector<uint8_t>& chunk)
 		
 		// 🔑 架构优势：格式化和滚动由DataDisplayManager内部处理
 		// 更新按钮状态
-		UpdateButtonStates();
+		UpdateButtonStatesLegacy();
 		
 		WriteDebugLog("[INFO] DisplayReceivedDataChunk: 数据块显示已追加（通过管理器）");
 		
@@ -3305,7 +3305,7 @@ LRESULT CPortMasterDlg::OnUpdateCompletion(WPARAM wParam, LPARAM lParam)
 	// 🔑 关键修复：传输完成后必须更新按钮状态
 	// 确保"发送"按钮从"停止"状态恢复到正常的"发送"状态
 	// 此时ReliableChannel状态已重置，UpdateButtonStates能获取到正确状态
-	UpdateButtonStates();
+	UpdateButtonStatesLegacy();
 	
 	return 0;
 }
@@ -3398,7 +3398,7 @@ LRESULT CPortMasterDlg::OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam)
 		ScrollToBottom();
 		
 		// 🔑 优化5：状态同步更新
-		UpdateButtonStates();
+		UpdateButtonStatesLegacy();
 		UpdateStatusBar(); // 确保状态栏显示最新信息
 		
 		// 🔑 优化6：安全内存清理
@@ -3552,7 +3552,7 @@ void CPortMasterDlg::SetTransmissionState(TransmissionState newState)
 	m_transmissionState = newState;
 	
 	// 根据状态更新UI
-	UpdateButtonStates();
+	UpdateButtonStatesLegacy();
 	
 	// 同步旧的原子变量状态 (向后兼容)
 	m_bTransmitting = (newState == TransmissionState::TRANSMITTING);
@@ -3819,7 +3819,7 @@ void CPortMasterDlg::OnBnClickedStop()
 	}
 	
 	// 立即更新按钮状态
-	UpdateButtonStates();
+	UpdateButtonStatesLegacy();
 }
 
 // 🔑 P0-1: 安全的PostMessage封装函数 - 防止MFC断言崩溃
@@ -3876,5 +3876,232 @@ bool CPortMasterDlg::SafePostMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	{
 		WriteDebugLog(CT2A(L"[CRITICAL] SafePostMessage未知异常"));
 		return false;
+	}
+}
+
+// ============================================================================
+// 🔑 架构重构：IUIStateUpdater接口实现 - StateManager驱动的UI状态管理
+// SOLID-S: 单一职责原则 - 专门处理UI状态更新
+// SOLID-I: 接口隔离原则 - 分离UI状态管理职责
+// ============================================================================
+
+void CPortMasterDlg::UpdateConnectionStatus(bool connected, const std::string& info)
+{
+	// SOLID-S: 单一职责 - 专注连接状态UI更新
+	try
+	{
+		if (!IsWindow(m_ctrlConnectBtn.GetSafeHwnd()))
+			return;
+
+		m_bConnected = connected;
+		m_ctrlConnectBtn.EnableWindow(!connected);
+		m_ctrlDisconnectBtn.EnableWindow(connected);
+
+		// 更新连接状态指示
+		CString statusText = connected ? L"● 已连接" : L"○ 未连接";
+		if (!info.empty()) {
+			statusText += L" - " + CString(info.c_str());
+		}
+
+		WriteDebugLog(("[INFO] UpdateConnectionStatus: " + std::string(connected ? "已连接" : "未连接")).c_str());
+	}
+	catch (const std::exception& e)
+	{
+		WriteDebugLog(("[ERROR] UpdateConnectionStatus异常: " + std::string(e.what())).c_str());
+	}
+}
+
+void CPortMasterDlg::UpdateTransmissionStatus(ApplicationState state, double progress)
+{
+	// SOLID-S: 单一职责 - 专注传输状态UI更新
+	try
+	{
+		// 根据ApplicationState更新传输状态
+		switch (state)
+		{
+		case ApplicationState::TRANSMITTING:
+			m_bTransmitting = true;
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(static_cast<int>(progress));
+			}
+			break;
+		case ApplicationState::PAUSED:
+			// 保持传输状态，但暂停进度更新
+			break;
+		case ApplicationState::READY:
+		case ApplicationState::CONNECTED:
+			m_bTransmitting = false;
+			if (IsWindow(m_ctrlProgress.GetSafeHwnd())) {
+				m_ctrlProgress.SetPos(0);
+			}
+			break;
+		default:
+			m_bTransmitting = false;
+			break;
+		}
+
+		WriteDebugLog("[INFO] UpdateTransmissionStatus: 状态已更新");
+	}
+	catch (const std::exception& e)
+	{
+		WriteDebugLog("[ERROR] UpdateTransmissionStatus异常");
+	}
+}
+
+void CPortMasterDlg::UpdateButtonStates(ApplicationState state)
+{
+	// 🔑 架构重构：新的UpdateButtonStates实现 - 基于ApplicationState的状态驱动
+	// SOLID-S: 单一职责 - 专注按钮状态管理，委托给StateManager架构
+	try
+	{
+		// 基础安全检查
+		if (!IsWindow(m_ctrlConnectBtn.GetSafeHwnd()))
+			return;
+
+		// 根据ApplicationState设置按钮状态
+		switch (state)
+		{
+		case ApplicationState::READY:
+		case ApplicationState::INITIALIZING:
+			// 就绪状态：连接可用，其他按钮根据数据可用性决定
+			m_ctrlConnectBtn.EnableWindow(TRUE);
+			m_ctrlDisconnectBtn.EnableWindow(FALSE);
+			m_ctrlSendBtn.EnableWindow(FALSE);
+			m_ctrlStopBtn.EnableWindow(FALSE);
+			if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
+				m_ctrlSendBtn.SetWindowText(L"发送");
+			break;
+
+		case ApplicationState::CONNECTED:
+			// 已连接状态：可以发送数据
+			m_ctrlConnectBtn.EnableWindow(FALSE);
+			m_ctrlDisconnectBtn.EnableWindow(TRUE);
+			m_ctrlSendBtn.EnableWindow(HasValidInputData());
+			m_ctrlStopBtn.EnableWindow(FALSE);
+			if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
+				m_ctrlSendBtn.SetWindowText(L"发送");
+			break;
+
+		case ApplicationState::TRANSMITTING:
+			// 传输中状态：可以停止传输
+			m_ctrlConnectBtn.EnableWindow(FALSE);
+			m_ctrlDisconnectBtn.EnableWindow(FALSE);
+			m_ctrlSendBtn.EnableWindow(TRUE);
+			m_ctrlStopBtn.EnableWindow(TRUE);
+			if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
+				m_ctrlSendBtn.SetWindowText(L"停止");
+			if (IsWindow(m_ctrlStopBtn.GetSafeHwnd()))
+				m_ctrlStopBtn.SetWindowText(L"暂停");
+			break;
+
+		case ApplicationState::PAUSED:
+			// 暂停状态：可以继续或停止
+			m_ctrlConnectBtn.EnableWindow(FALSE);
+			m_ctrlDisconnectBtn.EnableWindow(FALSE);
+			m_ctrlSendBtn.EnableWindow(TRUE);
+			m_ctrlStopBtn.EnableWindow(TRUE);
+			if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
+				m_ctrlSendBtn.SetWindowText(L"继续");
+			if (IsWindow(m_ctrlStopBtn.GetSafeHwnd()))
+				m_ctrlStopBtn.SetWindowText(L"停止");
+			break;
+
+		case ApplicationState::APP_ERROR:
+			// 错误状态：只允许重新连接
+			m_ctrlConnectBtn.EnableWindow(TRUE);
+			m_ctrlDisconnectBtn.EnableWindow(FALSE);
+			m_ctrlSendBtn.EnableWindow(FALSE);
+			m_ctrlStopBtn.EnableWindow(FALSE);
+			if (IsWindow(m_ctrlSendBtn.GetSafeHwnd()))
+				m_ctrlSendBtn.SetWindowText(L"重试");
+			break;
+
+		default:
+			// 默认状态处理
+			UpdateButtonStatesLegacy(); // 回退到原有逻辑
+			return;
+		}
+
+		// 文件操作按钮状态（与传输状态相关）
+		bool isTransmissionActive = (state == ApplicationState::TRANSMITTING || state == ApplicationState::PAUSED);
+		if (IsWindow(m_ctrlLoadFileBtn.GetSafeHwnd()))
+			m_ctrlLoadFileBtn.EnableWindow(!isTransmissionActive);
+
+		// 数据相关按钮状态
+		bool hasDisplayData = !m_displayedData.empty();
+		if (IsWindow(m_ctrlSaveFileBtn.GetSafeHwnd()))
+			m_ctrlSaveFileBtn.EnableWindow(hasDisplayData);
+		if (IsWindow(m_ctrlCopyBtn.GetSafeHwnd()))
+			m_ctrlCopyBtn.EnableWindow(hasDisplayData);
+
+		// 清除按钮始终可用
+		if (IsWindow(m_ctrlClearInputBtn.GetSafeHwnd()))
+			m_ctrlClearInputBtn.EnableWindow(TRUE);
+		if (IsWindow(m_ctrlClearDisplayBtn.GetSafeHwnd()))
+			m_ctrlClearDisplayBtn.EnableWindow(TRUE);
+
+		WriteDebugLog("[INFO] 操作完成");;
+	}
+	catch (const std::exception& e)
+	{
+		WriteDebugLog("[INFO] 操作完成");;
+		// 异常时回退到原有逻辑
+		UpdateButtonStatesLegacy();
+	}
+}
+
+void CPortMasterDlg::UpdateStatusBar(const std::string& message, StatePriority priority)
+{
+	// SOLID-S: 单一职责 - 专注状态栏更新
+	try
+	{
+		if (message.empty())
+			return;
+
+		CString statusMsg(message.c_str());
+
+		// 根据优先级设置不同的显示样式
+		switch (priority)
+		{
+		case StatePriority::CRITICAL:
+			statusMsg = L"[严重] " + statusMsg;
+			break;
+		case StatePriority::HIGH:
+			statusMsg = L"[重要] " + statusMsg;
+			break;
+		case StatePriority::LOW:
+			statusMsg = L"[提示] " + statusMsg;
+			break;
+		default:
+			break;
+		}
+
+		// 使用现有的状态显示机制
+		UpdateStatusDisplay(statusMsg, L"", L"", L"", StatusPriority::NORMAL);
+
+		WriteDebugLog("[INFO] 操作完成");;
+	}
+	catch (const std::exception& e)
+	{
+		WriteDebugLog("[INFO] 操作完成");;
+	}
+}
+
+void CPortMasterDlg::ShowErrorMessage(const std::string& title, const std::string& message)
+{
+	// SOLID-S: 单一职责 - 专注错误消息显示
+	try
+	{
+		CString titleStr(title.c_str());
+		CString messageStr(message.c_str());
+
+		// 使用现有的错误显示机制
+		ShowUserMessage(titleStr, messageStr, MB_ICONERROR);
+
+		WriteDebugLog("[INFO] 操作完成");;
+	}
+	catch (const std::exception& e)
+	{
+		WriteDebugLog("[INFO] 操作完成");;
 	}
 }
