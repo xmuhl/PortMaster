@@ -1,8 +1,11 @@
 #include "pch.h"
 #include "TransmissionController.h"
+#include "../Transport/ITransport.h"
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <functional>
+#include <memory>
 
 // Windows-specific includes for time functions
 #ifdef _WIN32
@@ -104,6 +107,7 @@ void TransmissionController::Reset()
     m_transmissionData.clear();
     m_currentChunkIndex = 0;
     m_chunkSize = 256;
+    m_totalBytesTransmitted = 0;
 }
 
 // 静态工具函数实现 (SOLID-S: 单一职责的工具方法)
@@ -166,4 +170,108 @@ uint32_t TransmissionController::GetCurrentTimeMs() const
 #else
     return 0; // 简化实现
 #endif
+}
+
+// 迁移的核心分块传输处理方法 (从PortMasterDlg::OnChunkTransmissionTimer迁移)
+bool TransmissionController::ProcessChunkedTransmission(
+    std::shared_ptr<class ITransport> transport,
+    std::function<void()> progressCallback,
+    std::function<void(const std::vector<uint8_t>&)> dataDisplayCallback,
+    bool isLoopbackTest)
+{
+    // SOLID-S: 单一职责 - 专注分块传输逻辑处理
+
+    // 1. 基础状态验证
+    if (m_currentState != TransmissionControllerState::TRANSMITTING &&
+        m_currentState != TransmissionControllerState::PAUSED) {
+        return false; // 非传输状态，停止处理
+    }
+
+    // 2. 数据有效性检查
+    if (m_transmissionData.empty()) {
+        m_currentState = TransmissionControllerState::FAILED;
+        return false;
+    }
+
+    // 3. 暂停状态的智能处理
+    if (m_currentState == TransmissionControllerState::PAUSED) {
+        return true; // 暂停状态下保持定时器运行但不执行传输
+    }
+
+    // 4. 传输完成检查
+    if (m_currentChunkIndex >= m_transmissionData.size()) {
+        m_currentState = TransmissionControllerState::COMPLETED;
+        return false; // 传输完成
+    }
+
+    // 5. 计算当前块的大小
+    size_t remainingBytes = m_transmissionData.size() - m_currentChunkIndex;
+    size_t currentChunkSize = std::min(m_chunkSize, remainingBytes);
+
+    if (currentChunkSize == 0) {
+        m_currentState = TransmissionControllerState::COMPLETED;
+        return false; // 传输完成
+    }
+
+    // 6. 提取当前数据块
+    std::vector<uint8_t> currentChunk(
+        m_transmissionData.begin() + m_currentChunkIndex,
+        m_transmissionData.begin() + m_currentChunkIndex + currentChunkSize
+    );
+
+    // 7. 执行数据传输 (SOLID-D: 依赖抽象 - 使用传输接口)
+    bool transmissionSuccess = false;
+    if (transport && transport->IsOpen()) {
+        try {
+            size_t written = transport->Write(currentChunk);
+            transmissionSuccess = (written == currentChunk.size());
+
+            if (transmissionSuccess) {
+                // 更新传输进度
+                m_currentChunkIndex += currentChunkSize;
+                m_totalBytesTransmitted += currentChunkSize;
+
+                // 调用进度更新回调
+                if (progressCallback) {
+                    progressCallback();
+                }
+
+                // 回环测试模式的数据显示
+                if (isLoopbackTest && dataDisplayCallback) {
+                    dataDisplayCallback(currentChunk);
+                }
+            } else {
+                // 写入失败 - 设置失败状态
+                m_currentState = TransmissionControllerState::FAILED;
+                return false;
+            }
+        }
+        catch (const std::exception&) {
+            // 异常处理 - 设置失败状态
+            m_currentState = TransmissionControllerState::FAILED;
+            return false;
+        }
+    } else {
+        // 传输通道错误 - 设置失败状态
+        m_currentState = TransmissionControllerState::FAILED;
+        return false;
+    }
+
+    return true; // 继续传输
+}
+
+void TransmissionController::GetTransmissionProgress(
+    size_t& outTotalBytes,
+    size_t& outTransmittedBytes,
+    double& outProgress) const
+{
+    // SOLID-S: 单一职责 - 专注进度信息提供
+    outTotalBytes = m_transmissionData.size();
+    outTransmittedBytes = m_totalBytesTransmitted;
+
+    if (outTotalBytes > 0) {
+        outProgress = (double)(m_currentChunkIndex * 100) / outTotalBytes;
+    } else {
+        outProgress = 0.0;
+    }
 }

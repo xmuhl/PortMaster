@@ -230,6 +230,7 @@
     <ClInclude Include="Common\AsyncMessageManager.h" />
     <ClInclude Include="Common\DataDisplayManager.h" />
     <ClInclude Include="Common\StateManager.h" />
+    <ClInclude Include="Common\TransmissionController.h" />
     <ClInclude Include="Common\TransportManager.h" />
     <ClInclude Include="Common\ManagerIntegration.h" />
     <ClInclude Include="Common\TransportFactory.h" />
@@ -267,6 +268,7 @@
     <ClCompile Include="Common\TempDataManager.cpp" />
     <ClCompile Include="Common\DataDisplayManager.cpp" />
     <ClCompile Include="Common\StateManager.cpp" />
+    <ClCompile Include="Common\TransmissionController.cpp" />
     <ClCompile Include="Common\TransportManager.cpp" />
     <ClCompile Include="Common\ManagerIntegration.cpp" />
     <ClCompile Include="Common\TransportFactory.cpp" />

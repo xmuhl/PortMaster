@@ -241,6 +241,12 @@ BOOL CPortMasterDlg::OnInitDialog()
 	
 	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 步骤2 - 开始初始化复杂对象");
 	try {
+		// 🔑 架构重构：第二阶段 - 初始化专职管理器
+		if (!m_transmissionController) {
+			m_transmissionController = std::make_unique<TransmissionController>();
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: TransmissionController初始化完成");
+		}
+
 		// 现在在控件已经正确绑定后初始化复杂对象
 		InitializeTransportObjects();
 		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 复杂对象初始化完成");
@@ -3045,143 +3051,77 @@ void CPortMasterDlg::ScrollToBottom()
 // 第四阶段核心：分块传输定时器处理 (SOLID-S: 单一职责 - 分块数据传输)
 void CPortMasterDlg::OnChunkTransmissionTimer()
 {
-	// 🔑 Task 3.3 增强：定时器有效性验证（防止重复调用）
+	// 🔑 架构重构：第二阶段 - 传输控制逻辑迁移到TransmissionController
+	// SOLID-S: 单一职责 - 主对话框仅负责UI事件委托，传输逻辑由专职管理器处理
+
+	// 定时器有效性验证
 	if (m_transmissionTimer == 0) {
-		// 定时器已被外部停止，立即退出
 		return;
 	}
-	
-	// 🔑 Task 3.3 增强：线程安全的状态检查（添加中断信号检查）
-	TransmissionState currentState = GetTransmissionState();
-	
-	// 🔑 Task 3.3 增强：优先检查中断信号
-	if (currentState == TransmissionState::IDLE || 
-		currentState == TransmissionState::COMPLETED || 
-		currentState == TransmissionState::FAILED) {
-		// 检测到中断信号，安全停止传输
-		AppendLog(L"检测到中断信号，停止传输定时器");
+
+	// 确保TransmissionController已初始化
+	if (!m_transmissionController) {
+		AppendLog(L"错误：传输控制器未初始化");
 		if (m_transmissionTimer != 0) {
 			KillTimer(m_transmissionTimer);
 			m_transmissionTimer = 0;
 		}
 		return;
 	}
-	
-	// 🔑 Task 3.3 增强：数据有效性检查（安全的传输状态转换）
-	if (m_chunkTransmissionData.empty()) {
-		AppendLog(L"传输数据为空，安全停止传输");
-		SetTransmissionState(TransmissionState::FAILED);
-		StopDataTransmission(false);
-		return;
-	}
-	
-	// 🔑 Task 3.3 增强：暂停状态的智能处理
-	if (currentState == TransmissionState::PAUSED) {
-		// 暂停状态下保持定时器运行但不执行传输，等待恢复信号
-		return;
-	}
-	
-	// 🔑 Task 3.3 增强：仅在TRANSMITTING状态下执行传输
-	if (currentState != TransmissionState::TRANSMITTING) {
-		// 未知状态，安全转换为失败状态
-		CString statusMsg;
-		statusMsg.Format(L"传输状态异常 (%d)，停止传输", static_cast<int>(currentState));
-		AppendLog(statusMsg);
-		SetTransmissionState(TransmissionState::FAILED);
-		StopDataTransmission(false);
-		return;
-	}
-	
-	// 🔑 Task 3.3 增强：安全的数据块计算
-	if (m_chunkTransmissionIndex >= m_chunkTransmissionData.size()) {
-		// 传输已完成，执行安全的状态转换
-		AppendLog(L"数据传输完成，执行完成状态转换");
-		StopDataTransmission(true);
-		return;
-	}
-	
-	// 计算当前块的大小
-	size_t remainingBytes = m_chunkTransmissionData.size() - m_chunkTransmissionIndex;
-	size_t currentChunkSize = std::min(m_chunkSize, remainingBytes);
-	
-	if (currentChunkSize == 0) {
-		// 传输已完成
-		AppendLog(L"当前数据块大小为0，传输完成");
-		StopDataTransmission(true);
-		return;
-	}
-	
-	// 🔑 Task 3.3 增强：传输前的最终中断检查
-	currentState = GetTransmissionState();
-	if (currentState != TransmissionState::TRANSMITTING) {
-		AppendLog(L"传输前检测到状态变更，取消当前传输");
-		return;
-	}
-	
-	// 提取当前数据块
-	std::vector<uint8_t> currentChunk(
-		m_chunkTransmissionData.begin() + m_chunkTransmissionIndex,
-		m_chunkTransmissionData.begin() + m_chunkTransmissionIndex + currentChunkSize
+
+	// 委托给TransmissionController处理分块传输逻辑
+	bool shouldContinue = m_transmissionController->ProcessChunkedTransmission(
+		m_transport,
+		[this]() {
+			// 进度更新回调
+			UpdateTransmissionProgress();
+		},
+		[this](const std::vector<uint8_t>& chunk) {
+			// 数据显示回调（回环测试）
+			DisplayReceivedDataChunk(chunk);
+		},
+		(m_ctrlPortType.GetCurSel() == 6) // 是否为回环测试模式
 	);
-	
-	// 🔑 Task 3.3 增强：安全的数据传输执行 (SOLID-D: 依赖抽象 - 使用传输接口)
-	bool transmissionSuccess = false;
-	if (m_transport && m_transport->IsOpen()) {
-		try {
-			size_t written = m_transport->Write(currentChunk);
-			transmissionSuccess = (written == currentChunk.size());
-			
-			// 🔑 Task 3.3 增强：传输后立即检查中断信号
-			currentState = GetTransmissionState();
-			if (currentState != TransmissionState::TRANSMITTING) {
-				AppendLog(L"传输后检测到中断信号，停止后续处理");
-				return;
-			}
-			
-			if (transmissionSuccess) {
-				// 更新传输进度
-				m_chunkTransmissionIndex += currentChunkSize;
-				m_totalBytesTransmitted += currentChunkSize;
-				
-				// 实时UI状态更新 (SOLID-S: 单一职责 - UI状态反馈)
-				UpdateTransmissionProgress();
-				
-				// 显示传输的数据块到接收区域（用于回环测试模式）
-				// 🔑 架构重构：内联简单函数，减少函数调用开销
-				if (m_ctrlPortType.GetCurSel() == 6) { // 6 = 回环测试
-					DisplayReceivedDataChunk(currentChunk);
-				}
-				
-				// 调试日志
-				CString debugMsg;
-				debugMsg.Format(L"已发送数据块: %zu 字节, 进度: %.1f%%", 
-					currentChunkSize, 
-					(double)(m_chunkTransmissionIndex * 100) / m_chunkTransmissionData.size());
-				AppendLog(debugMsg);
-			}
-			else {
-				// 写入失败 - 安全的错误状态转换
-				CString errorMsg;
-				errorMsg.Format(L"数据块传输失败: 预期 %zu 字节, 实际 %zu 字节", 
-					currentChunkSize, written);
-				AppendLog(errorMsg);
+
+	// 根据处理结果决定是否停止定时器
+	if (!shouldContinue) {
+		// 传输完成或失败，停止定时器并更新状态
+		if (m_transmissionTimer != 0) {
+			KillTimer(m_transmissionTimer);
+			m_transmissionTimer = 0;
+		}
+
+		// 根据TransmissionController的状态更新UI状态
+		TransmissionControllerState controllerState = m_transmissionController->GetCurrentState();
+		switch (controllerState) {
+			case TransmissionControllerState::COMPLETED:
+				SetTransmissionState(TransmissionState::COMPLETED);
+				AppendLog(L"数据传输完成");
+				break;
+			case TransmissionControllerState::FAILED:
 				SetTransmissionState(TransmissionState::FAILED);
-				StopDataTransmission(false);
-			}
+				AppendLog(L"数据传输失败");
+				break;
+			default:
+				SetTransmissionState(TransmissionState::IDLE);
+				break;
 		}
-		catch (const std::exception& e) {
-			// 🔑 Task 3.3 增强：异常处理中的安全状态转换
-			CString errorMsg = CA2W(e.what(), CP_UTF8);
-			AppendLog(L"传输异常: " + errorMsg);
-			SetTransmissionState(TransmissionState::FAILED);
-			StopDataTransmission(false);
-		}
+
+		// 同步进度显示
+		UpdateTransmissionProgress();
 	}
 	else {
-		// 🔑 Task 3.3 增强：传输通道错误的安全处理
-		AppendLog(L"错误：传输通道未开启，执行安全停止");
-		SetTransmissionState(TransmissionState::FAILED);
-		StopDataTransmission(false);
+		// 传输继续，显示进度信息
+		size_t totalBytes, transmittedBytes;
+		double progress;
+		m_transmissionController->GetTransmissionProgress(totalBytes, transmittedBytes, progress);
+
+		if (totalBytes > 0) {
+			CString debugMsg;
+			debugMsg.Format(L"传输进度: %.1f%% (%zu/%zu 字节)",
+				progress, transmittedBytes, totalBytes);
+			AppendLog(debugMsg);
+		}
 	}
 }
 

@@ -10,6 +10,9 @@
 // SOLID-O: 开闭原则 - 可扩展不同的传输策略和进度算法
 // SOLID-D: 依赖倒置 - 依赖抽象接口而非具体UI实现
 
+// 前置声明
+class ITransport;
+
 // 传输状态枚举 (简化版本避免编译依赖问题)
 enum class TransmissionControllerState : int
 {
@@ -97,6 +100,29 @@ public:
      */
     static std::wstring GetStateDescription(TransmissionControllerState state);
 
+    /**
+     * @brief 处理定时器驱动的分块传输 (从PortMasterDlg迁移)
+     * @param transport 传输接口指针
+     * @param progressCallback 进度更新回调函数
+     * @param dataDisplayCallback 数据显示回调函数（回环测试）
+     * @param isLoopbackTest 是否为回环测试模式
+     * @return 传输处理结果：true=继续传输，false=传输完成或失败
+     */
+    bool ProcessChunkedTransmission(
+        std::shared_ptr<class ITransport> transport,
+        std::function<void()> progressCallback = nullptr,
+        std::function<void(const std::vector<uint8_t>&)> dataDisplayCallback = nullptr,
+        bool isLoopbackTest = false
+    );
+
+    /**
+     * @brief 获取当前传输进度信息
+     * @param outTotalBytes 输出总字节数
+     * @param outTransmittedBytes 输出已传输字节数
+     * @param outProgress 输出进度百分比
+     */
+    void GetTransmissionProgress(size_t& outTotalBytes, size_t& outTransmittedBytes, double& outProgress) const;
+
 private:
     // 核心状态变量 (SOLID-S: 最小化状态复杂度)
     TransmissionControllerState m_currentState = TransmissionControllerState::IDLE;
@@ -105,6 +131,9 @@ private:
     std::vector<uint8_t> m_transmissionData;
     size_t m_currentChunkIndex = 0;
     size_t m_chunkSize = 256;
+
+    // 进度跟踪 (从PortMasterDlg迁移)
+    size_t m_totalBytesTransmitted = 0;
     
     /**
      * @brief 获取当前时间戳（毫秒）

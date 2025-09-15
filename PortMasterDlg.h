@@ -7,6 +7,7 @@
 #include "Common/DeviceManager.h"
 #include "Common/TempDataManager.h"
 #include "Common/ManagerIntegration.h"
+#include "Common/TransmissionController.h"
 #include "Protocol/ReliableChannel.h"
 #include "Protocol/ProtocolManager.h"
 #include "Transport/LoopbackTransport.h"
@@ -203,6 +204,7 @@ private:
 	
 	// 🔑 架构重构：专职管理器集成器
 	std::unique_ptr<ManagerIntegration> m_managerIntegration;  // 管理器集成器
+	std::unique_ptr<TransmissionController> m_transmissionController; // 传输控制管理器
 	
 	// 可靠传输
 	std::shared_ptr<ITransport> m_transport;
