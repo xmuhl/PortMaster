@@ -6,9 +6,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Primary Build Process
 
-- **Build command**: `autobuild.bat` - Automatically detects VS2022 installation, builds all configurations (Win32/x64, Debug/Release) with zero errors and zero warnings enforcement
+- **Primary build command**: `autobuild_x86_debug.bat` - Optimized for Win32 Debug configuration with zero errors and zero warnings enforcement
+- **Fallback build command**: `autobuild.bat` - Full configuration build (Win32/x64, Debug/Release) when primary script is unavailable
 - **Build requirements**: Visual Studio 2022 (Community/Professional/Enterprise) with v143 toolset
 - **Build outputs**: Static-linked MFC application, single EXE deployment target
+- **Script priority**: Always use `autobuild_x86_debug.bat` first, fallback to `autobuild.bat` if not found
 
 ### Build Verification
 

@@ -207,27 +207,62 @@ BOOL CPortMasterApp::InitInstance()
 		pSplash->SetInitializationProgress(L"加载完成，正在启动...");
 		pSplash->NotifyInitializationComplete();
 		
-		// ⭐ 修复：等待启动画面自动关闭 - 添加超时机制防止死锁
+		// ⭐ 新增：立即检查启动画面是否响应
+		Sleep(500); // 给启动画面500ms时间响应
+		if (pSplash && pSplash->GetSafeHwnd() && IsWindow(pSplash->GetSafeHwnd())) {
+			// 发送测试消息检查响应性
+			DWORD_PTR dwResult = 0;
+			LRESULT result = ::SendMessageTimeoutW(pSplash->GetSafeHwnd(), WM_NULL, 0, 0, SMTO_NORMAL, 1000, &dwResult);
+			if (result == 0) {
+				WriteDebugLog("[WARNING] InitInstance: 启动画面无响应，直接关闭");
+				try {
+					pSplash->DestroyWindow();
+				} catch (...) {
+					WriteDebugLog("[ERROR] InitInstance: 销毁无响应启动画面时异常");
+				}
+			}
+		}
+		
+		// ⭐ 修复：等待启动画面自动关闭 - 增强超时机制防止死锁
 		WriteDebugLog("[DEBUG] InitInstance: 等待启动画面关闭");
 		DWORD dwWaitStart = GetTickCount();
-		const DWORD MAX_WAIT_TIME = 10000; // 最大等待10秒
+		const DWORD MAX_WAIT_TIME = 3000; // 缩短等待时间到3秒
+		int waitCount = 0;
 		
 		while (pSplash && pSplash->GetSafeHwnd() && IsWindow(pSplash->GetSafeHwnd())) {
-			if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+			// 处理消息队列
+			MSG msg;
+			while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
 				TranslateMessage(&msg);
 				DispatchMessage(&msg);
 			}
-			Sleep(10);
 			
-			// ⭐ 新增：超时机制防止死锁
+			// 检查超时
 			DWORD dwElapsed = GetTickCount() - dwWaitStart;
 			if (dwElapsed > MAX_WAIT_TIME) {
 				WriteDebugLog("[WARNING] InitInstance: 启动画面等待超时，强制关闭");
-				if (pSplash && pSplash->GetSafeHwnd()) {
-					pSplash->DestroyWindow(); // 强制关闭
+				try {
+					if (pSplash && pSplash->GetSafeHwnd()) {
+						pSplash->SendMessage(WM_CLOSE); // 先尝试正常关闭
+						Sleep(100);
+						if (IsWindow(pSplash->GetSafeHwnd())) {
+							pSplash->DestroyWindow(); // 强制关闭
+						}
+					}
+				} catch (...) {
+					WriteDebugLog("[ERROR] InitInstance: 强制关闭启动画面时发生异常");
 				}
 				break;
 			}
+			
+			// 每100次循环输出一次调试信息
+			if (++waitCount % 100 == 0) {
+				CString debugMsg;
+				debugMsg.Format(L"[DEBUG] InitInstance: 等待启动画面关闭中... (%d ms)", dwElapsed);
+				WriteDebugLog(CW2A(debugMsg));
+			}
+			
+			Sleep(10);
 		}
 		
 		// 清理启动画面
