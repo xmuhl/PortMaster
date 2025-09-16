@@ -30,6 +30,7 @@
 #define WM_UPDATE_COMPLETION    (WM_USER + 1002)
 #define WM_UPDATE_FILE_RECEIVED (WM_USER + 1003)
 #define WM_DISPLAY_RECEIVED_DATA (WM_USER + 1004)
+#define WM_DELAYED_MANAGER_INIT (WM_USER + 1005)  // 🔴 延迟管理器初始化消息
 
 // 前置声明
 
@@ -98,6 +99,10 @@ struct TransmissionContext
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx, public IUIStateUpdater
 {
+	// 友元类声明 - 允许管理器访问私有函数
+	friend class ConnectionManager;
+	friend class DataTransmissionManager;
+
 // 构造
 public:
 	CPortMasterDlg(CWnd* pParent = nullptr);	// 标准构造函数
@@ -160,6 +165,7 @@ protected:
 	afx_msg LRESULT OnUpdateCompletion(WPARAM wParam, LPARAM lParam);      // 完成状态更新
 	afx_msg LRESULT OnUpdateFileReceived(WPARAM wParam, LPARAM lParam);    // 文件接收更新
 	afx_msg LRESULT OnDisplayReceivedDataMsg(WPARAM wParam, LPARAM lParam); // 🔑 数据显示更新
+	afx_msg LRESULT OnDelayedManagerInit(WPARAM wParam, LPARAM lParam);    // 🔴 延迟管理器初始化处理
 
 	DECLARE_MESSAGE_MAP()
 

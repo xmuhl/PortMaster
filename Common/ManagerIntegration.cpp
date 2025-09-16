@@ -151,7 +151,13 @@ ManagerIntegration::ManagerIntegration(CPortMasterDlg* dialog)
         
         // 创建文件操作管理器
         m_fileOperationManager = std::make_unique<FileOperationManager>();
-        
+
+        // 创建连接管理器
+        m_connectionManager = std::make_unique<ConnectionManager>(dialog);
+
+        // 创建数据传输管理器
+        m_dataTransmissionManager = std::make_unique<DataTransmissionManager>(dialog);
+
         // 创建回调实现
         m_uiUpdater = std::make_shared<PortMasterUIStateUpdater>(dialog);
         m_stateCallback = std::make_shared<PortMasterStateCallback>(dialog);
@@ -238,6 +244,16 @@ TransportManager* ManagerIntegration::GetTransportManager() const
 FileOperationManager* ManagerIntegration::GetFileOperationManager() const
 {
     return m_fileOperationManager.get();
+}
+
+ConnectionManager* ManagerIntegration::GetConnectionManager() const
+{
+    return m_connectionManager.get();
+}
+
+DataTransmissionManager* ManagerIntegration::GetDataTransmissionManager() const
+{
+    return m_dataTransmissionManager.get();
 }
 
 void ManagerIntegration::SetApplicationState(ApplicationState state, const std::string& message, const std::string& source)

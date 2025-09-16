@@ -5,6 +5,8 @@
 #include "StateManager.h"
 #include "TransportManager.h"
 #include "FileOperationManager.h"
+#include "ConnectionManager.h"
+#include "DataTransmissionManager.h"
 #include <memory>
 
 #ifndef NOMINMAX
@@ -120,6 +122,18 @@ public:
      * @return 文件操作管理器指针
      */
     FileOperationManager* GetFileOperationManager() const;
+
+    /**
+     * @brief 获取连接管理器
+     * @return 连接管理器指针
+     */
+    ConnectionManager* GetConnectionManager() const;
+
+    /**
+     * @brief 获取数据传输管理器
+     * @return 数据传输管理器指针
+     */
+    DataTransmissionManager* GetDataTransmissionManager() const;
     
     /**
      * @brief 设置应用状态
@@ -185,6 +199,8 @@ private:
     std::unique_ptr<StateManager> m_stateManager;             // 状态管理器
     std::unique_ptr<TransportManager> m_transportManager;     // 传输管理器
     std::unique_ptr<FileOperationManager> m_fileOperationManager; // 文件操作管理器
+    std::unique_ptr<ConnectionManager> m_connectionManager;   // 连接管理器
+    std::unique_ptr<DataTransmissionManager> m_dataTransmissionManager; // 数据传输管理器
     
     // 回调实现
     std::shared_ptr<PortMasterUIStateUpdater> m_uiUpdater;    // UI状态更新器

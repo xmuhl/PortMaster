@@ -232,6 +232,8 @@
     <ClInclude Include="Common\StateManager.h" />
     <ClInclude Include="Common\TransmissionController.h" />
     <ClInclude Include="Common\TransportManager.h" />
+    <ClInclude Include="Common\ConnectionManager.h" />
+    <ClInclude Include="Common\DataTransmissionManager.h" />
     <ClInclude Include="Common\ManagerIntegration.h" />
     <ClInclude Include="Common\TransportFactory.h" />
     <ClInclude Include="Common\FileOperationManager.h" />
@@ -270,6 +272,8 @@
     <ClCompile Include="Common\StateManager.cpp" />
     <ClCompile Include="Common\TransmissionController.cpp" />
     <ClCompile Include="Common\TransportManager.cpp" />
+    <ClCompile Include="Common\ConnectionManager.cpp" />
+    <ClCompile Include="Common\DataTransmissionManager.cpp" />
     <ClCompile Include="Common\ManagerIntegration.cpp" />
     <ClCompile Include="Common\TransportFactory.cpp" />
     <ClCompile Include="Common\FileOperationManager.cpp" />

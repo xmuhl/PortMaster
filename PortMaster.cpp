@@ -273,14 +273,29 @@ BOOL CPortMasterApp::InitInstance()
 		
 		WriteDebugLog("[DEBUG] InitInstance: 启动画面已关闭，开始显示主对话框");
 		WriteDebugLog("[DEBUG] InitInstance: 调用DoModal前");
-		
+
 		// 🔴 主窗口显示优化：确保窗口正确显示和获得焦点
 		// 注意：对于模态对话框，不应在DoModal前设置m_pMainWnd
 		// m_pMainWnd会在DoModal内部自动设置
-		
-		// 确保主窗口能够正确显示
-		::SetForegroundWindow(::GetDesktopWindow()); // 重置前台窗口
-		
+
+		// 🔴 修复：改进窗口显示机制，确保主窗口能够正确显示
+		try {
+			// 清理可能残留的无效前台窗口状态
+			::SetForegroundWindow(::GetDesktopWindow()); // 重置前台窗口
+
+			// 给系统一点时间处理窗口状态变化
+			Sleep(50);
+
+			// 强制更新应用程序状态，确保Windows知道我们要显示主窗口
+			DWORD processId = GetCurrentProcessId();
+			AllowSetForegroundWindow(processId);
+
+			WriteDebugLog("[DEBUG] InitInstance: 窗口显示环境准备完成，开始调用DoModal");
+		}
+		catch (...) {
+			WriteDebugLog("[WARNING] InitInstance: 窗口显示环境准备异常，继续调用DoModal");
+		}
+
 		nResponse = dlg.DoModal(); // ⭐ 修改：使用赋值而不是重新声明
 		
 		// 🔴 新增：主窗口显示后的状态验证

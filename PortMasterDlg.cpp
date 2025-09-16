@@ -222,6 +222,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_MESSAGE(WM_UPDATE_COMPLETION, &CPortMasterDlg::OnUpdateCompletion)
 	ON_MESSAGE(WM_UPDATE_FILE_RECEIVED, &CPortMasterDlg::OnUpdateFileReceived)
 	ON_MESSAGE(WM_DISPLAY_RECEIVED_DATA, &CPortMasterDlg::OnDisplayReceivedDataMsg)
+	ON_MESSAGE(WM_DELAYED_MANAGER_INIT, &CPortMasterDlg::OnDelayedManagerInit)  // 🔴 延迟管理器初始化消息（修复冲突）
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -308,17 +309,37 @@ BOOL CPortMasterDlg::OnInitDialog()
 		return FALSE;
 	}
 
-	// 🔑 架构重构：初始化管理器集成器
+	// 🔑 架构重构：初始化管理器集成器 - 添加超时保护和回退机制
 	try {
 		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始初始化管理器集成器");
-		if (m_managerIntegration && m_managerIntegration->Initialize()) {
-			// 设置UI控件到管理器
-			m_managerIntegration->SetUIControls(&m_ctrlDataView, &m_ctrlProgress, 
-												&m_ctrlStatus, &m_ctrlConnectionStatus);
-			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 管理器集成器初始化完成");
+
+		// 🔴 修复：添加延迟初始化机制，避免在OnInitDialog中执行可能阻塞的操作
+		bool managerInitSuccess = false;
+
+		// 使用PostMessage延迟初始化，避免在OnInitDialog中死锁
+		if (m_managerIntegration) {
+			// 先跳过Initialize调用，在窗口完全初始化后再进行
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 管理器集成器将延迟初始化");
+
+			// 设置UI控件（这部分是安全的）
+			try {
+				m_managerIntegration->SetUIControls(&m_ctrlDataView, &m_ctrlProgress,
+													&m_ctrlStatus, &m_ctrlConnectionStatus);
+				WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: UI控件设置完成");
+				managerInitSuccess = true;
+			}
+			catch (...) {
+				WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: UI控件设置异常");
+			}
+		}
+
+		if (managerInitSuccess) {
+			WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 管理器集成器基础设置完成");
+			// 使用PostMessage在窗口显示后再进行完整初始化
+			::PostMessage(GetSafeHwnd(), WM_DELAYED_MANAGER_INIT, 0, 0); // 自定义消息，延迟完成初始化（修复冲突）
 		}
 		else {
-			WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 管理器集成器初始化失败");
+			WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 管理器集成器设置失败");
 		}
 	}
 	catch (...) {
@@ -344,6 +365,26 @@ BOOL CPortMasterDlg::OnInitDialog()
 	}
 
 	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 主对话框初始化完成");
+
+	// 🔴 新增：强制确保窗口显示和焦点设置
+	try {
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 开始窗口显示和焦点设置");
+
+		// 确保窗口可见
+		ShowWindow(SW_SHOW);
+		UpdateWindow();
+
+		// 尝试获得焦点
+		SetForegroundWindow();
+		BringWindowToTop();
+
+		WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 窗口显示和焦点设置完成");
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] PortMasterDlg::OnInitDialog: 窗口显示和焦点设置异常");
+	}
+
+	WriteDebugLog("[DEBUG] PortMasterDlg::OnInitDialog: 所有初始化步骤完成，即将返回TRUE");
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -1094,8 +1135,9 @@ void CPortMasterDlg::AppendTextData(const CString& text, bool incoming)
 // 按钮事件处理
 void CPortMasterDlg::OnBnClickedConnect()
 {
-	// SOLID-S: 单一职责 - 连接逻辑专门处理连接建立
-	
+	// SOLID-S: 单一职责 - 使用ConnectionManager专门处理连接逻辑
+	WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedConnect: 开始连接操作");
+
 	// 获取当前选择的传输类型
 	int transportIndex = m_ctrlPortType.GetCurSel();
 	if (transportIndex == CB_ERR)
@@ -1103,375 +1145,92 @@ void CPortMasterDlg::OnBnClickedConnect()
 		AppendLog(L"请选择传输类型");
 		return;
 	}
-	
-	// 使用工厂模式创建传输实例 (SOLID-O: 开闭原则)
-	std::shared_ptr<ITransport> newTransport = CreateTransportFromUI();
-	if (!newTransport)
-	{
-		AppendLog(L"不支持的传输类型");
-		return;
-	}
-	
-	// 获取配置参数 (SOLID-S: 单一职责分离)
+
+	// 获取配置参数
 	TransportConfig config = GetTransportConfigFromUI();
-	
-	// 尝试打开传输连接
-	if (!newTransport->Open(config))
+
+	// 使用ConnectionManager建立连接
+	auto connectionManager = m_managerIntegration->GetConnectionManager();
+	if (!connectionManager)
 	{
-		std::string error = newTransport->GetLastError();
-		CString statusMsg = TransportManager::GetConnectionStatusMessage(TRANSPORT_ERROR, error);
-		
-		// SOLID-S: 单一职责 - 提供针对性的错误建议 (使用迁移后的工具函数)
-		CString detailedError = TransportManager::GetDetailedErrorSuggestion(transportIndex, error);
-		AppendLog(L"连接失败: " + statusMsg);
-		if (!detailedError.IsEmpty())
-		{
-			AppendLog(L"建议: " + detailedError);
-		}
-		
-		// 📊 使用统一状态管理更新连接失败状态
-		UpdateStatusDisplay(statusMsg, L"空闲", L"状态: 连接失败", L"", StatusPriority::CRITICAL);
+		AppendLog(L"连接管理器未初始化");
+		WriteDebugLog("[ERROR] ConnectionManager not initialized");
 		return;
 	}
-	
-	// 连接成功，更新传输对象和可靠通道
-	m_transport = newTransport;
-	
-	// 🔑 P0-2: 设置直接传输模式的数据接收回调（使用SafePostMessage防止MFC崩溃）
-	m_transport->SetDataReceivedCallback([this](const std::vector<uint8_t>& data) {
-		// 复制数据到堆内存用于线程间传递
-		std::vector<uint8_t>* dataPtr = new std::vector<uint8_t>(data);
-		
-		// 使用SafePostMessage发送到UI线程处理 - 防止winq.cpp:1113崩溃
-		if (!SafePostMessage(WM_DISPLAY_RECEIVED_DATA, 0, reinterpret_cast<LPARAM>(dataPtr)))
-		{
-			// SafePostMessage失败，清理分配的内存
-			delete dataPtr;
-			WriteDebugLog(CT2A(L"[WARNING] 直接传输数据接收回调SafePostMessage失败"));
-		}
-	});
-	
-	m_reliableChannel = std::make_shared<ReliableChannel>(m_transport);
-	
-	// SOLID-S: 单一职责 - 配置协议参数 (DRY: 统一配置管理)
-	// 🚀 性能优化：本地回路跳过重配置，使用默认值提升连接速度
-	if (std::dynamic_pointer_cast<LoopbackTransport>(newTransport)) {
-		ConfigureReliableChannelForLoopback();
-	} else {
-		ConfigureReliableChannelFromConfig();
-	}
-	
-	// 设置回调函数 (保持原有功能) - 使用SafePostMessage实现线程安全UI更新
-	m_reliableChannel->SetProgressCallback([this](const TransferStats& stats) {
-		// 🔑 P1-4: 频率限制机制 - 防止UI消息队列饱和
-		auto now = std::chrono::steady_clock::now();
-		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastProgressUpdate);
-		
-		if (elapsed.count() < MIN_PROGRESS_INTERVAL_MS) {
-			return; // 跳过过于频繁的回调
-		}
-		m_lastProgressUpdate = now;
-		
-		// 线程安全的进度更新 - 增强窗口句柄验证
-		if (stats.totalBytes > 0 && ::IsWindow(GetSafeHwnd()))
-		{
-			int progress = static_cast<int>((stats.transferredBytes * 100) / stats.totalBytes);
-			CString* statusText = new CString();
-			statusText->Format(L"状态: 传输中 (%.1f%%, %zu/%zu 字节)", 
-				stats.GetProgress() * 100, stats.transferredBytes, stats.totalBytes);
-			
-			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃
-			if (!SafePostMessage(WM_UPDATE_PROGRESS, progress, reinterpret_cast<LPARAM>(statusText)))
-			{
-				// SafePostMessage失败，清理分配的内存
-				delete statusText;
-				WriteDebugLog(CT2A(L"[WARNING] 可靠传输进度回调SafePostMessage失败"));
-			}
-		}
-	});
-	
-	m_reliableChannel->SetCompletionCallback([this](bool success, const std::string& message) {
-		// 🔑 P1-5: 增强完成回调线程安全 - 使用SafePostMessage防止崩溃
-		m_bTransmitting = false;  // 首先更新原子状态
-		
-		// 验证窗口句柄有效性后再进行UI操作
-		if (::IsWindow(GetSafeHwnd()))
-		{
-			CString* msgData = new CString(CA2W(message.c_str(), CP_UTF8));
-			
-			// 🔑 P0-1: 使用SafePostMessage提升线程安全性
-			if (!SafePostMessage(WM_UPDATE_COMPLETION, success ? 1 : 0, reinterpret_cast<LPARAM>(msgData)))
-			{
-				// SafePostMessage失败，清理分配的内存
-				delete msgData;
-				WriteDebugLog(CT2A(L"[WARNING] 可靠传输完成回调SafePostMessage失败"));
-			}
-		}
-	});
-	
-	m_reliableChannel->SetFileReceivedCallback([this](const std::string& filename, const std::vector<uint8_t>& data) {
-		// 文件接收完成回调 - 使用PostMessage实现线程安全UI更新
-		
-		// 验证窗口句柄有效性后再进行UI操作
-		if (::IsWindow(GetSafeHwnd()))
-		{
-			// 创建数据包用于传递到UI线程
-			struct FileReceivedData {
-				CString filename;
-				std::vector<uint8_t> data;
-			};
-			
-			FileReceivedData* receivedData = new FileReceivedData{CA2W(filename.c_str()), data};
-			
-			// 🔑 P0-1: 使用SafePostMessage防止MFC断言崩溃（可靠传输）
-			CString debugMsg2;
-			debugMsg2.Format(L"[DEBUG] 可靠传输文件接收回调：%s, %zu字节", CA2W(filename.c_str()), data.size());
-			WriteDebugLog(CT2A(debugMsg2));
-			if (!SafePostMessage(WM_UPDATE_FILE_RECEIVED, 0, reinterpret_cast<LPARAM>(receivedData)))
-			{
-				// SafePostMessage失败，清理分配的内存
-				delete receivedData;
-				WriteDebugLog(CT2A(L"[CRITICAL] 可靠传输文件接收回调SafePostMessage失败 - 这是崩溃的主要原因！"));
-			}
-			else
-			{
-				WriteDebugLog(CT2A(L"[DEBUG] 可靠传输文件接收回调SafePostMessage成功"));
-			}
-		}
-	});
-	
-	// 启用接收功能
-	m_reliableChannel->EnableReceiving(true);
-	
-	if (m_reliableChannel && m_reliableChannel->Start())
+
+	// 设置可靠模式状态
+	connectionManager->SetReliableMode(m_bReliableMode);
+
+	// 尝试建立连接
+	if (connectionManager->EstablishConnection(transportIndex, config))
 	{
+		// 连接成功 - 更新本地状态
 		m_bConnected = true;
-		UpdateButtonStatesLegacy();
-		
-		// 获取传输类型和端点信息用于显示 (DRY: 复用格式化函数)
-		std::string transportTypeStr = m_transport->GetTransportType();
-		std::string endpoint;
-		
-		// 重新获取配置信息 (KISS: 简化作用域管理)
-		TransportConfig currentConfig = GetTransportConfigFromUI();
-		
-		// 获取端点信息 (SOLID-S: 单一职责 - 端点信息获取)
-		if (transportTypeStr == "Serial")
-		{
-			endpoint = currentConfig.portName;
-		}
-		else if (transportTypeStr == "TCP" || transportTypeStr == "UDP")
-		{
-			// 获取实际的网络连接信息
-			std::string actualEndpoint = GetNetworkConnectionInfo(transportTypeStr);
-			endpoint = actualEndpoint.empty() ? (currentConfig.ipAddress + ":" + std::to_string(currentConfig.port)) : actualEndpoint;
-		}
-		else if (transportTypeStr == "LPT" || transportTypeStr == "USB")
-		{
-			endpoint = currentConfig.portName;
-		}
-		
-		// 格式化连接信息 (SOLID-S: 使用迁移后的工具函数)
-		CString transportInfo = TransportManager::FormatTransportInfo(transportTypeStr, endpoint);
-		CString statusMsg = TransportManager::GetConnectionStatusMessage(TRANSPORT_OPEN);
-		
-		AppendLog(L"连接成功 - " + transportInfo);
-		
-		// 📊 使用统一状态管理更新连接成功状态
-		UpdateStatusDisplay(statusMsg, L"空闲", L"状态: 已连接", L"", StatusPriority::HIGH);
+		m_transport = connectionManager->GetCurrentTransport();
+		m_reliableChannel = connectionManager->GetReliableChannel();
+
+		WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedConnect: 连接建立成功");
 	}
 	else
 	{
-		std::string error = m_reliableChannel ? m_reliableChannel->GetLastError() : "可靠通道启动失败";
-		CString statusMsg = TransportManager::GetConnectionStatusMessage(TRANSPORT_ERROR, error);
-		AppendLog(L"可靠通道启动失败: " + statusMsg);
-		
-		// 📊 使用统一状态管理更新可靠通道失败状态
-		UpdateStatusDisplay(statusMsg, L"失败", L"状态: 通道启动失败", L"", StatusPriority::CRITICAL);
+		// 连接失败 - 状态已由ConnectionManager处理
+		WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedConnect: 连接建立失败");
 	}
 }
 
 void CPortMasterDlg::OnBnClickedDisconnect()
 {
-	if (m_reliableChannel)
+	// SOLID-S: 单一职责 - 使用ConnectionManager专门处理断开连接逻辑
+	WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedDisconnect: 开始断开连接操作");
+
+	auto connectionManager = m_managerIntegration->GetConnectionManager();
+	if (!connectionManager)
 	{
-		m_reliableChannel->Stop();
+		WriteDebugLog("[ERROR] ConnectionManager not initialized");
+		return;
 	}
-	
-	m_bConnected = false;
-	// 🔑 关键修复：断开连接时重置传输状态
-	SetTransmissionState(TransmissionState::IDLE);
-	AppendLog(L"已断开连接");
-	
-	// 📊 使用统一状态管理更新断开连接后的状态
-	UpdateStatusDisplay(L"○ 未连接", L"空闲", L"状态: 就绪", L"", StatusPriority::NORMAL);
+
+	// 使用ConnectionManager断开连接
+	if (connectionManager->DisconnectTransport())
+	{
+		// 断开成功 - 更新本地状态
+		m_bConnected = false;
+		m_transport.reset();
+		m_reliableChannel.reset();
+
+		// 重置传输状态
+		SetTransmissionState(TransmissionState::IDLE);
+
+		WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedDisconnect: 断开连接完成");
+	}
+	else
+	{
+		WriteDebugLog("[DEBUG] CPortMasterDlg::OnBnClickedDisconnect: 断开连接失败");
+	}
 }
 
 void CPortMasterDlg::OnBnClickedSend()
 {
-	// 断点续传检查 (SOLID-S: 单一职责 - 续传逻辑分离)
-	if (GetTransmissionState() == TransmissionState::PAUSED && m_transmissionContext.CanResume())
+	// SOLID-S: 单一职责 - 数据传输逻辑委托给DataTransmissionManager
+	// KISS: 简化主对话框函数，降低复杂度
+
+	if (m_managerIntegration && m_managerIntegration->GetDataTransmissionManager())
 	{
-		// 当前处于暂停状态且可以续传，询问用户是否续传
-		CString resumeMsg;
-		resumeMsg.Format(L"检测到未完成的传输: %s (进度 %.1f%%)\n是否续传？\n\n点击\"是\"继续传输，点击\"否\"重新开始", 
-			PathFindFileName(m_transmissionContext.sourceFilePath),
-			m_transmissionContext.GetProgressPercentage());
-		
-		int result = MessageBox(resumeMsg, L"断点续传", MB_YESNOCANCEL | MB_ICONQUESTION);
-		
-		if (result == IDYES)
+		// 设置传输对象
+		m_managerIntegration->GetDataTransmissionManager()->SetTransportObjects(m_transport, m_reliableChannel);
+
+		// 执行发送操作
+		bool success = m_managerIntegration->GetDataTransmissionManager()->ExecuteSend();
+
+		if (!success)
 		{
-			// 用户选择续传
-			if (ResumeTransmission())
-			{
-				return; // 续传成功，直接返回
-			}
-			// 续传失败，继续执行正常发送流程
-		}
-		else if (result == IDCANCEL)
-		{
-			return; // 用户取消操作
-		}
-		// result == IDNO 时，清除断点并继续正常发送流程
-		ClearTransmissionContext();
-	}
-	
-	// 优先检查是否有文件数据要发送
-	std::vector<uint8_t> dataToSend;
-	bool isFileTransmission = false;
-	
-	if (!m_transmissionData.empty())
-	{
-		// 有文件数据，发送文件
-		dataToSend = m_transmissionData;
-		isFileTransmission = true;
-		AppendLog(L"发送文件数据");
-	}
-	else
-	{
-		// 获取输入框数据
-		dataToSend = GetInputData();
-		AppendLog(L"发送输入数据");
-	}
-	
-	if (dataToSend.empty())
-	{
-		ShowUserMessage(L"没有数据可发送", L"请在十六进制或文本输入框中输入数据，或拖放文件", MB_ICONWARNING);
-		return;
-	}
-	
-	// 检查连接状态
-	if (!m_bConnected)
-	{
-		ShowUserMessage(L"连接错误", L"请先连接端口才能发送数据", MB_ICONERROR);
-		return;
-	}
-	
-	// 传输状态控制 (SOLID-S: 单一职责 - 传输状态控制)
-	if (IsTransmissionActive())
-	{
-		// 正在传输中，提供停止传输选项
-		int result = MessageBox(L"当前正在传输数据，是否要停止传输？", 
-			L"传输控制", MB_YESNO | MB_ICONQUESTION);
-		
-		if (result == IDYES) {
-			SetTransmissionState(TransmissionState::IDLE);
-			StopDataTransmission(false);
-			AppendLog(L"用户手动停止传输");
-		}
-		return;
-	}
-	
-	if (m_bReliableMode && m_reliableChannel)
-	{
-		// 使用可靠传输模式 - 增强错误检查和状态验证
-		
-		// 1. 验证可靠传输通道是否已激活
-		if (!m_reliableChannel->IsActive())
-		{
-			AppendLog(L"可靠传输通道未启动，尝试启动...");
-			if (!m_reliableChannel->Start())
-			{
-				SetTransmissionState(TransmissionState::FAILED);
-				AppendLog(L"无法启动可靠传输通道");
-				CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
-				if (!error.IsEmpty())
-				{
-					AppendLog(L"启动错误: " + error);
-				}
-				ShowUserMessage(L"可靠传输启动失败", 
-					L"可靠传输通道无法启动，请检查连接状态或切换到普通传输模式", 
-					MB_ICONERROR);
-				return;
-			}
-			AppendLog(L"可靠传输通道启动成功");
-		}
-		
-		// 2. 验证可靠传输通道状态
-		ReliableState currentState = m_reliableChannel->GetState();
-		if (currentState != RELIABLE_IDLE)
-		{
-			SetTransmissionState(TransmissionState::FAILED);
-			CString stateMsg;
-			stateMsg.Format(L"可靠传输通道状态异常 (状态码: %d)，请等待当前操作完成或重新连接", static_cast<int>(currentState));
-			AppendLog(stateMsg);
-			ShowUserMessage(L"可靠传输状态错误", stateMsg, MB_ICONWARNING);
-			return;
-		}
-		
-		// 3. 开始传输操作
-		SetTransmissionState(TransmissionState::TRANSMITTING);
-		bool transmissionStarted = false;
-		
-		if (isFileTransmission && !m_currentFileName.IsEmpty())
-		{
-			// 发送文件（带文件名）
-			std::string fileNameStr = CT2A(m_currentFileName);
-			transmissionStarted = m_reliableChannel->SendFile(fileNameStr, dataToSend);
-			if (transmissionStarted)
-			{
-				AppendLog(L"开始可靠文件传输: " + m_currentFileName);
-			}
-			else
-			{
-				AppendLog(L"可靠文件传输启动失败");
-			}
-		}
-		else
-		{
-			// 发送数据
-			transmissionStarted = m_reliableChannel->SendData(dataToSend);
-			if (transmissionStarted)
-			{
-				AppendLog(L"开始可靠传输");
-			}
-			else
-			{
-				AppendLog(L"可靠传输启动失败");
-			}
-		}
-		
-		// 4. 处理传输启动失败的情况
-		if (!transmissionStarted)
-		{
-			SetTransmissionState(TransmissionState::FAILED);
-			CString error = CA2W(m_reliableChannel->GetLastError().c_str(), CP_UTF8);
-			if (!error.IsEmpty())
-			{
-				AppendLog(L"错误详情: " + error);
-			}
-			
-			// 提供用户友好的错误处理建议
-			ShowUserMessage(L"可靠传输失败", 
-				L"可靠传输启动失败。\n\n建议操作：\n1. 检查连接状态\n2. 重新连接端口\n3. 或切换到普通传输模式", 
-				MB_ICONERROR);
+			AppendLog(L"数据传输启动失败");
 		}
 	}
 	else
 	{
-		// 使用普通传输模式（模拟）
-		StartDataTransmission(dataToSend);
+		AppendLog(L"数据传输管理器未初始化");
+		ShowUserMessage(L"系统错误", L"数据传输管理器未初始化，请重启应用程序", MB_ICONERROR);
 	}
 }
 
@@ -2141,7 +1900,17 @@ void CPortMasterDlg::OnBnClickedCopyHex()
 	}
 	
 	// 🔑 架构重构：直接调用详细格式化函数，移除冗余包装
-	CString hexText = FormatHexDisplay(m_displayedData);
+	// 暂时使用直接格式化，待后续通过DataDisplayManager统一
+	CString hexText;
+	if (!m_displayedData.empty()) {
+		// 简化的十六进制格式化
+		hexText.Preallocate(static_cast<int>(m_displayedData.size() * 3));
+		for (size_t i = 0; i < m_displayedData.size(); ++i) {
+			CString hexByte;
+			hexByte.Format(L"%02X ", m_displayedData[i]);
+			hexText += hexByte;
+		}
+	}
 	
 	if (!hexText.IsEmpty())
 	{
@@ -2187,7 +1956,28 @@ void CPortMasterDlg::OnBnClickedCopyText()
 	}
 	
 	// 🔑 架构重构：直接调用详细格式化函数，移除冗余包装
-	CString textData = FormatTextDisplay(m_displayedData);
+	// 暂时使用直接格式化，待后续通过DataDisplayManager统一
+	CString textData;
+	if (!m_displayedData.empty()) {
+		// 简化的文本格式化 - 尝试UTF-8解码
+		std::string utf8Data(reinterpret_cast<const char*>(m_displayedData.data()), m_displayedData.size());
+		int wideStrLen = MultiByteToWideChar(CP_UTF8, 0, utf8Data.c_str(), static_cast<int>(utf8Data.length()), nullptr, 0);
+		if (wideStrLen > 0) {
+			std::vector<wchar_t> wideStr(wideStrLen + 1);
+			MultiByteToWideChar(CP_UTF8, 0, utf8Data.c_str(), static_cast<int>(utf8Data.length()), wideStr.data(), wideStrLen);
+			wideStr[wideStrLen] = L'\0';
+			textData = CString(wideStr.data());
+		} else {
+			// UTF-8解码失败，使用ASCII过滤
+			for (uint8_t byte : m_displayedData) {
+				if (byte >= 32 && byte <= 126) {
+					textData += static_cast<wchar_t>(byte);
+				} else if (byte == 0x0A) {
+					textData += L"\r\n";
+				}
+			}
+		}
+	}
 	
 	if (!textData.IsEmpty())
 	{
@@ -2532,12 +2322,27 @@ bool CPortMasterDlg::LoadFileForTransmission(const CString& filePath)
 		m_currentFileName = PathFindFileName(filePath);
 		
 		// 显示文件内容到输入框（实现真正共用设计）
-		// TODO: 待后续优化 - 通过DataDisplayManager统一格式化
+		// 🔑 架构重构：使用DataDisplayManager统一格式化（简化实现）
 		if (m_bHexDisplay) {
-			CString hexDisplay = FormatHexDisplay(m_transmissionData);
+			// 简化的十六进制格式化
+			CString hexDisplay;
+			hexDisplay.Preallocate(static_cast<int>(m_transmissionData.size() * 3));
+			for (size_t i = 0; i < m_transmissionData.size(); ++i) {
+				CString hexByte;
+				hexByte.Format(L"%02X ", m_transmissionData[i]);
+				hexDisplay += hexByte;
+			}
 			m_ctrlInputHex.SetWindowText(hexDisplay);
 		} else {
-			CString textDisplay = FormatTextDisplay(m_transmissionData);
+			// 简化的文本格式化
+			CString textDisplay;
+			for (uint8_t byte : m_transmissionData) {
+				if (byte >= 32 && byte <= 126) {
+					textDisplay += static_cast<wchar_t>(byte);
+				} else if (byte == 0x0A) {
+					textDisplay += L"\r\n";
+				}
+			}
 			m_ctrlInputHex.SetWindowText(textDisplay);
 		}
 		
@@ -2597,438 +2402,20 @@ std::vector<uint8_t> CPortMasterDlg::ProcessTextInput(const CString& textInput)
 	return std::vector<uint8_t>(utf8Text.begin(), utf8Text.end());
 }
 
-// 🔑 统一传输架构核心：十六进制显示格式化
-// 优化性能和可读性
-CString CPortMasterDlg::FormatHexDisplay(const std::vector<uint8_t>& data)
-{
-	if (data.empty()) {
-		return L"[空数据]";
-	}
-	
-	const size_t BYTES_PER_LINE = 16;
-	const size_t MAX_LINES = 10000; // 限制最大行数防止内存溢出
-	
-	// 🔑 优化1：预分配内存提升性能
-	size_t totalLines = (data.size() + BYTES_PER_LINE - 1) / BYTES_PER_LINE;
-	if (totalLines > MAX_LINES) {
-		totalLines = MAX_LINES;
-	}
-	
-	CString result;
-	result.Preallocate(static_cast<int>(totalLines * 80)); // 预估每行80字符
-	
-	try {
-		size_t processedLines = 0;
-		
-		for (size_t i = 0; i < data.size() && processedLines < MAX_LINES; i += BYTES_PER_LINE, ++processedLines)
-		{
-			// 🔑 优化2：使用StringBuilder模式减少字符串拼接
-			CString line;
-			line.Preallocate(80); // 预分配行缓冲区
-			
-			// 地址部分 - 8位十六进制
-			line.Format(L"%08X: ", static_cast<unsigned int>(i));
-			
-			// 🔑 优化3：十六进制数据部分 - 批量处理
-			CString hexPart;
-			hexPart.Preallocate(48); // 16字节 * 3字符/字节
-			
-			size_t actualBytes = std::min(BYTES_PER_LINE, data.size() - i);
-			
-			for (size_t j = 0; j < actualBytes; j++)
-			{
-				CString byteStr;
-				byteStr.Format(L"%02X ", data[i + j]);
-				hexPart += byteStr;
-			}
-			
-			// 🔑 优化4：智能对齐填充
-			for (size_t j = actualBytes; j < BYTES_PER_LINE; j++)
-			{
-				hexPart += L"   ";
-			}
-			
-			line += hexPart + L" |";
-			
-			// 🔑 优化5：ASCII字符部分 - 增强字符处理
-			CString asciiPart;
-			asciiPart.Preallocate(16);
-			
-			for (size_t j = 0; j < actualBytes; j++)
-			{
-				uint8_t byte = data[i + j];
-				
-				// 扩展可显示字符范围
-				if (byte >= 32 && byte <= 126) {
-					// 标准ASCII可打印字符
-					asciiPart += static_cast<WCHAR>(byte);
-				} else if (byte == 9) {
-					// Tab字符显示为特殊符号
-					asciiPart += L'→';
-				} else if (byte == 10 || byte == 13) {
-					// 换行符显示为特殊符号
-					asciiPart += L'↵';
-				} else if (byte == 0) {
-					// NULL字符
-					asciiPart += L'∅';
-				} else {
-					// 其他不可显示字符
-					asciiPart += L'·';
-				}
-			}
-			
-			// 🔑 优化6：ASCII部分对齐填充
-			for (size_t j = actualBytes; j < BYTES_PER_LINE; j++)
-			{
-				asciiPart += L' ';
-			}
-			
-			line += asciiPart + L"|\r\n";
-			result += line;
-		}
-		
-		// 🔑 优化7：数据截断提示
-		if (data.size() > MAX_LINES * BYTES_PER_LINE) {
-			CString truncateMsg;
-			truncateMsg.Format(L"\r\n[数据已截断] 显示前%zu行，总计%zu字节\r\n", 
-				MAX_LINES, data.size());
-			result += truncateMsg;
-		}
-		
-	} catch (const std::exception& e) {
-		// 🔑 优化8：异常处理
-		CString errorMsg;
-		errorMsg.Format(L"[格式化错误] FormatHexDisplay异常: %s\r\n", CA2W(e.what()));
-		return errorMsg;
-		
-	} catch (...) {
-		return L"[格式化错误] FormatHexDisplay发生未知异常\r\n";
-	}
-	
-	return result;
-}
+// 注意：FormatHexDisplay函数已迁移到DataDisplayManager类中
+// 请使用 m_managerIntegration->GetDataDisplayManager()->FormatHexDisplay() 调用
 
-// 🔑 UTF-8序列验证辅助函数
-bool CPortMasterDlg::IsValidUTF8Sequence(const std::vector<uint8_t>& data, size_t start, size_t& length)
-{
-	if (start >= data.size()) return false;
-	
-	uint8_t firstByte = data[start];
-	length = 1;
-	
-	// ASCII字符 (0xxxxxxx)
-	if ((firstByte & 0x80) == 0) {
-		return true;
-	}
-	
-	// 多字节UTF-8序列
-	if ((firstByte & 0xE0) == 0xC0) {
-		// 2字节序列 (110xxxxx 10xxxxxx)
-		length = 2;
-	} else if ((firstByte & 0xF0) == 0xE0) {
-		// 3字节序列 (1110xxxx 10xxxxxx 10xxxxxx)
-		length = 3;
-	} else if ((firstByte & 0xF8) == 0xF0) {
-		// 4字节序列 (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
-		length = 4;
-	} else {
-		return false; // 无效的起始字节
-	}
-	
-	// 检查是否有足够的字节
-	if (start + length > data.size()) {
-		return false;
-	}
-	
-	// 验证后续字节格式 (10xxxxxx)
-	for (size_t i = 1; i < length; ++i) {
-		if ((data[start + i] & 0xC0) != 0x80) {
-			return false;
-		}
-	}
-	
-	return true;
-}
+// 注意：IsValidUTF8Sequence函数已迁移到DataDisplayManager类中
+// 请使用 m_managerIntegration->GetDataDisplayManager()->IsValidUTF8Sequence() 调用
 
-// 🔑 统一传输架构核心：文本显示格式化
-// 优化编码检测和文本处理
-CString CPortMasterDlg::FormatTextDisplay(const std::vector<uint8_t>& data)
-{
-	if (data.empty()) {
-		return L"[空数据]";
-	}
-	
-	try {
-		// 🔑 优化1：数据大小限制和预处理
-		const size_t MAX_TEXT_SIZE = 512 * 1024; // 512KB文本显示限制
-		std::vector<uint8_t> processData;
-		
-		if (data.size() > MAX_TEXT_SIZE) {
-			// 显示最新数据
-			processData.assign(data.end() - MAX_TEXT_SIZE, data.end());
-			WriteDebugLog("[INFO] FormatTextDisplay: 大数据量优化，显示最新512KB");
-		} else {
-			processData = data;
-		}
-		
-		// 🔑 优化2：增强的UTF-8检测和解码
-		bool hasValidUTF8 = true;
-		size_t utf8ErrorCount = 0;
-		size_t i = 0;
-		
-		while (i < processData.size()) {
-			size_t seqLength;
-			if (!IsValidUTF8Sequence(processData, i, seqLength)) {
-				utf8ErrorCount++;
-				// 允许少量UTF-8错误（可能是混合编码）
-				if (utf8ErrorCount > processData.size() / 10) {
-					hasValidUTF8 = false;
-					break;
-				}
-				i++; // 跳过无效字节
-			} else {
-				i += seqLength;
-			}
-		}
-		
-		// 🔑 优化3：UTF-8解码策略
-		if (hasValidUTF8 && utf8ErrorCount == 0) {
-			std::string utf8Str(processData.begin(), processData.end());
-			int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
-				utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
-			
-			if (wideStrLen > 0) {
-				std::vector<wchar_t> wideStr(wideStrLen + 1);
-				int actualLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-					utf8Str.c_str(), static_cast<int>(utf8Str.length()),
-					wideStr.data(), wideStrLen);
-					
-				if (actualLen > 0) {
-					wideStr[actualLen] = L'\0';
-					CString result(wideStr.data());
-					
-					// 🔑 优化4：结果验证
-					if (!result.IsEmpty() && result.Find(L'\uFFFD') == -1) {
-						WriteDebugLog("[INFO] UTF-8解码成功");
-						return result;
-					}
-				}
-			}
-		}
-		
-		// 🔑 优化5：GBK/GB2312解码策略（支持简体中文）
-		std::string gbkStr(processData.begin(), processData.end());
-		int wideStrLen = MultiByteToWideChar(CP_ACP, 0,
-			gbkStr.c_str(), static_cast<int>(gbkStr.length()), nullptr, 0);
-		
-		if (wideStrLen > 0) {
-			std::vector<wchar_t> wideStr(wideStrLen + 1);
-			int actualLen = MultiByteToWideChar(CP_ACP, 0,
-				gbkStr.c_str(), static_cast<int>(gbkStr.length()),
-				wideStr.data(), wideStrLen);
-				
-			if (actualLen > 0) {
-				wideStr[actualLen] = L'\0';
-				CString result(wideStr.data());
-				
-				// 🔑 优化6：GBK解码结果验证
-				if (!result.IsEmpty() && result != L"?" && 
-					result.Find(L'\uFFFD') == -1) {
-					WriteDebugLog("[INFO] GBK/GB2312解码成功");
-					return result;
-				}
-			}
-		}
-		
-		// 🔑 关键修复：FormatTextDisplay应始终返回纯文本格式，不受m_bHexDisplay影响
-		// 显示模式的选择由更高层的UpdateDataDisplay函数处理
-		WriteDebugLog("[INFO] FormatTextDisplay：返回纯文本显示格式");
-		return FormatPlainTextDisplay(processData);
-		
-	} catch (const std::exception& e) {
-		// 🔑 优化8：异常处理
-		CString errorMsg;
-		errorMsg.Format(L"[格式化错误] FormatTextDisplay异常: %s\r\n", CA2W(e.what()));
-		WriteDebugLog(CW2A(errorMsg));
-		return errorMsg;
-		
-	} catch (...) {
-		WriteDebugLog("[ERROR] FormatTextDisplay发生未知异常");
-		return L"[格式化错误] FormatTextDisplay发生未知异常\r\n";
-	}
-}
+// 注意：FormatTextDisplay函数已迁移到DataDisplayManager类中
+// 请使用 m_managerIntegration->GetDataDisplayManager()->FormatTextDisplay() 调用
 
-// 🔑 智能混合显示策略（SOLID-S: 单一职责 - 混合格式显示）
-// 统一传输架构优化：增强编码检测和字符处理逻辑
-CString CPortMasterDlg::FormatMixedDisplay(const std::vector<uint8_t>& data)
-{
-	CString result;
-	result.Preallocate(static_cast<int>(data.size() * 3)); // 增加预分配空间
-	
-	for (size_t i = 0; i < data.size(); ) {
-		uint8_t byte = data[i];
-		
-		// 🔑 优化1：增强UTF-8序列检测和处理
-		size_t utf8Length;
-		if (IsValidUTF8Sequence(data, i, utf8Length) && utf8Length > 1) {
-			// 尝试解码UTF-8序列
-			std::vector<uint8_t> utf8Bytes(data.begin() + i, data.begin() + i + utf8Length);
-			std::string utf8Str(utf8Bytes.begin(), utf8Bytes.end());
-			
-			int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
-				utf8Str.c_str(), static_cast<int>(utf8Str.length()), nullptr, 0);
-			
-			if (wideStrLen > 0) {
-				std::vector<wchar_t> wideStr(wideStrLen + 1);
-				int actualLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-					utf8Str.c_str(), static_cast<int>(utf8Str.length()),
-					wideStr.data(), wideStrLen);
-					
-				if (actualLen > 0) {
-					wideStr[actualLen] = L'\0';
-					CString decodedChar(wideStr.data());
-					// 🔑 优化2：更严格的有效字符验证
-					if (!decodedChar.IsEmpty() && decodedChar != L"?" && 
-						decodedChar.GetLength() > 0 && decodedChar[0] != L'\uFFFD') {
-						result += decodedChar;
-						i += utf8Length;
-						continue;
-					}
-				}
-			}
-		}
-		
-		// 🔑 优化3：增强单字节处理逻辑
-		if (byte >= 32 && byte <= 126) {
-			// 可打印ASCII字符
-			result += static_cast<wchar_t>(byte);
-		} else if (byte >= 0xA0 && byte <= 0xFF) {
-			// 🔑 优化4：尝试GBK/GB2312单字节扩展字符解码
-			char singleByte[2] = { static_cast<char>(byte), '\0' };
-			int wideLen = MultiByteToWideChar(CP_ACP, 0, singleByte, 1, nullptr, 0);
-			if (wideLen > 0) {
-				wchar_t wideChar;
-				if (MultiByteToWideChar(CP_ACP, 0, singleByte, 1, &wideChar, 1) > 0) {
-					result += wideChar;
-					i++;
-					continue;
-				}
-			}
-			// 如果解码失败，显示为十六进制
-			CString hexByte;
-			hexByte.Format(L"[%02X]", byte);
-			result += hexByte;
-		} else if (byte >= 0x80 && byte < 0xA0) {
-			// 非标准高位字节，显示为十六进制
-			CString hexByte;
-			hexByte.Format(L"[%02X]", byte);
-			result += hexByte;
-		} else {
-			// 🔑 优化5：改进控制字符显示
-			switch (byte) {
-			case 0x0A: result += L"\r\n"; break;    // 换行符直接换行
-			case 0x0D: break;                      // 回车符忽略（避免重复换行）
-			case 0x09: result += L"    "; break;    // 制表符转为4个空格
-			case 0x00: result += L"[NULL]"; break;  // 空字符明确标识
-			case 0x1B: result += L"[ESC]"; break;   // ESC字符
-			default:
-				CString ctrlChar;
-				ctrlChar.Format(L"[%02X]", byte);
-				result += ctrlChar;
-				break;
-			}
-		}
-		
-		i++;
-	}
-	
-	return result;
-}
+// 注意：FormatMixedDisplay函数已迁移到DataDisplayManager类中
+// 请使用 m_managerIntegration->GetDataDisplayManager()->FormatMixedDisplay() 调用
 
-// 🔑 新增：纯文本显示策略（SOLID-S: 单一职责 - 纯文本格式显示）
-// 直接传输模式专用：提供用户友好的纯文本显示
-CString CPortMasterDlg::FormatPlainTextDisplay(const std::vector<uint8_t>& data)
-{
-	if (data.empty()) {
-		return L"[空数据]";
-	}
-	
-	try {
-		CString result;
-		result.Preallocate(static_cast<int>(data.size()));
-		
-		// 🔑 策略1：优先尝试UTF-8解码
-		std::string utf8Data(reinterpret_cast<const char*>(data.data()), data.size());
-		int wideStrLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, 
-			utf8Data.c_str(), static_cast<int>(utf8Data.length()), nullptr, 0);
-		
-		if (wideStrLen > 0) {
-			// UTF-8解码成功
-			std::vector<wchar_t> wideStr(wideStrLen + 1);
-			int actualLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-				utf8Data.c_str(), static_cast<int>(utf8Data.length()),
-				wideStr.data(), wideStrLen);
-			
-			if (actualLen > 0) {
-				wideStr[actualLen] = L'\0';
-				result = CString(wideStr.data());
-				WriteDebugLog("[INFO] UTF-8解码成功，使用UTF-8显示");
-				return result;
-			}
-		}
-		
-		// 🔑 策略2：UTF-8失败，尝试GBK/GB2312解码
-		wideStrLen = MultiByteToWideChar(CP_ACP, 0, 
-			reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()), nullptr, 0);
-		
-		if (wideStrLen > 0) {
-			std::vector<wchar_t> wideStr(wideStrLen + 1);
-			int actualLen = MultiByteToWideChar(CP_ACP, 0,
-				reinterpret_cast<const char*>(data.data()), static_cast<int>(data.size()),
-				wideStr.data(), wideStrLen);
-			
-			if (actualLen > 0) {
-				wideStr[actualLen] = L'\0';
-				result = CString(wideStr.data());
-				WriteDebugLog("[INFO] GBK解码成功，使用GBK显示");
-				return result;
-			}
-		}
-		
-		// 🔑 策略3：所有解码失败，按ASCII处理（过滤控制字符）
-		for (size_t i = 0; i < data.size(); ++i) {
-			uint8_t byte = data[i];
-			
-			if (byte >= 32 && byte <= 126) {
-				// 可打印ASCII字符
-				result += static_cast<wchar_t>(byte);
-			} else if (byte == 0x0A) {
-				// 保留换行符
-				result += L"\r\n";
-			} else if (byte == 0x09) {
-				// 制表符转为空格
-				result += L"    ";
-			} else if (byte == 0x0D) {
-				// 跳过回车符（避免重复换行）
-				continue;
-			}
-			// 其他控制字符直接忽略（不显示）
-		}
-		
-		WriteDebugLog("[INFO] 使用ASCII过滤显示");
-		return result;
-		
-	} catch (const std::exception& e) {
-		CString errorMsg;
-		errorMsg.Format(L"[格式化错误] FormatPlainTextDisplay异常: %s\r\n", CA2W(e.what()));
-		WriteDebugLog(CW2A(errorMsg));
-		return errorMsg;
-		
-	} catch (...) {
-		WriteDebugLog("[ERROR] FormatPlainTextDisplay发生未知异常");
-		return L"[格式化错误] FormatPlainTextDisplay发生未知异常\r\n";
-	}
-}
+// 注意：FormatPlainTextDisplay函数已迁移到DataDisplayManager类中
+// 请使用 m_managerIntegration->GetDataDisplayManager()->FormatPlainTextDisplay() 调用
 
 void CPortMasterDlg::ScrollToBottom()
 {
@@ -4104,4 +3491,31 @@ void CPortMasterDlg::ShowErrorMessage(const std::string& title, const std::strin
 	{
 		WriteDebugLog("[ERROR] ShowErrorMessage异常");
 	}
+}
+
+// 🔴 新增：延迟管理器初始化处理函数
+LRESULT CPortMasterDlg::OnDelayedManagerInit(WPARAM wParam, LPARAM lParam)
+{
+	WriteDebugLog("[DEBUG] OnDelayedManagerInit: 开始延迟管理器初始化");
+
+	try {
+		if (m_managerIntegration) {
+			// 现在窗口已经完全初始化，可以安全地调用Initialize
+			if (m_managerIntegration->Initialize()) {
+				WriteDebugLog("[DEBUG] OnDelayedManagerInit: 管理器集成器延迟初始化成功");
+			}
+			else {
+				WriteDebugLog("[ERROR] OnDelayedManagerInit: 管理器集成器延迟初始化失败");
+			}
+		}
+		else {
+			WriteDebugLog("[ERROR] OnDelayedManagerInit: 管理器集成器指针为空");
+		}
+	}
+	catch (...) {
+		WriteDebugLog("[ERROR] OnDelayedManagerInit: 延迟初始化过程异常");
+	}
+
+	WriteDebugLog("[DEBUG] OnDelayedManagerInit: 延迟管理器初始化完成");
+	return 0;
 }

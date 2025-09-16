@@ -50,6 +50,9 @@ public:
     
     // 设备验证和测试
     bool IsDeviceAvailable(const std::string& deviceName, const std::string& transportType);
+
+    // 🔴 紧急修复：添加实际连接时的可用性检查方法
+    bool IsSerialPortReallyAvailable(const std::string& portName);
     bool TestDeviceConnection(const DeviceInfo& device);
     
     // 设备历史和收藏
