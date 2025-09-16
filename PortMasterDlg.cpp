@@ -1400,13 +1400,8 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 				CString fileName = PathFindFileName(filePath);
 				AppendLog(L"拖放文件: " + fileName);
 				
-				// 尝试加载文件
-				if (LoadFileForTransmission(filePath)) {
-					ShowUserMessage(L"文件加载成功", L"文件已加载", MB_ICONINFORMATION);
-					UpdateButtonStatesLegacy();
-				} else {
-					ShowUserMessage(L"文件加载失败", L"无法加载文件", MB_ICONERROR);
-				}
+				// 备用逻辑：简单文件信息显示
+				ShowUserMessage(L"文件拖放检测", L"文件操作管理器未初始化，无法加载文件", MB_ICONWARNING);
 			}
 		}
 	} catch (...) {
@@ -1796,15 +1791,38 @@ void CPortMasterDlg::OnBnClickedClearDisplay()
 
 void CPortMasterDlg::OnBnClickedLoadFile()
 {
-	CFileDialog fileDlg(TRUE, nullptr, nullptr, 
+	// SOLID-S: 单一职责 - 文件选择逻辑委托给FileOperationManager
+	if (!m_managerIntegration || !m_managerIntegration->GetFileOperationManager())
+	{
+		AppendLog(L"文件操作管理器未初始化");
+		return;
+	}
+
+	CFileDialog fileDlg(TRUE, nullptr, nullptr,
 		OFN_FILEMUSTEXIST | OFN_HIDEREADONLY,
 		L"所有文件|*.*|文本文件|*.txt|二进制文件|*.bin|数据文件|*.dat||");
-		
+
 	if (fileDlg.DoModal() == IDOK)
 	{
 		CString filePath = fileDlg.GetPathName();
-		if (LoadFileForTransmission(filePath))
+		std::vector<uint8_t> fileData;
+		std::wstring displayInfo;
+
+		if (m_managerIntegration->GetFileOperationManager()->LoadFileForTransmission(filePath.GetString(), fileData, displayInfo))
 		{
+			// 更新传输数据
+			m_transmissionData = fileData;
+			m_currentFileName = PathFindFileName(filePath);
+
+			// 显示文件信息
+			AppendLog(CString(displayInfo.c_str()));
+			UpdateDataSourceDisplay(L"文件: " + m_currentFileName);
+
+			// 更新数据显示
+			if (m_managerIntegration->GetDataDisplayManager()) {
+				m_managerIntegration->UpdateDataDisplay(fileData, m_bHexDisplay ? DisplayMode::HEX : DisplayMode::TEXT);
+			}
+
 			ShowUserMessage(L"文件加载成功", L"文件已加载并准备传输", MB_ICONINFORMATION);
 			UpdateButtonStatesLegacy();
 		}
@@ -1817,34 +1835,37 @@ void CPortMasterDlg::OnBnClickedLoadFile()
 
 void CPortMasterDlg::OnBnClickedSaveFile()
 {
+	// SOLID-S: 单一职责 - 文件保存逻辑委托给FileOperationManager
+	if (!m_managerIntegration || !m_managerIntegration->GetFileOperationManager())
+	{
+		AppendLog(L"文件操作管理器未初始化");
+		return;
+	}
+
 	std::vector<uint8_t> dataToSave;
 	{
 		std::lock_guard<std::mutex> lock(m_displayDataMutex);
 		dataToSave = m_displayedData;
 	}
-	
+
 	if (dataToSave.empty())
 	{
 		ShowUserMessage(L"保存失败", L"没有数据可保存", MB_ICONWARNING);
 		return;
 	}
-	
+
 	CFileDialog fileDlg(FALSE, L"dat", L"ReceivedData",
 		OFN_OVERWRITEPROMPT,
 		L"数据文件|*.dat|二进制文件|*.bin|文本文件|*.txt|所有文件|*.*||");
-		
+
 	if (fileDlg.DoModal() == IDOK)
 	{
 		CString filePath = fileDlg.GetPathName();
-		std::ofstream file(CT2A(filePath), std::ios::binary);
-		
-		if (file.is_open())
+
+		if (m_managerIntegration->GetFileOperationManager()->SaveFile(filePath.GetString(), dataToSave))
 		{
-			file.write(reinterpret_cast<const char*>(dataToSave.data()), dataToSave.size());
-			file.close();
-			
 			CString msg;
-			msg.Format(L"文件保存成功: %s (%zu 字节)", 
+			msg.Format(L"文件保存成功: %s (%zu 字节)",
 				PathFindFileName(filePath), dataToSave.size());
 			AppendLog(msg);
 			ShowUserMessage(L"保存成功", msg, MB_ICONINFORMATION);
@@ -2285,80 +2306,8 @@ void CPortMasterDlg::UpdateDataSourceDisplay(const CString& source)
 	AppendLog(L"数据源: " + source);
 }
 
-bool CPortMasterDlg::LoadFileForTransmission(const CString& filePath)
-{
-	try
-	{
-		std::ifstream file(CT2A(filePath), std::ios::binary | std::ios::ate);
-		if (!file.is_open())
-			return false;
-			
-		size_t fileSize = static_cast<size_t>(file.tellg());
-		if (fileSize == 0)
-		{
-			file.close();
-			return false;
-		}
-		
-		// 检查文件大小限制 (SOLID-S: 单一职责 - 资源管理)
-		if (fileSize > AppConstants::MAX_FILE_SIZE)
-		{
-			file.close();
-			CString sizeMsg;
-			sizeMsg.Format(L"文件过大 (%.2f MB)，最大支持 %.2f MB", 
-				fileSize * AppConstants::GetBytesToMegabytes(),
-				AppConstants::MAX_FILE_SIZE * AppConstants::GetBytesToMegabytes());
-			ShowUserMessage(L"文件过大", sizeMsg, MB_ICONWARNING);
-			return false;
-		}
-		
-		file.seekg(0, std::ios::beg);
-		
-		m_transmissionData.resize(static_cast<size_t>(fileSize));
-		file.read(reinterpret_cast<char*>(m_transmissionData.data()), fileSize);
-		file.close();
-		
-		// 设置文件名
-		m_currentFileName = PathFindFileName(filePath);
-		
-		// 显示文件内容到输入框（实现真正共用设计）
-		// 🔑 架构重构：使用DataDisplayManager统一格式化（简化实现）
-		if (m_bHexDisplay) {
-			// 简化的十六进制格式化
-			CString hexDisplay;
-			hexDisplay.Preallocate(static_cast<int>(m_transmissionData.size() * 3));
-			for (size_t i = 0; i < m_transmissionData.size(); ++i) {
-				CString hexByte;
-				hexByte.Format(L"%02X ", m_transmissionData[i]);
-				hexDisplay += hexByte;
-			}
-			m_ctrlInputHex.SetWindowText(hexDisplay);
-		} else {
-			// 简化的文本格式化
-			CString textDisplay;
-			for (uint8_t byte : m_transmissionData) {
-				if (byte >= 32 && byte <= 126) {
-					textDisplay += static_cast<wchar_t>(byte);
-				} else if (byte == 0x0A) {
-					textDisplay += L"\r\n";
-				}
-			}
-			m_ctrlInputHex.SetWindowText(textDisplay);
-		}
-		
-		CString msg;
-		msg.Format(L"已加载文件: %s (%zu 字节)", 
-			PathFindFileName(filePath), fileSize);
-		AppendLog(msg);
-		UpdateDataSourceDisplay(L"文件: " + CString(PathFindFileName(filePath)));
-		
-		return true;
-	}
-	catch (...) 
-	{
-		return false;
-	}
-}
+// 🔑 架构重构完成：LoadFileForTransmission已迁移至FileOperationManager::LoadFileForTransmission
+// 提供了更好的错误处理、文件验证和显示信息格式化功能
 
 // SOLID-S: 单一职责 - 数据格式处理辅助方法
 
