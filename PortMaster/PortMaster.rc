@@ -1,0 +1,77 @@
+#include "resource.h"
+#include "afxres.h"
+
+/////////////////////////////////////////////////////////////////////////////
+// Dialog
+
+IDD_ABOUTBOX DIALOGEX 0, 0, 170, 62
+STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About PortMaster"
+FONT 9, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    ICON            IDR_MAINFRAME,IDC_STATIC,14,14,21,20
+    LTEXT           "PortMaster, Version 1.0",IDC_STATIC,42,14,114,8,SS_NOPREFIX
+    LTEXT           "Port Communication Tool",IDC_STATIC,42,26,114,8
+    DEFPUSHBUTTON   "OK",IDOK,113,41,50,14,WS_GROUP
+END
+
+IDD_PORTMASTER_DIALOG DIALOGEX 0, 0, 600, 400
+STYLE DS_SETFONT | DS_FIXEDSYS | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_POPUP | WS_VISIBLE | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME
+EXSTYLE WS_EX_APPWINDOW
+CAPTION "PortMaster - Port Communication Tool"
+FONT 9, "MS Shell Dlg", 0, 0, 0x1
+BEGIN
+    LTEXT           "Port Type:",IDC_STATIC,7,7,35,8
+    COMBOBOX        IDC_COMBO_PORT_TYPE,47,7,80,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Port Name:",IDC_STATIC,140,7,35,8
+    COMBOBOX        IDC_COMBO_PORT_NAME,180,7,80,100,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Baud Rate:",IDC_STATIC,270,7,35,8
+    EDITTEXT        IDC_EDIT_BAUD_RATE,310,7,50,14,ES_AUTOHSCROLL
+    PUSHBUTTON      "Connect",IDC_BUTTON_CONNECT,370,7,50,14
+    PUSHBUTTON      "Disconnect",IDC_BUTTON_DISCONNECT,430,7,50,14
+    CONTROL         "Reliable",IDC_CHECK_RELIABLE_MODE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,490,7,50,10
+    CONTROL         "Hex View",IDC_CHECK_HEX_VIEW,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,545,7,50,10
+
+    GROUPBOX        "Send Data",IDC_STATIC,7,30,586,100
+    EDITTEXT        IDC_EDIT_SEND_DATA,14,45,500,60,ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL
+    PUSHBUTTON      "Send",IDC_BUTTON_SEND,520,45,30,20
+    PUSHBUTTON      "Clear",IDC_BUTTON_CLEAR,520,70,30,20
+    PUSHBUTTON      "Browse",IDC_BUTTON_BROWSE,520,95,30,20
+
+    GROUPBOX        "Receive Data",IDC_STATIC,7,140,586,150
+    EDITTEXT        IDC_EDIT_RECEIVE_DATA,14,155,572,120,ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL
+
+    GROUPBOX        "Log Information",IDC_STATIC,7,300,586,70
+    CONTROL         "",IDC_LIST_LOG,"SysListView32",LVS_REPORT | LVS_ALIGNLEFT | WS_BORDER | WS_TABSTOP,14,315,572,50
+
+    CONTROL         "",IDC_PROGRESS,"msctls_progress32",WS_BORDER,7,375,500,15
+    LTEXT           "Ready",IDC_STATIC_STATUS,515,378,75,8
+END
+
+/////////////////////////////////////////////////////////////////////////////
+// Icon
+
+IDR_MAINFRAME           ICON                    "res\\PortMaster.ico"
+
+#ifdef APSTUDIO_INVOKED
+/////////////////////////////////////////////////////////////////////////////
+// TEXTINCLUDE
+
+1 TEXTINCLUDE
+BEGIN
+    "resource.h\0"
+END
+
+2 TEXTINCLUDE
+BEGIN
+    "#include ""afxres.h""\r\n"
+    "\0"
+END
+
+3 TEXTINCLUDE
+BEGIN
+    "\r\n"
+    "\0"
+END
+
+#endif    // APSTUDIO_INVOKED
