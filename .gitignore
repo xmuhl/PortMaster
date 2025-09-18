@@ -1,0 +1,47 @@
+﻿# —— IDE —— 
+.vscode/
+.vs/
+*.code-workspace
+
+# —— VS/WDK/MFC 构建产物 —— 
+[Bb]in/
+[Dd]ebug*/
+[Rr]elease*/
+x64/
+x86/
+[Oo]bj/
+ipch/
+*.obj
+*.pdb
+*.idb
+*.ilk
+*.exp
+*.lib
+*.exe
+*.dll
+*.iobj
+*.ipdb
+*.tlog
+*.lastbuildstate
+*.log
+*.sbr
+
+# —— 版本控制/其他 —— 
+.svn/
+Thumbs.db
+.DS_Store
+*.tmp
+*.bak
+*.swp
+
+# —— Node/Web 可选 —— 
+node_modules/
+dist/
+coverage/
+
+# —— Python 可选 —— 
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
