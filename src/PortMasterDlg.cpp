@@ -57,29 +57,53 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
-	// 只绑定最基本的控件来测试
+	
+	// 基本按钮控件绑定
 	DDX_Control(pDX, IDC_BUTTON_CONNECT, m_btnConnect);
 	DDX_Control(pDX, IDC_BUTTON_DISCONNECT, m_btnDisconnect);
 	DDX_Control(pDX, IDC_BUTTON_SEND, m_btnSend);
 	DDX_Control(pDX, IDC_BUTTON_CLEAR, m_btnClear);
 	DDX_Control(pDX, IDC_BUTTON_SAVE, m_btnSave);
-	DDX_Control(pDX, IDC_BUTTON_SETTINGS, m_btnSettings);
-	DDX_Control(pDX, IDC_BUTTON_ABOUT, m_btnAbout);
-	DDX_Control(pDX, IDC_BUTTON_PAUSE, m_btnPause);
-	DDX_Control(pDX, IDC_BUTTON_CONTINUE, m_btnContinue);
+	// 移除了不存在的控件: SETTINGS, ABOUT, PAUSE, CONTINUE
 	DDX_Control(pDX, IDC_BUTTON_STOP, m_btnStop);
 	DDX_Control(pDX, IDC_BUTTON_COPY, m_btnCopy);
 	DDX_Control(pDX, IDC_BUTTON_FILE, m_btnFile);
 	DDX_Control(pDX, IDC_BUTTON_EXPORT_LOG, m_btnExportLog);
+	
+	// 新增按钮控件绑定
+	DDX_Control(pDX, IDC_BUTTON_CLEAR_ALL, m_btnClearAll);
+	DDX_Control(pDX, IDC_BUTTON_CLEAR_RECEIVE, m_btnClearReceive);
+	DDX_Control(pDX, IDC_BUTTON_COPY_ALL, m_btnCopyAll);
+	DDX_Control(pDX, IDC_BUTTON_SAVE_ALL, m_btnSaveAll);
+	
+	// 编辑框控件绑定
 	DDX_Control(pDX, IDC_EDIT_SEND_DATA, m_editSendData);
 	DDX_Control(pDX, IDC_EDIT_RECEIVE_DATA, m_editReceiveData);
+	DDX_Control(pDX, IDC_EDIT_LOG_DETAIL, m_editLogDetail);
+	
+	// 下拉框控件绑定
 	DDX_Control(pDX, IDC_COMBO_PORT_TYPE, m_comboPortType);
 	DDX_Control(pDX, IDC_COMBO_PORT, m_comboPort);
 	DDX_Control(pDX, IDC_COMBO_BAUD_RATE, m_comboBaudRate);
-	DDX_Control(pDX, IDC_RADIO_RELIABLE, m_radioReliable);
-	DDX_Control(pDX, IDC_RADIO_DIRECT, m_radioDirect);
+	DDX_Control(pDX, IDC_COMBO_DATA_BITS, m_comboDataBits);
+	DDX_Control(pDX, IDC_COMBO_PARITY, m_comboParity);
+	DDX_Control(pDX, IDC_COMBO_STOP_BITS, m_comboStopBits);
+	DDX_Control(pDX, IDC_COMBO_FLOW_CONTROL, m_comboFlowControl);
+	
+	// 选项控件绑定 (移除了不存在的RADIO按钮)
 	DDX_Control(pDX, IDC_CHECK_HEX, m_checkHex);
+	DDX_Control(pDX, IDC_CHECK_OCCUPY, m_checkOccupy);
+	
+	// 状态显示控件绑定
 	DDX_Control(pDX, IDC_PROGRESS, m_progress);
+	DDX_Control(pDX, IDC_STATIC_LOG, m_staticLog);
+	DDX_Control(pDX, IDC_STATIC_PORT_STATUS, m_staticPortStatus);
+	DDX_Control(pDX, IDC_STATIC_MODE, m_staticMode);
+	DDX_Control(pDX, IDC_STATIC_SPEED, m_staticSpeed);
+	DDX_Control(pDX, IDC_STATIC_CHECK, m_staticCheck);
+	DDX_Control(pDX, IDC_STATIC_PROGRESS_TEXT, m_staticProgressText);
+	DDX_Control(pDX, IDC_STATIC_STATUS, m_staticStatus);
+	DDX_Control(pDX, IDC_STATIC_SEND_SOURCE, m_staticSendSource);
 }
 
 BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
@@ -139,8 +163,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 	// TODO: 在此添加额外的初始化代码
 	
-	// 基本初始化
+	// 初始化端口类型下拉框
 	m_comboPortType.AddString(_T("串口"));
+	m_comboPortType.AddString(_T("LPT"));
 	m_comboPortType.AddString(_T("TCP客户端"));
 	m_comboPortType.AddString(_T("TCP服务器"));
 	m_comboPortType.AddString(_T("UDP"));
@@ -168,19 +193,49 @@ BOOL CPortMasterDlg::OnInitDialog()
 	m_comboBaudRate.AddString(_T("921600"));
 	m_comboBaudRate.SetCurSel(0);
 	
-	// 设置默认模式
-	m_radioReliable.SetCheck(BST_CHECKED);
+	// 初始化数据位下拉框
+	m_comboDataBits.AddString(_T("8"));
+	m_comboDataBits.AddString(_T("7"));
+	m_comboDataBits.AddString(_T("6"));
+	m_comboDataBits.AddString(_T("5"));
+	m_comboDataBits.SetCurSel(0);
+	
+	// 初始化校验位下拉框
+	m_comboParity.AddString(_T("None"));
+	m_comboParity.AddString(_T("Odd"));
+	m_comboParity.AddString(_T("Even"));
+	m_comboParity.AddString(_T("Mark"));
+	m_comboParity.AddString(_T("Space"));
+	m_comboParity.SetCurSel(0);
+	
+	// 初始化停止位下拉框
+	m_comboStopBits.AddString(_T("1"));
+	m_comboStopBits.AddString(_T("1.5"));
+	m_comboStopBits.AddString(_T("2"));
+	m_comboStopBits.SetCurSel(0);
+	
+	// 初始化流控下拉框
+	m_comboFlowControl.AddString(_T("None"));
+	m_comboFlowControl.AddString(_T("RTS/CTS"));
+	m_comboFlowControl.AddString(_T("XON/XOFF"));
+	m_comboFlowControl.SetCurSel(0);
+	
+	// 默认模式设置 (移除了不存在的单选按钮引用)
 	
 	// 初始化进度条
 	m_progress.SetRange(0, 100);
 	m_progress.SetPos(0);
 	
 	// 显示初始状态
-	SetDlgItemText(IDC_STATIC_PORT_STATUS, _T("端口: 就绪"));
-	SetDlgItemText(IDC_STATIC_MODE, _T("模式: 可靠"));
-	SetDlgItemText(IDC_STATIC_SPEED, _T("速率: 0KB/s"));
-	SetDlgItemText(IDC_STATIC_LOOP_COUNT, _T("回路测试轮次: 0"));
-	SetDlgItemText(IDC_STATIC_CHECK, _T("校验: 通过"));
+	SetDlgItemText(IDC_STATIC_LOG, _T("日志:[23:30:11] 程序启动成功[14:47:54.482] PortMaster 初始化完成"));
+	SetDlgItemText(IDC_STATIC_PORT_STATUS, _T("未连接"));
+	SetDlgItemText(IDC_STATIC_MODE, _T("全部"));
+	SetDlgItemText(IDC_STATIC_SPEED, _T("速度:0KB/s"));
+	SetDlgItemText(IDC_STATIC_CHECK, _T("跳线"));
+	SetDlgItemText(IDC_STATIC_PROGRESS_TEXT, _T("进度:0/0"));
+	SetDlgItemText(IDC_STATIC_STATUS, _T("状态:就绪"));
+	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("当前数据源: 手动输入"));
+	SetDlgItemText(IDC_EDIT_LOG_DETAIL, _T("状态:就绪"));
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
