@@ -1,0 +1,60 @@
+﻿//{{NO_DEPENDENCIES}}
+// Microsoft Visual C++ 生成的包含文件。
+// 供 PortMaster.rc 使用
+//
+#define IDD_ABOUTBOX                    100
+#define IDR_MAINFRAME                   128
+#define IDD_PORTMASTER_DIALOG           129
+#define IDI_PORTMASTER                  130
+#define IDC_BUTTON_CONNECT              1000
+#define IDC_BUTTON_DISCONNECT           1001
+#define IDC_BUTTON_SEND                 1002
+#define IDC_BUTTON_CLEAR                1003
+#define IDC_BUTTON_SAVE                 1004
+#define IDC_BUTTON_SETTINGS             1005
+#define IDC_BUTTON_ABOUT                1006
+#define IDC_EDIT_SEND_DATA              1007
+#define IDC_EDIT_RECEIVE_DATA           1008
+#define IDC_COMBO_COM_PORT              1009
+#define IDC_COMBO_BAUD_RATE             1010
+#define IDC_RADIO_TEXT                  1011
+#define IDC_RADIO_HEX                   1012
+#define IDC_STATIC_STATUS               1013
+#define IDC_PROGRESS                    1014
+#define IDS_ABOUTBOX                    1015
+#define IDS_PORTMASTER                  1016
+#define IDC_RADIO_RELIABLE              1017
+#define IDC_RADIO_DIRECT                1018
+#define IDC_COMBO_PORT_TYPE             1019
+#define IDC_COMBO_PORT                  1020
+#define IDC_COMBO_DATA_BITS             1021
+#define IDC_COMBO_PARITY                1022
+#define IDC_COMBO_STOP_BITS             1023
+#define IDC_COMBO_FLOW_CONTROL          1024
+#define IDC_CHECK_OCCUPY                1025
+#define IDC_CHECK_HEX                   1026
+#define IDC_STATIC_SEND_SOURCE          1027
+#define IDC_BUTTON_PAUSE                1028
+#define IDC_BUTTON_CONTINUE             1029
+#define IDC_BUTTON_STOP                 1030
+#define IDC_BUTTON_COPY                 1031
+#define IDC_BUTTON_FILE                 1032
+#define IDC_STATIC_LOG                  1033
+#define IDC_STATIC_PORT_STATUS          1034
+#define IDC_STATIC_MODE                 1035
+#define IDC_STATIC_SPEED                1036
+#define IDC_STATIC_LOOP_COUNT           1037
+#define IDC_STATIC_CHECK                1038
+#define IDC_BUTTON_EXPORT_LOG           1039
+#define IDM_ABOUTBOX                    0x0010
+
+// Next default values for new objects
+// 
+#ifdef APSTUDIO_INVOKED
+#ifndef APSTUDIO_READONLY_SYMBOLS
+#define _APS_NEXT_RESOURCE_VALUE        201
+#define _APS_NEXT_COMMAND_VALUE         32771
+#define _APS_NEXT_CONTROL_VALUE         1040
+#define _APS_NEXT_SYMED_VALUE           101
+#endif
+#endif
