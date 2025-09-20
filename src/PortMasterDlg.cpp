@@ -88,7 +88,7 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_COMBO_DATA_BITS, m_comboDataBits);
 	DDX_Control(pDX, IDC_COMBO_PARITY, m_comboParity);
 	DDX_Control(pDX, IDC_COMBO_STOP_BITS, m_comboStopBits);
-	DDX_Control(pDX, IDC_COMBO_FLOW_CONTROL, m_comboFlowControl);
+	// IDC_COMBO_FLOW_CONTROL 已从设计中移除
 	
 	// 选项控件绑定 (移除了不存在的RADIO按钮)
 	DDX_Control(pDX, IDC_CHECK_HEX, m_checkHex);
@@ -214,11 +214,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 	m_comboStopBits.AddString(_T("2"));
 	m_comboStopBits.SetCurSel(0);
 	
-	// 初始化流控下拉框
-	m_comboFlowControl.AddString(_T("None"));
-	m_comboFlowControl.AddString(_T("RTS/CTS"));
-	m_comboFlowControl.AddString(_T("XON/XOFF"));
-	m_comboFlowControl.SetCurSel(0);
+	// 流控下拉框已从设计中移除
 	
 	// 默认模式设置 (移除了不存在的单选按钮引用)
 	
