@@ -62,11 +62,10 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_BUTTON_CONNECT, m_btnConnect);
 	DDX_Control(pDX, IDC_BUTTON_DISCONNECT, m_btnDisconnect);
 	DDX_Control(pDX, IDC_BUTTON_SEND, m_btnSend);
-	DDX_Control(pDX, IDC_BUTTON_CLEAR, m_btnClear);
-	DDX_Control(pDX, IDC_BUTTON_SAVE, m_btnSave);
+	// IDC_BUTTON_CLEAR, IDC_BUTTON_SAVE 已从数据接收区删除，移除绑定
 	// 移除了不存在的控件: SETTINGS, ABOUT, PAUSE, CONTINUE
 	DDX_Control(pDX, IDC_BUTTON_STOP, m_btnStop);
-	DDX_Control(pDX, IDC_BUTTON_COPY, m_btnCopy);
+	// IDC_BUTTON_COPY 已从数据接收区删除，移除绑定
 	DDX_Control(pDX, IDC_BUTTON_FILE, m_btnFile);
 	DDX_Control(pDX, IDC_BUTTON_EXPORT_LOG, m_btnExportLog);
 	
@@ -102,7 +101,7 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC_SPEED, m_staticSpeed);
 	DDX_Control(pDX, IDC_STATIC_CHECK, m_staticCheck);
 	DDX_Control(pDX, IDC_STATIC_PROGRESS_TEXT, m_staticProgressText);
-	DDX_Control(pDX, IDC_STATIC_STATUS, m_staticStatus);
+	// IDC_STATIC_STATUS 在RC文件中不存在，已移除绑定
 	DDX_Control(pDX, IDC_STATIC_SEND_SOURCE, m_staticSendSource);
 }
 
@@ -229,7 +228,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 	SetDlgItemText(IDC_STATIC_SPEED, _T("速度:0KB/s"));
 	SetDlgItemText(IDC_STATIC_CHECK, _T("跳线"));
 	SetDlgItemText(IDC_STATIC_PROGRESS_TEXT, _T("进度:0/0"));
-	SetDlgItemText(IDC_STATIC_STATUS, _T("状态:就绪"));
+	// IDC_STATIC_STATUS 在RC文件中不存在，已移除设置
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("当前数据源: 手动输入"));
 	SetDlgItemText(IDC_EDIT_LOG_DETAIL, _T("状态:就绪"));
 

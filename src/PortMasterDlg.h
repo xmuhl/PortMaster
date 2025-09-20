@@ -29,14 +29,14 @@ public:
 	CButton m_btnConnect;
 	CButton m_btnDisconnect;
 	CButton m_btnSend;
-	CButton m_btnClear;
-	CButton m_btnSave;
+	// CButton m_btnClear; // 已从数据接收区删除
+	// CButton m_btnSave; // 已从数据接收区删除
 	CButton m_btnSettings;
 	CButton m_btnAbout;
 	CButton m_btnPause;
 	CButton m_btnContinue;
 	CButton m_btnStop;
-	CButton m_btnCopy;
+	// CButton m_btnCopy; // 已从数据接收区删除
 	CButton m_btnFile;
 	CButton m_btnExportLog;
 	
@@ -74,7 +74,7 @@ public:
 	CStatic m_staticSpeed;
 	CStatic m_staticCheck;
 	CStatic m_staticProgressText;
-	CStatic m_staticStatus;
+	// CStatic m_staticStatus; // 对应的IDC_STATIC_STATUS不存在于RC文件中
 	CStatic m_staticSendSource;
 
 // 消息处理函数声明
