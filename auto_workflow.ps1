@@ -58,8 +58,15 @@ function Test-GitEnvironment {
         $remotes = git remote
         if ($remotes -contains "backup") {
             Write-WorkflowLog "backup远程仓库配置正常"
+            # 检查远程仓库URL是否正确
+            $remoteUrl = git remote get-url backup
+            if ($remoteUrl -ne "D:\GitBackups\PortMaster.git") {
+                Write-WorkflowLog "backup远程仓库URL不正确，正在修正..." "WARNING"
+                git remote set-url backup "D:\GitBackups\PortMaster.git"
+            }
         } else {
-            Write-WorkflowLog "未找到backup远程仓库" "WARNING"
+            Write-WorkflowLog "未找到backup远程仓库，正在创建..." "WARNING"
+            git remote add backup "D:\GitBackups\PortMaster.git"
         }
         
         if ($remotes -contains "origin") {
