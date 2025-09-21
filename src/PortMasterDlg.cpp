@@ -64,7 +64,6 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_BUTTON_SEND, m_btnSend);
 	DDX_Control(pDX, IDC_BUTTON_STOP, m_btnStop);
 	DDX_Control(pDX, IDC_BUTTON_FILE, m_btnFile);
-	DDX_Control(pDX, IDC_BUTTON_EXPORT_LOG, m_btnExportLog);
 	
 	// 新增按钮控件绑定
 	DDX_Control(pDX, IDC_BUTTON_CLEAR_ALL, m_btnClearAll);
@@ -75,7 +74,6 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	// 编辑框控件绑定
 	DDX_Control(pDX, IDC_EDIT_SEND_DATA, m_editSendData);
 	DDX_Control(pDX, IDC_EDIT_RECEIVE_DATA, m_editReceiveData);
-	DDX_Control(pDX, IDC_EDIT_LOG_DETAIL, m_editLogDetail);
 	DDX_Control(pDX, IDC_EDIT_TIMEOUT, m_editTimeout);
 	
 	// 下拉框控件绑定
@@ -99,8 +97,6 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC_PORT_STATUS, m_staticPortStatus);
 	DDX_Control(pDX, IDC_STATIC_MODE, m_staticMode);
 	DDX_Control(pDX, IDC_STATIC_SPEED, m_staticSpeed);
-	DDX_Control(pDX, IDC_STATIC_CHECK, m_staticCheck);
-	DDX_Control(pDX, IDC_STATIC_LOOP_COUNT, m_staticLoopCount);
 	DDX_Control(pDX, IDC_STATIC_SEND_SOURCE, m_staticSendSource);
 }
 
@@ -113,7 +109,6 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_SEND, &CPortMasterDlg::OnBnClickedButtonSend)
 	ON_BN_CLICKED(IDC_BUTTON_STOP, &CPortMasterDlg::OnBnClickedButtonStop)
 	ON_BN_CLICKED(IDC_BUTTON_FILE, &CPortMasterDlg::OnBnClickedButtonFile)
-	ON_BN_CLICKED(IDC_BUTTON_EXPORT_LOG, &CPortMasterDlg::OnBnClickedButtonExportLog)
 	ON_BN_CLICKED(IDC_BUTTON_CLEAR_ALL, &CPortMasterDlg::OnBnClickedButtonClearAll)
 	ON_BN_CLICKED(IDC_BUTTON_CLEAR_RECEIVE, &CPortMasterDlg::OnBnClickedButtonClearReceive)
 	ON_BN_CLICKED(IDC_BUTTON_COPY_ALL, &CPortMasterDlg::OnBnClickedButtonCopyAll)
@@ -227,22 +222,17 @@ BOOL CPortMasterDlg::OnInitDialog()
 	m_progress.SetPos(0);
 	
 	// 显示初始状态
-	SetDlgItemText(IDC_STATIC_LOG, _T("日志:[23:30:11] 程序启动成功[14:47:54.482] PortMaster 初始化完成"));
+	SetDlgItemText(IDC_STATIC_LOG, _T("程序启动成功"));
 	SetDlgItemText(IDC_STATIC_PORT_STATUS, _T("未连接"));
-	SetDlgItemText(IDC_STATIC_MODE, _T("全部"));
-	SetDlgItemText(IDC_STATIC_SPEED, _T("速度:0KB/s"));
-	SetDlgItemText(IDC_STATIC_CHECK, _T("跳线"));
-	SetDlgItemText(IDC_STATIC_LOOP_COUNT, _T("循环:0"));
-	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("当前数据源: 手动输入"));
-	SetDlgItemText(IDC_EDIT_LOG_DETAIL, _T("状态:就绪"));
+	SetDlgItemText(IDC_STATIC_MODE, _T("可靠"));
+	SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
+	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("手动输入"));
 
 	// 初始化状态条信息
 	m_staticPortStatus.SetWindowText(_T("未连接"));
-	m_staticMode.SetWindowText(_T("可靠模式"));
-	m_staticSpeed.SetWindowText(_T("9600"));
-	m_staticCheck.SetWindowText(_T("无校验"));
-	m_staticLoopCount.SetWindowText(_T("循环: 0"));
-	m_staticSendSource.SetWindowText(_T("数据源: 手动输入"));
+	m_staticMode.SetWindowText(_T("可靠"));
+	m_staticSpeed.SetWindowText(_T("0KB/s"));
+	m_staticSendSource.SetWindowText(_T("来源: 手动输入"));
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -348,7 +338,7 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 		// 更新数据源显示
 		CString fileName = dlg.GetFileName();
 		CString sourceText;
-		sourceText.Format(_T("当前数据源: %s"), fileName);
+		sourceText.Format(_T("来源: %s"), fileName);
 		SetDlgItemText(IDC_STATIC_SEND_SOURCE, sourceText);
 	}
 }
@@ -379,7 +369,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 		}
 		
 		// 更新数据源状态
-		m_staticSendSource.SetWindowText(_T("数据源: 文件"));
+		m_staticSendSource.SetWindowText(_T("来源: 文件"));
 	}
 	else
 	{
@@ -387,11 +377,6 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 	}
 }
 
-void CPortMasterDlg::OnBnClickedButtonExportLog()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("导出日志功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
 
 void CPortMasterDlg::OnCbnSelchangeComboPortType()
 {
@@ -532,7 +517,7 @@ void CPortMasterDlg::OnBnClickedRadioReliable()
 	MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 	
 	// 更新状态条模式信息
-	m_staticMode.SetWindowText(_T("可靠模式"));
+	m_staticMode.SetWindowText(_T("可靠"));
 }
 
 void CPortMasterDlg::OnBnClickedButtonClearAll()
@@ -542,7 +527,7 @@ void CPortMasterDlg::OnBnClickedButtonClearAll()
 	m_editReceiveData.SetWindowText(_T(""));
 	
 	// 重置数据源显示
-	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("当前数据源: 手动输入"));
+	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("来源: 手动输入"));
 	
 	// 更新日志
 	CString logText;
@@ -654,8 +639,8 @@ void CPortMasterDlg::SaveDataToFile(const CString& filePath, const CString& data
 void CPortMasterDlg::OnBnClickedRadioDirect()
 {
 	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("直接模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 	
 	// 更新状态条模式信息
-	m_staticMode.SetWindowText(_T("直接模式"));
+	m_staticMode.SetWindowText(_T("直通"));
 }

@@ -52,9 +52,8 @@ public:
 	CButton m_btnSend;
 	CButton m_btnStop;
 	CButton m_btnFile;
-	CButton m_btnExportLog;
 	
-	// 新增操作按钮
+	// 操作按钮
 	CButton m_btnClearAll;
 	CButton m_btnClearReceive;
 	CButton m_btnCopyAll;
@@ -63,7 +62,6 @@ public:
 	// 编辑框控件
 	CEdit m_editSendData;
 	CEdit m_editReceiveData;
-	CEdit m_editLogDetail;
 	CEdit m_editTimeout;
 	
 	// 下拉框控件
@@ -87,8 +85,6 @@ public:
 	CStatic m_staticPortStatus;
 	CStatic m_staticMode;
 	CStatic m_staticSpeed;
-	CStatic m_staticCheck;
-	CStatic m_staticLoopCount;
 	CStatic m_staticSendSource;
 
 // 消息处理函数声明
@@ -97,12 +93,10 @@ public:
 	afx_msg void OnBnClickedButtonSend();
 	afx_msg void OnBnClickedButtonStop();
 	afx_msg void OnBnClickedButtonFile();
-	afx_msg void OnBnClickedButtonExportLog();
 	
 	// 控件事件处理
 	afx_msg void OnCbnSelchangeComboPortType();
 	afx_msg void OnBnClickedCheckHex();
 	afx_msg void OnBnClickedRadioReliable();
 	afx_msg void OnBnClickedRadioDirect();
-	afx_msg void OnBnClickedCheckOccupy();
 };
