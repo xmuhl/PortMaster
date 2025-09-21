@@ -1,6 +1,11 @@
 ﻿// PortMasterDlg.h : 头文件
 #pragma once
 #include "afxwin.h"
+#include "../Transport/ITransport.h"
+#include "../Protocol/ReliableChannel.h"
+#include <memory>
+#include <thread>
+#include <atomic>
 
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
@@ -87,6 +92,37 @@ public:
 	CStatic m_staticSpeed;
 	CStatic m_staticSendSource;
 
+// Transport层集成
+private:
+	std::shared_ptr<ITransport> m_transport;
+	std::unique_ptr<ReliableChannel> m_reliableChannel;
+	std::atomic<bool> m_isConnected;
+	std::atomic<bool> m_isTransmitting;
+	std::thread m_receiveThread;
+	
+	// 传输配置
+	TransportConfig m_transportConfig;
+	ReliableConfig m_reliableConfig;
+	
+	// 统计信息
+	uint64_t m_bytesSent;
+	uint64_t m_bytesReceived;
+	uint32_t m_sendSpeed;
+	uint32_t m_receiveSpeed;
+	
+	// 内部方法
+	void InitializeTransportConfig();
+	bool CreateTransport();
+	void DestroyTransport();
+	void StartReceiveThread();
+	void StopReceiveThread();
+	void UpdateConnectionStatus();
+	void UpdateStatistics();
+	void OnTransportDataReceived(const std::vector<uint8_t>& data);
+	void OnTransportError(const std::string& error);
+	void OnReliableProgress(uint32_t progress);
+	void OnReliableComplete(bool success);
+
 // 消息处理函数声明
 	afx_msg void OnBnClickedButtonConnect();
 	afx_msg void OnBnClickedButtonDisconnect();
@@ -99,4 +135,8 @@ public:
 	afx_msg void OnBnClickedCheckHex();
 	afx_msg void OnBnClickedRadioReliable();
 	afx_msg void OnBnClickedRadioDirect();
+	
+	// 自定义消息处理
+	afx_msg LRESULT OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnTransportErrorMessage(WPARAM wParam, LPARAM lParam);
 };

@@ -53,6 +53,10 @@
 #define IDC_STATIC_STATUS               1044
 #define IDC_EDIT_LOG_DETAIL             1045
 #define IDC_EDIT_TIMEOUT                1046
+#define IDC_STATIC_SENT                 1047
+#define IDC_STATIC_RECEIVED             1048
+#define IDC_EDIT_SEND                   1049
+#define IDC_EDIT_SEND_HISTORY           1050
 #define IDM_ABOUTBOX                    0x0010
 
 // Next default values for new objects

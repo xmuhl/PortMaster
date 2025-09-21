@@ -6,6 +6,9 @@
 #include "PortMaster.h"
 #include "PortMasterDlg.h"
 #include "afxdialogex.h"
+#include "../Transport/SerialTransport.h"
+#include "../Common/CommonTypes.h"
+#include <chrono>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -50,6 +53,14 @@ END_MESSAGE_MAP()
 
 CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent)
+	, m_isConnected(false)
+	, m_isTransmitting(false)
+	, m_bytesSent(0)
+	, m_bytesReceived(0)
+	, m_sendSpeed(0)
+	, m_receiveSpeed(0)
+	, m_transport(nullptr)
+	, m_reliableChannel(nullptr)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -117,6 +128,8 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_CHECK_HEX, &CPortMasterDlg::OnBnClickedCheckHex)
 	ON_BN_CLICKED(IDC_RADIO_RELIABLE, &CPortMasterDlg::OnBnClickedRadioReliable)
 	ON_BN_CLICKED(IDC_RADIO_DIRECT, &CPortMasterDlg::OnBnClickedRadioDirect)
+	ON_MESSAGE(WM_USER + 1, &CPortMasterDlg::OnTransportDataReceivedMessage)
+	ON_MESSAGE(WM_USER + 2, &CPortMasterDlg::OnTransportErrorMessage)
 END_MESSAGE_MAP()
 
 
@@ -155,59 +168,30 @@ BOOL CPortMasterDlg::OnInitDialog()
 	
 	// 初始化端口类型下拉框
 	m_comboPortType.AddString(_T("串口"));
-	m_comboPortType.AddString(_T("LPT"));
-	m_comboPortType.AddString(_T("TCP客户端"));
-	m_comboPortType.AddString(_T("TCP服务器"));
-	m_comboPortType.AddString(_T("UDP"));
 	m_comboPortType.SetCurSel(0);
 	
 	// 初始化端口列表
 	m_comboPort.AddString(_T("COM1"));
-	m_comboPort.AddString(_T("COM2"));
-	m_comboPort.AddString(_T("COM3"));
-	m_comboPort.AddString(_T("COM4"));
-	m_comboPort.AddString(_T("COM5"));
-	m_comboPort.AddString(_T("COM6"));
-	m_comboPort.AddString(_T("COM7"));
-	m_comboPort.AddString(_T("COM8"));
 	m_comboPort.SetCurSel(0);
 	
 	// 初始化波特率列表
 	m_comboBaudRate.AddString(_T("9600"));
-	m_comboBaudRate.AddString(_T("19200"));
-	m_comboBaudRate.AddString(_T("38400"));
-	m_comboBaudRate.AddString(_T("57600"));
-	m_comboBaudRate.AddString(_T("115200"));
-	m_comboBaudRate.AddString(_T("230400"));
-	m_comboBaudRate.AddString(_T("460800"));
-	m_comboBaudRate.AddString(_T("921600"));
 	m_comboBaudRate.SetCurSel(0);
 	
 	// 初始化数据位下拉框
 	m_comboDataBits.AddString(_T("8"));
-	m_comboDataBits.AddString(_T("7"));
-	m_comboDataBits.AddString(_T("6"));
-	m_comboDataBits.AddString(_T("5"));
 	m_comboDataBits.SetCurSel(0);
 	
 	// 初始化校验位下拉框
 	m_comboParity.AddString(_T("None"));
-	m_comboParity.AddString(_T("Odd"));
-	m_comboParity.AddString(_T("Even"));
-	m_comboParity.AddString(_T("Mark"));
-	m_comboParity.AddString(_T("Space"));
 	m_comboParity.SetCurSel(0);
 	
 	// 初始化停止位下拉框
 	m_comboStopBits.AddString(_T("1"));
-	m_comboStopBits.AddString(_T("1.5"));
-	m_comboStopBits.AddString(_T("2"));
 	m_comboStopBits.SetCurSel(0);
 	
 	// 初始化流控下拉框
 	m_comboFlowControl.AddString(_T("None"));
-	m_comboFlowControl.AddString(_T("RTS/CTS"));
-	m_comboFlowControl.AddString(_T("XON/XOFF"));
 	m_comboFlowControl.SetCurSel(0);
 	
 	// 初始化超时编辑框
@@ -228,11 +212,8 @@ BOOL CPortMasterDlg::OnInitDialog()
 	SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("手动输入"));
 
-	// 初始化状态条信息
-	m_staticPortStatus.SetWindowText(_T("未连接"));
-	m_staticMode.SetWindowText(_T("可靠"));
-	m_staticSpeed.SetWindowText(_T("0KB/s"));
-	m_staticSendSource.SetWindowText(_T("来源: 手动输入"));
+	// 初始化传输配置
+	InitializeTransportConfig();
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -290,28 +271,199 @@ HCURSOR CPortMasterDlg::OnQueryDragIcon()
 void CPortMasterDlg::OnBnClickedButtonConnect()
 {
 	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("连接功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 	
-	// 更新状态条信息
-	m_staticPortStatus.SetWindowText(_T("已连接"));
-	m_staticSpeed.SetWindowText(_T("9600"));
+	// 创建传输对象
+	if (!CreateTransport())
+	{
+		return;
+	}
+	
+	// 打开传输连接
+	TransportError error = TransportError::Success;
+	if (m_reliableChannel)
+	{
+		bool connected = m_reliableChannel->Connect();
+		error = connected ? static_cast<TransportError>(TransportError::Success) : static_cast<TransportError>(TransportError::ConnectionClosed);
+	}
+	else if (m_transport)
+	{
+		// 传输对象已经在CreateTransport中打开，这里不需要重复打开
+		if (!m_transport->IsOpen())
+		{
+			error = TransportError::NotOpen;
+		}
+	}
+	
+	if (error != TransportError::Success)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("连接失败: %d"), static_cast<int>(error));
+		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		DestroyTransport();
+		return;
+	}
+	
+	// 标记为已连接
+	m_isConnected = true;
+	
+	// 启动接收线程
+	StartReceiveThread();
+	
+	// 更新状态条连接状态
+	UpdateConnectionStatus();
+	
+	// 启用断开按钮，禁用连接按钮
+	GetDlgItem(IDC_BUTTON_CONNECT)->EnableWindow(FALSE);
+	GetDlgItem(IDC_BUTTON_DISCONNECT)->EnableWindow(TRUE);
+	
+	// 禁用端口参数控件
+	GetDlgItem(IDC_COMBO_PORT)->EnableWindow(FALSE);
+	GetDlgItem(IDC_COMBO_BAUD_RATE)->EnableWindow(FALSE);
+	GetDlgItem(IDC_COMBO_DATA_BITS)->EnableWindow(FALSE);
+	GetDlgItem(IDC_COMBO_PARITY)->EnableWindow(FALSE);
+	GetDlgItem(IDC_COMBO_STOP_BITS)->EnableWindow(FALSE);
+	GetDlgItem(IDC_COMBO_FLOW_CONTROL)->EnableWindow(FALSE);
 }
 
 
 void CPortMasterDlg::OnBnClickedButtonDisconnect()
 {
 	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("断开连接功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 	
-	// 更新状态条信息
-	m_staticPortStatus.SetWindowText(_T("未连接"));
+	// 销毁传输对象
+	DestroyTransport();
+	
+	// 更新状态条连接状态
+	UpdateConnectionStatus();
+	
+	// 启用连接按钮，禁用断开按钮
+	GetDlgItem(IDC_BUTTON_CONNECT)->EnableWindow(TRUE);
+	GetDlgItem(IDC_BUTTON_DISCONNECT)->EnableWindow(FALSE);
+	
+	// 启用端口参数控件
+	GetDlgItem(IDC_COMBO_PORT)->EnableWindow(TRUE);
+	GetDlgItem(IDC_COMBO_BAUD_RATE)->EnableWindow(TRUE);
+	GetDlgItem(IDC_COMBO_DATA_BITS)->EnableWindow(TRUE);
+	GetDlgItem(IDC_COMBO_PARITY)->EnableWindow(TRUE);
+	GetDlgItem(IDC_COMBO_STOP_BITS)->EnableWindow(TRUE);
+	GetDlgItem(IDC_COMBO_FLOW_CONTROL)->EnableWindow(TRUE);
 }
 
 
 void CPortMasterDlg::OnBnClickedButtonSend()
 {
 	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("发送数据功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	
+	// 检查是否已连接
+	if (!m_isConnected)
+	{
+		MessageBox(_T("请先连接端口"), _T("提示"), MB_OK | MB_ICONWARNING);
+		return;
+	}
+	
+	// 获取发送数据
+	CString sendData;
+	m_editSendData.GetWindowText(sendData);
+	
+	if (sendData.IsEmpty())
+	{
+		MessageBox(_T("请输入要发送的数据"), _T("提示"), MB_OK | MB_ICONWARNING);
+		return;
+	}
+	
+	try
+	{
+		std::vector<uint8_t> data;
+		
+		// 根据显示模式转换数据
+		if (m_checkHex.GetCheck() == BST_CHECKED)
+		{
+			// 十六进制模式
+			CString hexData = sendData;
+			hexData.Remove(' '); // 移除空格
+			hexData.Remove('\r'); // 移除回车
+			hexData.Remove('\n'); // 移除换行
+			
+			// 检查长度是否为偶数
+			if (hexData.GetLength() % 2 != 0)
+			{
+				MessageBox(_T("十六进制数据长度必须为偶数"), _T("错误"), MB_OK | MB_ICONERROR);
+				return;
+			}
+			
+			// 转换为字节数组
+			for (int i = 0; i < hexData.GetLength(); i += 2)
+			{
+				CString byteStr = hexData.Mid(i, 2);
+				int byteValue;
+				if (_stscanf_s(byteStr, _T("%02X"), &byteValue) == 1)
+				{
+					data.push_back(static_cast<uint8_t>(byteValue));
+				}
+				else
+				{
+					MessageBox(_T("十六进制数据格式错误"), _T("错误"), MB_OK | MB_ICONERROR);
+					return;
+				}
+			}
+		}
+		else
+		{
+			// 文本模式
+			CT2A textData(sendData);
+			const char* text = textData;
+			data.assign(text, text + strlen(text));
+		}
+		
+		// 发送数据
+		TransportError error = TransportError::Success;
+		if (m_reliableChannel && m_reliableChannel->IsConnected())
+		{
+			// 使用可靠传输通道
+			bool success = m_reliableChannel->Send(data);
+			error = success ? TransportError::Success : TransportError::WriteFailed;
+			m_isTransmitting = true;
+		}
+		else if (m_transport && m_transport->IsOpen())
+		{
+			// 使用原始传输
+			error = m_transport->Write(data.data(), data.size());
+		}
+		
+		if (error != TransportError::Success)
+		{
+			CString errorMsg;
+			errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
+			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		}
+		else
+		{
+			// 更新发送统计
+			m_bytesSent += data.size();
+			CString sentText;
+			sentText.Format(_T("%u"), m_bytesSent);
+			SetDlgItemText(IDC_STATIC_SENT, sentText);
+			
+			// 添加到发送历史
+			CString history;
+			GetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
+			if (!history.IsEmpty())
+			{
+				history += _T("\r\n");
+			}
+			history += sendData;
+			SetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
+			
+			// 清空发送编辑框
+			SetDlgItemText(IDC_EDIT_SEND, _T(""));
+		}
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("发送数据失败: %s"), CString(e.what()));
+		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+	}
 }
 
 
@@ -643,4 +795,301 @@ void CPortMasterDlg::OnBnClickedRadioDirect()
 	
 	// 更新状态条模式信息
 	m_staticMode.SetWindowText(_T("直通"));
+}
+
+// Transport层集成实现
+
+void CPortMasterDlg::InitializeTransportConfig()
+{
+	// 初始化串口配置
+	m_transportConfig.portName = "COM1";
+	m_transportConfig.readTimeout = 1000;
+	m_transportConfig.writeTimeout = 1000;
+	m_transportConfig.bufferSize = 4096;
+	
+	// 初始化可靠传输配置
+	m_reliableConfig.maxRetries = 3;
+	m_reliableConfig.timeoutBase = 5000;  // 基础超时时间
+	m_reliableConfig.maxPayloadSize = 1024;  // 最大负载大小
+}
+
+bool CPortMasterDlg::CreateTransport()
+{
+	try
+	{
+		// 根据端口类型创建相应的传输对象
+		int portType = m_comboPortType.GetCurSel();
+		
+		switch (portType)
+		{
+		case 0: // 串口
+			{
+				// 获取串口参数
+				CString portName;
+				m_comboPort.GetWindowText(portName);
+				
+				CString baudRateStr;
+				m_comboBaudRate.GetWindowText(baudRateStr);
+				int baudRate = _ttoi(baudRateStr);
+				
+				// 创建串口传输对象
+				auto transport = std::make_shared<SerialTransport>();
+				
+				// 配置串口参数
+				SerialConfig config;
+				config.portName = CT2A(portName);
+				config.baudRate = baudRate;
+				config.dataBits = 8;
+				config.parity = NOPARITY;
+				config.stopBits = ONESTOPBIT;
+				
+				// 打开串口
+				if (transport->Open(config) == TransportError::Success)
+				{
+					m_transport = transport;
+					
+					// 创建可靠传输通道（如果启用）
+					if (m_radioReliable.GetCheck() == BST_CHECKED)
+					{
+						m_reliableChannel = std::make_unique<ReliableChannel>();
+						m_reliableChannel->Initialize(m_transport, m_reliableConfig);
+						
+						// 设置回调函数
+						m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total) {
+							OnReliableProgress(static_cast<uint32_t>((current * 100) / total));
+						});
+						
+						m_reliableChannel->SetStateChangedCallback([this](bool connected) {
+							OnReliableComplete(connected);
+						});
+					}
+					
+					return true;
+				}
+			}
+			break;
+			
+		case 1: // LPT
+			MessageBox(_T("LPT端口暂不支持"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+			return false;
+			
+		case 2: // TCP客户端
+		case 3: // TCP服务器
+		case 4: // UDP
+			MessageBox(_T("网络端口暂不支持"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+			return false;
+			
+		default:
+			return false;
+		}
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("创建传输对象失败: %s"), CString(e.what()));
+		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+	}
+	
+	return false;
+}
+
+void CPortMasterDlg::DestroyTransport()
+{
+	// 停止接收线程
+	StopReceiveThread();
+	
+	// 销毁可靠传输通道
+	if (m_reliableChannel)
+	{
+		m_reliableChannel->Shutdown();
+		m_reliableChannel.reset();
+	}
+	
+	// 销毁传输对象
+	if (m_transport)
+	{
+		m_transport->Close();
+		m_transport.reset();
+	}
+	
+	m_isConnected = false;
+	m_isTransmitting = false;
+}
+
+void CPortMasterDlg::StartReceiveThread()
+{
+	if (m_receiveThread.joinable())
+	{
+		return;
+	}
+	
+	m_receiveThread = std::thread([this]() {
+		std::vector<uint8_t> buffer(4096);
+		
+		while (m_isConnected)
+		{
+			try
+			{
+				if (m_reliableChannel && m_reliableChannel->IsConnected())
+				{
+					// 使用可靠传输通道接收数据
+					std::vector<uint8_t> data;
+					if (m_reliableChannel->Receive(data, 100)) // 100ms超时
+					{
+						OnTransportDataReceived(data);
+					}
+				}
+				else if (m_transport && m_transport->IsOpen())
+				{
+					// 使用原始传输接收数据
+					size_t bytesRead = 0;
+					auto result = m_transport->Read(buffer.data(), buffer.size(), &bytesRead, 100);
+					if (result == TransportError::Success && bytesRead > 0)
+					{
+						std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
+						OnTransportDataReceived(data);
+					}
+				}
+			}
+			catch (const std::exception& e)
+			{
+				OnTransportError(e.what());
+			}
+		}
+	});
+}
+
+void CPortMasterDlg::StopReceiveThread()
+{
+	m_isConnected = false;
+	
+	if (m_receiveThread.joinable())
+	{
+		m_receiveThread.join();
+	}
+}
+
+void CPortMasterDlg::UpdateConnectionStatus()
+{
+	CString statusText;
+	if (m_isConnected)
+	{
+		statusText = _T("已连接");
+	}
+	else
+	{
+		statusText = _T("未连接");
+	}
+	
+	m_staticPortStatus.SetWindowText(statusText);
+}
+
+void CPortMasterDlg::UpdateStatistics()
+{
+	// 更新速度显示
+	CString speedText;
+	speedText.Format(_T("%uKB/s"), (m_sendSpeed + m_receiveSpeed) / 1024);
+	m_staticSpeed.SetWindowText(speedText);
+}
+
+void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
+{
+	// 在主线程中更新UI
+	PostMessage(WM_USER + 1, 0, (LPARAM)new std::vector<uint8_t>(data));
+}
+
+void CPortMasterDlg::OnTransportError(const std::string& error)
+{
+	// 在主线程中显示错误
+	CString errorMsg(error.c_str());
+	PostMessage(WM_USER + 2, 0, (LPARAM)new CString(errorMsg));
+}
+
+void CPortMasterDlg::OnReliableProgress(uint32_t progress)
+{
+	// 更新进度条
+	m_progress.SetPos(progress);
+}
+
+void CPortMasterDlg::OnReliableComplete(bool success)
+{
+	m_isTransmitting = false;
+	
+	if (success)
+	{
+		MessageBox(_T("传输完成"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	}
+	else
+	{
+		MessageBox(_T("传输失败"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
+}
+
+// 自定义消息处理实现
+
+LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam)
+{
+	std::vector<uint8_t>* data = reinterpret_cast<std::vector<uint8_t>*>(lParam);
+	if (data)
+	{
+		try
+		{
+			// 更新接收统计
+			m_bytesReceived += data->size();
+			CString receivedText;
+			receivedText.Format(_T("%u"), m_bytesReceived);
+			SetDlgItemText(IDC_STATIC_RECEIVED, receivedText);
+			
+			// 转换数据为字符串
+			CString dataText;
+			if (m_checkHex.GetCheck() == BST_CHECKED)
+			{
+				// 十六进制显示
+				for (uint8_t byte : *data)
+				{
+					CString byteText;
+					byteText.Format(_T("%02X "), byte);
+					dataText += byteText;
+				}
+			}
+			else
+			{
+				// 文本显示
+				dataText = CString(reinterpret_cast<const char*>(data->data()), data->size());
+			}
+			
+			// 添加到接收显示
+			CString currentText;
+			m_editReceiveData.GetWindowText(currentText);
+			if (!currentText.IsEmpty())
+			{
+				currentText += _T("\r\n");
+			}
+			currentText += dataText;
+			m_editReceiveData.SetWindowText(currentText);
+			m_editReceiveData.LineScroll(m_editReceiveData.GetLineCount());
+		}
+		catch (const std::exception& e)
+		{
+			CString errorMsg;
+			errorMsg.Format(_T("处理接收数据失败: %s"), CString(e.what()));
+			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		}
+		
+		delete data;
+	}
+	
+	return 0;
+}
+
+LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
+{
+	CString* errorMsg = reinterpret_cast<CString*>(lParam);
+	if (errorMsg)
+	{
+		MessageBox(*errorMsg, _T("传输错误"), MB_OK | MB_ICONERROR);
+		delete errorMsg;
+	}
+	
+	return 0;
 }
