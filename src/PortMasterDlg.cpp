@@ -1,4 +1,4 @@
-﻿﻿// PortMasterDlg.cpp : 实现文件
+﻿// PortMasterDlg.cpp : 实现文件
 //
 
 #include "pch.h"
@@ -62,10 +62,7 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_BUTTON_CONNECT, m_btnConnect);
 	DDX_Control(pDX, IDC_BUTTON_DISCONNECT, m_btnDisconnect);
 	DDX_Control(pDX, IDC_BUTTON_SEND, m_btnSend);
-	// IDC_BUTTON_CLEAR, IDC_BUTTON_SAVE 已从数据接收区删除，移除绑定
-	// 移除了不存在的控件: SETTINGS, ABOUT, PAUSE, CONTINUE
 	DDX_Control(pDX, IDC_BUTTON_STOP, m_btnStop);
-	// IDC_BUTTON_COPY 已从数据接收区删除，移除绑定
 	DDX_Control(pDX, IDC_BUTTON_FILE, m_btnFile);
 	DDX_Control(pDX, IDC_BUTTON_EXPORT_LOG, m_btnExportLog);
 	
@@ -79,6 +76,7 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_EDIT_SEND_DATA, m_editSendData);
 	DDX_Control(pDX, IDC_EDIT_RECEIVE_DATA, m_editReceiveData);
 	DDX_Control(pDX, IDC_EDIT_LOG_DETAIL, m_editLogDetail);
+	DDX_Control(pDX, IDC_EDIT_TIMEOUT, m_editTimeout);
 	
 	// 下拉框控件绑定
 	DDX_Control(pDX, IDC_COMBO_PORT_TYPE, m_comboPortType);
@@ -87,9 +85,11 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_COMBO_DATA_BITS, m_comboDataBits);
 	DDX_Control(pDX, IDC_COMBO_PARITY, m_comboParity);
 	DDX_Control(pDX, IDC_COMBO_STOP_BITS, m_comboStopBits);
-	// IDC_COMBO_FLOW_CONTROL 已从设计中移除
+	DDX_Control(pDX, IDC_COMBO_FLOW_CONTROL, m_comboFlowControl);
 	
-	// 选项控件绑定 (移除了不存在的RADIO按钮)
+	// 选项控件绑定
+	DDX_Control(pDX, IDC_RADIO_RELIABLE, m_radioReliable);
+	DDX_Control(pDX, IDC_RADIO_DIRECT, m_radioDirect);
 	DDX_Control(pDX, IDC_CHECK_HEX, m_checkHex);
 	DDX_Control(pDX, IDC_CHECK_OCCUPY, m_checkOccupy);
 	
@@ -100,8 +100,7 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC_MODE, m_staticMode);
 	DDX_Control(pDX, IDC_STATIC_SPEED, m_staticSpeed);
 	DDX_Control(pDX, IDC_STATIC_CHECK, m_staticCheck);
-	DDX_Control(pDX, IDC_STATIC_PROGRESS_TEXT, m_staticProgressText);
-	// IDC_STATIC_STATUS 在RC文件中不存在，已移除绑定
+	DDX_Control(pDX, IDC_STATIC_LOOP_COUNT, m_staticLoopCount);
 	DDX_Control(pDX, IDC_STATIC_SEND_SOURCE, m_staticSendSource);
 }
 
@@ -112,16 +111,13 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_CONNECT, &CPortMasterDlg::OnBnClickedButtonConnect)
 	ON_BN_CLICKED(IDC_BUTTON_DISCONNECT, &CPortMasterDlg::OnBnClickedButtonDisconnect)
 	ON_BN_CLICKED(IDC_BUTTON_SEND, &CPortMasterDlg::OnBnClickedButtonSend)
-	ON_BN_CLICKED(IDC_BUTTON_CLEAR, &CPortMasterDlg::OnBnClickedButtonClear)
-	ON_BN_CLICKED(IDC_BUTTON_SAVE, &CPortMasterDlg::OnBnClickedButtonSave)
-	ON_BN_CLICKED(IDC_BUTTON_SETTINGS, &CPortMasterDlg::OnBnClickedButtonSettings)
-	ON_BN_CLICKED(IDC_BUTTON_ABOUT, &CPortMasterDlg::OnBnClickedButtonAbout)
-	ON_BN_CLICKED(IDC_BUTTON_PAUSE, &CPortMasterDlg::OnBnClickedButtonPause)
-	ON_BN_CLICKED(IDC_BUTTON_CONTINUE, &CPortMasterDlg::OnBnClickedButtonContinue)
 	ON_BN_CLICKED(IDC_BUTTON_STOP, &CPortMasterDlg::OnBnClickedButtonStop)
-	ON_BN_CLICKED(IDC_BUTTON_COPY, &CPortMasterDlg::OnBnClickedButtonCopy)
 	ON_BN_CLICKED(IDC_BUTTON_FILE, &CPortMasterDlg::OnBnClickedButtonFile)
 	ON_BN_CLICKED(IDC_BUTTON_EXPORT_LOG, &CPortMasterDlg::OnBnClickedButtonExportLog)
+	ON_BN_CLICKED(IDC_BUTTON_CLEAR_ALL, &CPortMasterDlg::OnBnClickedButtonClearAll)
+	ON_BN_CLICKED(IDC_BUTTON_CLEAR_RECEIVE, &CPortMasterDlg::OnBnClickedButtonClearReceive)
+	ON_BN_CLICKED(IDC_BUTTON_COPY_ALL, &CPortMasterDlg::OnBnClickedButtonCopyAll)
+	ON_BN_CLICKED(IDC_BUTTON_SAVE_ALL, &CPortMasterDlg::OnBnClickedButtonSaveAll)
 	ON_CBN_SELCHANGE(IDC_COMBO_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangeComboPortType)
 	ON_BN_CLICKED(IDC_CHECK_HEX, &CPortMasterDlg::OnBnClickedCheckHex)
 	ON_BN_CLICKED(IDC_RADIO_RELIABLE, &CPortMasterDlg::OnBnClickedRadioReliable)
@@ -213,9 +209,18 @@ BOOL CPortMasterDlg::OnInitDialog()
 	m_comboStopBits.AddString(_T("2"));
 	m_comboStopBits.SetCurSel(0);
 	
-	// 流控下拉框已从设计中移除
+	// 初始化流控下拉框
+	m_comboFlowControl.AddString(_T("None"));
+	m_comboFlowControl.AddString(_T("RTS/CTS"));
+	m_comboFlowControl.AddString(_T("XON/XOFF"));
+	m_comboFlowControl.SetCurSel(0);
 	
-	// 默认模式设置 (移除了不存在的单选按钮引用)
+	// 初始化超时编辑框
+	SetDlgItemText(IDC_EDIT_TIMEOUT, _T("1000"));
+	
+	// 初始化单选按钮
+	m_radioReliable.SetCheck(BST_CHECKED);
+	m_radioDirect.SetCheck(BST_UNCHECKED);
 	
 	// 初始化进度条
 	m_progress.SetRange(0, 100);
@@ -227,10 +232,17 @@ BOOL CPortMasterDlg::OnInitDialog()
 	SetDlgItemText(IDC_STATIC_MODE, _T("全部"));
 	SetDlgItemText(IDC_STATIC_SPEED, _T("速度:0KB/s"));
 	SetDlgItemText(IDC_STATIC_CHECK, _T("跳线"));
-	SetDlgItemText(IDC_STATIC_PROGRESS_TEXT, _T("进度:0/0"));
-	// IDC_STATIC_STATUS 在RC文件中不存在，已移除设置
+	SetDlgItemText(IDC_STATIC_LOOP_COUNT, _T("循环:0"));
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("当前数据源: 手动输入"));
 	SetDlgItemText(IDC_EDIT_LOG_DETAIL, _T("状态:就绪"));
+
+	// 初始化状态条信息
+	m_staticPortStatus.SetWindowText(_T("未连接"));
+	m_staticMode.SetWindowText(_T("可靠模式"));
+	m_staticSpeed.SetWindowText(_T("9600"));
+	m_staticCheck.SetWindowText(_T("无校验"));
+	m_staticLoopCount.SetWindowText(_T("循环: 0"));
+	m_staticSendSource.SetWindowText(_T("数据源: 手动输入"));
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -289,6 +301,10 @@ void CPortMasterDlg::OnBnClickedButtonConnect()
 {
 	// TODO: 在此添加控件通知处理程序代码
 	MessageBox(_T("连接功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	
+	// 更新状态条信息
+	m_staticPortStatus.SetWindowText(_T("已连接"));
+	m_staticSpeed.SetWindowText(_T("9600"));
 }
 
 
@@ -296,6 +312,9 @@ void CPortMasterDlg::OnBnClickedButtonDisconnect()
 {
 	// TODO: 在此添加控件通知处理程序代码
 	MessageBox(_T("断开连接功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	
+	// 更新状态条信息
+	m_staticPortStatus.SetWindowText(_T("未连接"));
 }
 
 
@@ -306,45 +325,7 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 }
 
 
-void CPortMasterDlg::OnBnClickedButtonClear()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("清除数据功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
 
-
-void CPortMasterDlg::OnBnClickedButtonSave()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("保存数据功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
-
-
-void CPortMasterDlg::OnBnClickedButtonSettings()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("设置功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
-
-
-void CPortMasterDlg::OnBnClickedButtonAbout()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	CAboutDlg dlgAbout;
-	dlgAbout.DoModal();
-}
-
-void CPortMasterDlg::OnBnClickedButtonPause()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("暂停功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
-
-void CPortMasterDlg::OnBnClickedButtonContinue()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("继续功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
 
 void CPortMasterDlg::OnBnClickedButtonStop()
 {
@@ -352,16 +333,58 @@ void CPortMasterDlg::OnBnClickedButtonStop()
 	MessageBox(_T("停止功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 }
 
-void CPortMasterDlg::OnBnClickedButtonCopy()
-{
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("复制功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-}
-
 void CPortMasterDlg::OnBnClickedButtonFile()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("文件功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 文件选择对话框
+	CFileDialog dlg(TRUE, _T("txt"), NULL, 
+		OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+		_T("文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*||"));
+	
+	if (dlg.DoModal() == IDOK)
+	{
+		CString filePath = dlg.GetPathName();
+		LoadDataFromFile(filePath);
+		
+		// 更新数据源显示
+		CString fileName = dlg.GetFileName();
+		CString sourceText;
+		sourceText.Format(_T("当前数据源: %s"), fileName);
+		SetDlgItemText(IDC_STATIC_SEND_SOURCE, sourceText);
+	}
+}
+
+void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
+{
+	CStdioFile file;
+	if (file.Open(filePath, CFile::modeRead | CFile::typeText))
+	{
+		CString fileContent;
+		CString line;
+		
+		while (file.ReadString(line))
+		{
+			fileContent += line + _T("\r\n");
+		}
+		
+		file.Close();
+		
+		// 设置到发送数据编辑框
+		m_editSendData.SetWindowText(fileContent);
+		
+		// 如果当前是十六进制模式，转换显示
+		if (m_checkHex.GetCheck())
+		{
+			CString hexContent = StringToHex(fileContent);
+			m_editSendData.SetWindowText(hexContent);
+		}
+		
+		// 更新数据源状态
+		m_staticSendSource.SetWindowText(_T("数据源: 文件"));
+	}
+	else
+	{
+		MessageBox(_T("无法打开文件"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
 }
 
 void CPortMasterDlg::OnBnClickedButtonExportLog()
@@ -372,24 +395,267 @@ void CPortMasterDlg::OnBnClickedButtonExportLog()
 
 void CPortMasterDlg::OnCbnSelchangeComboPortType()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("端口类型改变"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 根据端口类型切换参数配置
+	UpdatePortParameters();
+}
+
+void CPortMasterDlg::UpdatePortParameters()
+{
+	int nSel = m_comboPortType.GetCurSel();
+	
+	// 清空端口列表
+	m_comboPort.ResetContent();
+	
+	switch (nSel)
+	{
+	case 0: // 串口
+		m_comboPort.AddString(_T("COM1"));
+		m_comboPort.AddString(_T("COM2"));
+		m_comboPort.AddString(_T("COM3"));
+		m_comboPort.AddString(_T("COM4"));
+		m_comboPort.AddString(_T("COM5"));
+		m_comboPort.AddString(_T("COM6"));
+		m_comboPort.AddString(_T("COM7"));
+		m_comboPort.AddString(_T("COM8"));
+		// 显示串口相关参数
+		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_SHOW);
+		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_SHOW);
+		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_SHOW);
+		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_SHOW);
+		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_SHOW);
+		break;
+		
+	case 1: // LPT
+		m_comboPort.AddString(_T("LPT1"));
+		m_comboPort.AddString(_T("LPT2"));
+		m_comboPort.AddString(_T("LPT3"));
+		// 隐藏串口参数
+		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+		break;
+		
+	case 2: // TCP客户端
+	case 3: // TCP服务器
+	case 4: // UDP
+		m_comboPort.AddString(_T("127.0.0.1:8080"));
+		m_comboPort.AddString(_T("192.168.1.100:8080"));
+		m_comboPort.AddString(_T("localhost:9600"));
+		// 隐藏串口参数
+		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
+		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+		break;
+	}
+	
+	m_comboPort.SetCurSel(0);
 }
 
 void CPortMasterDlg::OnBnClickedCheckHex()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("十六进制选项改变"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 十六进制显示模式切换
+	BOOL bHex = m_checkHex.GetCheck();
+	
+	// 获取当前发送和接收数据
+	CString strSendData, strReceiveData;
+	m_editSendData.GetWindowText(strSendData);
+	m_editReceiveData.GetWindowText(strReceiveData);
+	
+	if (bHex)
+	{
+		// 转换为十六进制显示
+		if (!strSendData.IsEmpty())
+		{
+			CString hexSend = StringToHex(strSendData);
+			m_editSendData.SetWindowText(hexSend);
+		}
+		if (!strReceiveData.IsEmpty())
+		{
+			CString hexReceive = StringToHex(strReceiveData);
+			m_editReceiveData.SetWindowText(hexReceive);
+		}
+	}
+	else
+	{
+		// 转换为文本显示
+		if (!strSendData.IsEmpty())
+		{
+			CString textSend = HexToString(strSendData);
+			m_editSendData.SetWindowText(textSend);
+		}
+		if (!strReceiveData.IsEmpty())
+		{
+			CString textReceive = HexToString(strReceiveData);
+			m_editReceiveData.SetWindowText(textReceive);
+		}
+	}
+}
+
+CString CPortMasterDlg::StringToHex(const CString& str)
+{
+	CString hexStr;
+	for (int i = 0; i < str.GetLength(); i++)
+	{
+		CString temp;
+		temp.Format(_T("%02X "), (BYTE)str[i]);
+		hexStr += temp;
+	}
+	hexStr.TrimRight();
+	return hexStr;
+}
+
+CString CPortMasterDlg::HexToString(const CString& hex)
+{
+	CString result;
+	CString hexData = hex;
+	hexData.Replace(_T(" "), _T(""));
+	
+	for (int i = 0; i < hexData.GetLength(); i += 2)
+	{
+		if (i + 1 < hexData.GetLength())
+		{
+			CString hexByte = hexData.Mid(i, 2);
+			BYTE byteValue = (BYTE)_tcstol(hexByte, NULL, 16);
+			result += (TCHAR)byteValue;
+		}
+	}
+	return result;
 }
 
 void CPortMasterDlg::OnBnClickedRadioReliable()
 {
 	// TODO: 在此添加控件通知处理程序代码
 	MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	
+	// 更新状态条模式信息
+	m_staticMode.SetWindowText(_T("可靠模式"));
+}
+
+void CPortMasterDlg::OnBnClickedButtonClearAll()
+{
+	// 清空发送和接收数据
+	m_editSendData.SetWindowText(_T(""));
+	m_editReceiveData.SetWindowText(_T(""));
+	
+	// 重置数据源显示
+	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("当前数据源: 手动输入"));
+	
+	// 更新日志
+	CString logText;
+	GetDlgItemText(IDC_STATIC_LOG, logText);
+	CTime time = CTime::GetCurrentTime();
+	CString timeStr = time.Format(_T("[%H:%M:%S] "));
+	logText = timeStr + _T("清空全部数据") + _T(" ") + logText;
+	SetDlgItemText(IDC_STATIC_LOG, logText);
+}
+
+void CPortMasterDlg::OnBnClickedButtonClearReceive()
+{
+	// 只清空接收数据
+	m_editReceiveData.SetWindowText(_T(""));
+	
+	// 更新日志
+	CString logText;
+	GetDlgItemText(IDC_STATIC_LOG, logText);
+	CTime time = CTime::GetCurrentTime();
+	CString timeStr = time.Format(_T("[%H:%M:%S] "));
+	logText = timeStr + _T("清空接收数据") + _T(" ") + logText;
+	SetDlgItemText(IDC_STATIC_LOG, logText);
+}
+
+void CPortMasterDlg::OnBnClickedButtonCopyAll()
+{
+	// 复制接收数据到剪贴板
+	CString receiveData;
+	m_editReceiveData.GetWindowText(receiveData);
+	
+	if (!receiveData.IsEmpty())
+	{
+		if (OpenClipboard())
+		{
+			EmptyClipboard();
+			
+			HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, (receiveData.GetLength() + 1) * sizeof(TCHAR));
+			if (hGlobal)
+			{
+				LPTSTR lpszData = (LPTSTR)GlobalLock(hGlobal);
+				_tcscpy_s(lpszData, receiveData.GetLength() + 1, receiveData);
+				GlobalUnlock(hGlobal);
+				
+#ifdef UNICODE
+				SetClipboardData(CF_UNICODETEXT, hGlobal);
+#else
+				SetClipboardData(CF_TEXT, hGlobal);
+#endif
+			}
+			CloseClipboard();
+			
+			MessageBox(_T("数据已复制到剪贴板"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		}
+	}
+	else
+	{
+		MessageBox(_T("没有数据可复制"), _T("提示"), MB_OK | MB_ICONWARNING);
+	}
+}
+
+void CPortMasterDlg::OnBnClickedButtonSaveAll()
+{
+	// 保存接收数据到文件
+	CString receiveData;
+	m_editReceiveData.GetWindowText(receiveData);
+	
+	if (!receiveData.IsEmpty())
+	{
+		CFileDialog dlg(FALSE, _T("txt"), _T("ReceiveData"), 
+			OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+			_T("文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*||"));
+		
+		if (dlg.DoModal() == IDOK)
+		{
+			SaveDataToFile(dlg.GetPathName(), receiveData);
+		}
+	}
+	else
+	{
+		MessageBox(_T("没有数据可保存"), _T("提示"), MB_OK | MB_ICONWARNING);
+	}
+}
+
+void CPortMasterDlg::SaveDataToFile(const CString& filePath, const CString& data)
+{
+	CStdioFile file;
+	if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText))
+	{
+		file.WriteString(data);
+		file.Close();
+		
+		MessageBox(_T("数据保存成功"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		
+		// 更新日志
+		CString logText;
+		GetDlgItemText(IDC_STATIC_LOG, logText);
+		CTime time = CTime::GetCurrentTime();
+		CString timeStr = time.Format(_T("[%H:%M:%S] "));
+		CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
+		logText = timeStr + _T("数据保存至: ") + fileName + _T(" ") + logText;
+		SetDlgItemText(IDC_STATIC_LOG, logText);
+	}
+	else
+	{
+		MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
 }
 
 void CPortMasterDlg::OnBnClickedRadioDirect()
 {
 	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	MessageBox(_T("直接模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	
+	// 更新状态条模式信息
+	m_staticMode.SetWindowText(_T("直接模式"));
 }

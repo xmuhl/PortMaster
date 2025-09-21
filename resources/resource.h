@@ -1,7 +1,8 @@
-ï»¿//{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ ç”Ÿæˆçš„åŒ…å«æ–‡ä»¶ã€‚
-// ä¾› PortMaster.rc ä½¿ç”¨
+//{{NO_DEPENDENCIES}}
+// Microsoft Visual C++ Éú³ÉµÄ°üº¬ÎÄ¼ş¡£
+// ¹© PortMaster.rc Ê¹ÓÃ
 //
+#define IDM_ABOUTBOX                    0x0010
 #define IDD_ABOUTBOX                    100
 #define IDR_MAINFRAME                   128
 #define IDD_PORTMASTER_DIALOG           129
@@ -53,7 +54,6 @@
 #define IDC_STATIC_STATUS               1044
 #define IDC_EDIT_LOG_DETAIL             1045
 #define IDC_EDIT_TIMEOUT                1046
-#define IDM_ABOUTBOX                    0x0010
 
 // Next default values for new objects
 // 

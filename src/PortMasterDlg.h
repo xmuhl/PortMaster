@@ -1,4 +1,4 @@
-// PortMasterDlg.h : 头文件
+﻿// PortMasterDlg.h : 头文件
 #pragma once
 #include "afxwin.h"
 
@@ -22,21 +22,35 @@ virtual BOOL OnInitDialog();
 afx_msg void OnSysCommand(UINT nID, LPARAM lParam);
 afx_msg void OnPaint();
 afx_msg HCURSOR OnQueryDragIcon();
-DECLARE_MESSAGE_MAP()
+// 新增事件处理函数
+	afx_msg void OnBnClickedButtonClearAll();
+	afx_msg void OnBnClickedButtonClearReceive();
+	afx_msg void OnBnClickedButtonCopyAll();
+	afx_msg void OnBnClickedButtonSaveAll();
+	afx_msg void OnEnChangeEditTimeout();
+	
+	// 端口类型切换处理
+	void UpdatePortParameters();
+	
+	// 数据处理函数
+	void SendData();
+	void ReceiveData();
+	void UpdateDataDisplay();
+	void LoadDataFromFile(const CString& filePath);
+	void SaveDataToFile(const CString& filePath, const CString& data);
+	
+	// 十六进制转换函数
+	CString StringToHex(const CString& str);
+	CString HexToString(const CString& hex);
+	
+	DECLARE_MESSAGE_MAP()
 
 public:
 	// 基本控件
 	CButton m_btnConnect;
 	CButton m_btnDisconnect;
 	CButton m_btnSend;
-	// CButton m_btnClear; // 已从数据接收区删除
-	// CButton m_btnSave; // 已从数据接收区删除
-	CButton m_btnSettings;
-	CButton m_btnAbout;
-	CButton m_btnPause;
-	CButton m_btnContinue;
 	CButton m_btnStop;
-	// CButton m_btnCopy; // 已从数据接收区删除
 	CButton m_btnFile;
 	CButton m_btnExportLog;
 	
@@ -50,6 +64,7 @@ public:
 	CEdit m_editSendData;
 	CEdit m_editReceiveData;
 	CEdit m_editLogDetail;
+	CEdit m_editTimeout;
 	
 	// 下拉框控件
 	CComboBox m_comboPortType;
@@ -73,32 +88,18 @@ public:
 	CStatic m_staticMode;
 	CStatic m_staticSpeed;
 	CStatic m_staticCheck;
-	CStatic m_staticProgressText;
-	// CStatic m_staticStatus; // 对应的IDC_STATIC_STATUS不存在于RC文件中
+	CStatic m_staticLoopCount;
 	CStatic m_staticSendSource;
 
 // 消息处理函数声明
 	afx_msg void OnBnClickedButtonConnect();
 	afx_msg void OnBnClickedButtonDisconnect();
 	afx_msg void OnBnClickedButtonSend();
-	afx_msg void OnBnClickedButtonClear();
-	afx_msg void OnBnClickedButtonSave();
-	afx_msg void OnBnClickedButtonSettings();
-	afx_msg void OnBnClickedButtonAbout();
-	afx_msg void OnBnClickedButtonPause();
-	afx_msg void OnBnClickedButtonContinue();
 	afx_msg void OnBnClickedButtonStop();
-	afx_msg void OnBnClickedButtonCopy();
 	afx_msg void OnBnClickedButtonFile();
 	afx_msg void OnBnClickedButtonExportLog();
 	
-	// 新增按钮事件处理
-	afx_msg void OnBnClickedButtonClearAll();
-	afx_msg void OnBnClickedButtonClearReceive();
-	afx_msg void OnBnClickedButtonCopyAll();
-	afx_msg void OnBnClickedButtonSaveAll();
-	
-	// 选项变化事件处理
+	// 控件事件处理
 	afx_msg void OnCbnSelchangeComboPortType();
 	afx_msg void OnBnClickedCheckHex();
 	afx_msg void OnBnClickedRadioReliable();

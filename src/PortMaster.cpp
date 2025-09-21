@@ -1,4 +1,4 @@
-﻿﻿// PortMaster.cpp: 定义应用程序的类行为。
+﻿// PortMaster.cpp: 定义应用程序的类行为。
 //
 
 #include "pch.h"
