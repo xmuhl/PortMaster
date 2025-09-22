@@ -469,7 +469,7 @@ void UsbPrintTransport::AsyncWriteThread()
     }
 }
 
-TransportError UsbPrintTransport::GetLastError() const
+TransportError UsbPrintTransport::GetLastError()
 {
     DWORD error = ::GetLastError();
     m_stats.lastErrorCode = error;

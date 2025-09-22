@@ -1120,7 +1120,7 @@ void NetworkPrintTransport::ReconnectThread()
 }
 
 // 获取套接字错误
-TransportError NetworkPrintTransport::GetSocketError() const
+TransportError NetworkPrintTransport::GetSocketError()
 {
     int error = WSAGetLastError();
     m_stats.lastErrorCode = error;

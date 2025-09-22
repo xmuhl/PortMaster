@@ -711,7 +711,7 @@ void ParallelTransport::AsyncWriteThread()
 }
 
 // 获取最后错误
-TransportError ParallelTransport::GetLastError() const
+TransportError ParallelTransport::GetLastError()
 {
     DWORD error = ::GetLastError();
     m_stats.lastErrorCode = error;

@@ -233,7 +233,7 @@ private:
     void ReconnectThread();
     
     // 错误处理
-    TransportError GetSocketError() const;
+    TransportError GetSocketError();
     std::string GetSocketErrorMessage(int errorCode) const;
     
     // 配置验证

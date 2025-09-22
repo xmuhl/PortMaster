@@ -131,7 +131,7 @@ private:
     void AsyncWriteThread();
     
     // 错误处理
-    TransportError GetLastError() const;
+    TransportError GetLastError();
     std::string GetSystemErrorMessage(DWORD errorCode) const;
     
     // 配置验证
