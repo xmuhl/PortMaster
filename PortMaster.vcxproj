@@ -128,6 +128,7 @@
     <ClInclude Include="Protocol\FrameCodec.h" />
     <ClInclude Include="Protocol\ReliableChannel.h" />
     <ClInclude Include="Transport\ITransport.h" />
+    <ClInclude Include="Transport\LoopbackTransport.h" />
     <ClInclude Include="Transport\SerialTransport.h" />
   </ItemGroup>
   <ItemGroup>
@@ -139,6 +140,7 @@
     <ClCompile Include="src\PortMasterDlg.cpp" />
     <ClCompile Include="Protocol\FrameCodec.cpp" />
     <ClCompile Include="Protocol\ReliableChannel.cpp" />
+    <ClCompile Include="Transport\LoopbackTransport.cpp" />
     <ClCompile Include="Transport\SerialTransport.cpp" />
   </ItemGroup>
   <ItemGroup>
