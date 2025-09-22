@@ -6,8 +6,14 @@
 #include "PortMaster.h"
 #include "PortMasterDlg.h"
 #include "afxdialogex.h"
+#include "../Transport/ITransport.h"
 #include "../Transport/SerialTransport.h"
+#include "../Transport/ParallelTransport.h"
+#include "../Transport/UsbPrintTransport.h"
+#include "../Transport/NetworkPrintTransport.h"
+#include "../Transport/LoopbackTransport.h"
 #include "../Common/CommonTypes.h"
+#include "../Common/ConfigStore.h"
 #include <chrono>
 
 #ifdef _DEBUG
@@ -169,6 +175,10 @@ BOOL CPortMasterDlg::OnInitDialog()
 	
 	// 初始化端口类型下拉框
 	m_comboPortType.AddString(_T("串口"));
+	m_comboPortType.AddString(_T("并口"));
+	m_comboPortType.AddString(_T("USB打印"));
+	m_comboPortType.AddString(_T("网络打印"));
+	m_comboPortType.AddString(_T("回路测试"));
 	m_comboPortType.SetCurSel(0);
 	
 	// 初始化端口列表
@@ -550,46 +560,103 @@ void CPortMasterDlg::UpdatePortParameters()
 	switch (nSel)
 	{
 	case 0: // 串口
-		m_comboPort.AddString(_T("COM1"));
-		m_comboPort.AddString(_T("COM2"));
-		m_comboPort.AddString(_T("COM3"));
-		m_comboPort.AddString(_T("COM4"));
-		m_comboPort.AddString(_T("COM5"));
-		m_comboPort.AddString(_T("COM6"));
-		m_comboPort.AddString(_T("COM7"));
-		m_comboPort.AddString(_T("COM8"));
-		// 显示串口相关参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_SHOW);
+		{
+			// 使用SetupAPI枚举实际串口
+			std::vector<std::string> ports = SerialTransport::EnumerateSerialPorts();
+			for (const auto& port : ports)
+			{
+				m_comboPort.AddString(CString(port.c_str()));
+			}
+			// 如果没有找到串口，添加默认选项
+			if (ports.empty())
+			{
+				m_comboPort.AddString(_T("COM1"));
+				m_comboPort.AddString(_T("COM2"));
+				m_comboPort.AddString(_T("COM3"));
+				m_comboPort.AddString(_T("COM4"));
+			}
+			// 显示串口相关参数
+			GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_SHOW);
+			GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_SHOW);
+			GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_SHOW);
+			GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_SHOW);
+			GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_SHOW);
+		}
 		break;
 		
-	case 1: // LPT
-		m_comboPort.AddString(_T("LPT1"));
-		m_comboPort.AddString(_T("LPT2"));
-		m_comboPort.AddString(_T("LPT3"));
-		// 隐藏串口参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+	case 1: // 并口
+		{
+			// 枚举并口
+			std::vector<std::string> ports = ParallelTransport::EnumerateParallelPorts();
+			for (const auto& port : ports)
+			{
+				m_comboPort.AddString(CString(port.c_str()));
+			}
+			// 如果没有找到并口，添加默认选项
+			if (ports.empty())
+			{
+				m_comboPort.AddString(_T("LPT1"));
+				m_comboPort.AddString(_T("LPT2"));
+				m_comboPort.AddString(_T("LPT3"));
+			}
+			// 隐藏串口参数
+			GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+		}
 		break;
 		
-	case 2: // TCP客户端
-	case 3: // TCP服务器
-	case 4: // UDP
-		m_comboPort.AddString(_T("127.0.0.1:8080"));
-		m_comboPort.AddString(_T("192.168.1.100:8080"));
-		m_comboPort.AddString(_T("localhost:9600"));
-		// 隐藏串口参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+	case 2: // USB打印
+		{
+			// 枚举USB打印端口
+			std::vector<std::string> ports = UsbPrintTransport::EnumerateUsbPorts();
+			for (const auto& port : ports)
+			{
+				m_comboPort.AddString(CString(port.c_str()));
+			}
+			// 如果没有找到USB打印端口，添加默认选项
+			if (ports.empty())
+			{
+				m_comboPort.AddString(_T("USB001"));
+				m_comboPort.AddString(_T("USB002"));
+			}
+			// 隐藏串口参数
+			GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+		}
+		break;
+		
+	case 3: // 网络打印
+		{
+			// 添加网络打印地址选项
+			m_comboPort.AddString(_T("127.0.0.1:9100"));
+			m_comboPort.AddString(_T("192.168.1.100:9100"));
+			m_comboPort.AddString(_T("printer.local:9100"));
+			// 隐藏串口参数
+			GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+		}
+		break;
+		
+	case 4: // 回路测试
+		{
+			// 添加回路测试选项
+			m_comboPort.AddString(_T("Loopback"));
+			// 隐藏串口参数
+			GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
+			GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
+		}
 		break;
 	}
 	
@@ -873,15 +940,182 @@ bool CPortMasterDlg::CreateTransport()
 			}
 			break;
 			
-		case 1: // LPT
-			MessageBox(_T("LPT端口暂不支持"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-			return false;
+		case 1: // 并口
+			{
+				// 获取并口参数
+				CString portName;
+				m_comboPort.GetWindowText(portName);
+				
+				// 创建并口传输对象
+				auto transport = std::make_shared<ParallelTransport>();
+				
+				// 配置并口参数
+				ParallelPortConfig config;
+				config.deviceName = CT2A(portName);
+				config.readTimeout = 1000;
+				config.writeTimeout = 2000;
+				
+				// 打开并口
+				if (transport->Open(config) == TransportError::Success)
+				{
+					m_transport = transport;
+					
+					// 创建可靠传输通道（如果启用）
+					if (m_radioReliable.GetCheck() == BST_CHECKED)
+					{
+						m_reliableChannel = std::make_unique<ReliableChannel>();
+						m_reliableChannel->Initialize(m_transport, m_reliableConfig);
+						
+						// 设置回调函数
+						m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total) {
+							OnReliableProgress(static_cast<uint32_t>((current * 100) / total));
+						});
+						
+						m_reliableChannel->SetStateChangedCallback([this](bool connected) {
+							OnReliableComplete(connected);
+						});
+					}
+					
+					return true;
+				}
+			}
+			break;
 			
-		case 2: // TCP客户端
-		case 3: // TCP服务器
-		case 4: // UDP
-			MessageBox(_T("网络端口暂不支持"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-			return false;
+		case 2: // USB打印
+			{
+				// 获取USB打印端口参数
+				CString portName;
+				m_comboPort.GetWindowText(portName);
+				
+				// 创建USB打印传输对象
+				auto transport = std::make_shared<UsbPrintTransport>();
+				
+				// 配置USB打印参数
+				UsbPrintConfig config;
+				config.deviceName = CT2A(portName);
+				config.readTimeout = 1000;
+				config.writeTimeout = 2000;
+				
+				// 打开USB打印端口
+				if (transport->Open(config) == TransportError::Success)
+				{
+					m_transport = transport;
+					
+					// 创建可靠传输通道（如果启用）
+					if (m_radioReliable.GetCheck() == BST_CHECKED)
+					{
+						m_reliableChannel = std::make_unique<ReliableChannel>();
+						m_reliableChannel->Initialize(m_transport, m_reliableConfig);
+						
+						// 设置回调函数
+						m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total) {
+							OnReliableProgress(static_cast<uint32_t>((current * 100) / total));
+						});
+						
+						m_reliableChannel->SetStateChangedCallback([this](bool connected) {
+							OnReliableComplete(connected);
+						});
+					}
+					
+					return true;
+				}
+			}
+			break;
+			
+		case 3: // 网络打印
+			{
+				// 获取网络地址参数
+				CString address;
+				m_comboPort.GetWindowText(address);
+				
+				// 创建网络打印传输对象
+				auto transport = std::make_shared<NetworkPrintTransport>();
+				
+				// 配置网络打印参数
+				NetworkPrintConfig config;
+				// 解析地址和端口
+				CStringA addressA(address);
+				std::string addrStr(addressA);
+				size_t colonPos = addrStr.find(':');
+				if (colonPos != std::string::npos)
+				{
+					config.hostname = addrStr.substr(0, colonPos);
+					config.port = static_cast<WORD>(std::stoi(addrStr.substr(colonPos + 1)));
+				}
+				else
+				{
+					config.hostname = addrStr;
+					config.port = 9100; // 默认网络打印端口
+				}
+				config.connectTimeout = 5000;
+				config.sendTimeout = 10000;
+				config.receiveTimeout = 10000;
+				
+				// 打开网络连接
+				if (transport->Open(config) == TransportError::Success)
+				{
+					m_transport = transport;
+					
+					// 创建可靠传输通道（如果启用）
+					if (m_radioReliable.GetCheck() == BST_CHECKED)
+					{
+						m_reliableChannel = std::make_unique<ReliableChannel>();
+						m_reliableChannel->Initialize(m_transport, m_reliableConfig);
+						
+						// 设置回调函数
+						m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total) {
+							OnReliableProgress(static_cast<uint32_t>((current * 100) / total));
+						});
+						
+						m_reliableChannel->SetStateChangedCallback([this](bool connected) {
+							OnReliableComplete(connected);
+						});
+					}
+					
+					return true;
+				}
+			}
+			break;
+			
+		case 4: // 回路测试
+		{
+			// 创建回路测试传输对象
+			auto transport = std::make_shared<LoopbackTransport>();
+			
+			// 配置回路测试参数
+			LoopbackConfig config;
+			config.delayMs = 10;
+			config.errorRate = 0;
+			config.packetLossRate = 0;
+			config.enableJitter = false;
+			config.jitterMaxMs = 5;
+			config.maxQueueSize = 1000;
+			
+			// 打开回路测试
+			if (transport->Open(config) == TransportError::Success)
+			{
+				m_transport = transport;
+				
+				// 创建可靠传输通道（如果启用）
+				if (m_radioReliable.GetCheck() == BST_CHECKED)
+				{
+					m_reliableChannel = std::make_unique<ReliableChannel>();
+					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
+					
+					// 设置回调函数
+					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total) {
+						OnReliableProgress(static_cast<uint32_t>((current * 100) / total));
+					});
+					
+					m_reliableChannel->SetStateChangedCallback([this](bool connected) {
+						OnReliableComplete(connected);
+					});
+				}
+				
+				return true;
+			}
+		}
+			break;
 			
 		default:
 			return false;
@@ -1112,7 +1346,7 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		}
 		
 		// 加载串口配置
-		const SerialPortConfig& serialConfig = config.serial;
+		const SerialConfig& serialConfig = config.serial;
 		
 		// 设置端口名
 		SetDlgItemText(IDC_COMBO_PORT, CString(serialConfig.portName.c_str()));
@@ -1158,8 +1392,8 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		timeoutText.Format(_T("%d"), serialConfig.readTimeout);
 		SetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
 		
-		// 设置可靠模式
-		if (serialConfig.reliableMode)
+		// 设置可靠模式（串口配置不再支持，使用协议配置）
+		if (config.protocol.windowSize > 1)
 		{
 			m_radioReliable.SetCheck(BST_CHECKED);
 			m_radioDirect.SetCheck(BST_UNCHECKED);
@@ -1201,7 +1435,7 @@ void CPortMasterDlg::SaveConfigurationToStore()
 		PortMasterConfig config = m_configStore.GetConfig();
 		
 		// 保存串口配置
-		SerialPortConfig& serialConfig = config.serial;
+		SerialConfig& serialConfig = config.serial;
 		
 		// 获取端口名
 		CString portName;
@@ -1245,8 +1479,17 @@ void CPortMasterDlg::SaveConfigurationToStore()
 		serialConfig.readTimeout = _ttoi(timeoutText);
 		serialConfig.writeTimeout = serialConfig.readTimeout;
 		
-		// 获取可靠模式
-		serialConfig.reliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+		// 获取可靠模式（更新协议配置）
+		if (m_radioReliable.GetCheck() == BST_CHECKED)
+		{
+			config.protocol.windowSize = 4; // 启用可靠模式
+			config.protocol.maxRetries = 3;
+		}
+		else
+		{
+			config.protocol.windowSize = 1; // 禁用可靠模式
+			config.protocol.maxRetries = 0;
+		}
 		
 		// 保存UI配置
 		UIConfig& uiConfig = config.ui;

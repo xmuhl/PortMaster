@@ -76,6 +76,10 @@ public:
     std::string GetDeviceInfo() const;
     bool IsDeviceConnected() const;
     
+    // 设备控制方法
+    TransportError ResetDevice();
+    std::string GetDeviceDescriptor() const;
+    
     // 静态辅助方法
     static std::vector<std::string> EnumerateUsbPorts();
     static bool IsUsbPortAvailable(const std::string& portName);

@@ -8,6 +8,21 @@
 #include <mutex>
 #include <functional>
 
+// 前向声明 - 配置结构定义在对应的传输头文件中
+struct TransportConfig;
+struct SerialPortConfig;
+struct ParallelPortConfig;
+struct UsbPrintConfig;
+struct NetworkPrintConfig;
+struct LoopbackConfig;
+
+// 传输配置头文件（包含所有传输配置）
+#include "../Transport/ITransport.h"
+#include "../Transport/SerialTransport.h"
+#include "../Transport/ParallelTransport.h"
+#include "../Transport/UsbPrintTransport.h"
+#include "../Transport/NetworkPrintTransport.h"
+
 // JSON处理库 - 使用简单的字符串操作实现
 // 避免引入外部依赖，保持项目的轻量级特性
 
@@ -24,66 +39,16 @@ struct AppConfig
     AppConfig() = default;
 };
 
-// 串口配置
-struct SerialPortConfig
-{
-    std::string portName = "COM1";             // 端口名
-    DWORD baudRate = 9600;                     // 波特率
-    BYTE dataBits = 8;                         // 数据位
-    BYTE parity = NOPARITY;                    // 校验位
-    BYTE stopBits = ONESTOPBIT;                // 停止位
-    DWORD flowControl = 0;                     // 流控制
-    DWORD readTimeout = 1000;                  // 读超时
-    DWORD writeTimeout = 1000;                 // 写超时
-    bool reliableMode = false;                 // 可靠模式
-    
-    SerialPortConfig() = default;
-};
+// 串口配置 - 直接复用传输层定义
+// struct SerialPortConfig 已在 SerialTransport.h 中定义
 
-// 并口配置
-struct ParallelPortConfig
-{
-    std::string portName = "LPT1";             // 端口名
-    DWORD accessMode = 0;                      // 访问模式
-    DWORD readTimeout = 2000;                  // 读超时
-    DWORD writeTimeout = 2000;                 // 写超时
-    bool reliableMode = false;                 // 可靠模式
-    
-    ParallelPortConfig() = default;
-};
+// 并口配置 - 直接复用传输层定义  
+// struct ParallelPortConfig 已在 ParallelTransport.h 中定义
 
-// USB打印配置
-struct UsbPrintConfig
-{
-    std::string deviceName = "USB001";         // 设备名
-    std::string deviceId;                      // 设备ID
-    DWORD accessMode = 0;                      // 访问模式
-    DWORD readTimeout = 2000;                  // 读超时
-    DWORD writeTimeout = 2000;                 // 写超时
-    bool reliableMode = false;                 // 可靠模式
-    
-    UsbPrintConfig() = default;
-};
+// USB打印配置和网络打印配置直接复用传输层定义
+// 在ConfigStore中不再重复定义，直接通过#include引入
 
-// 网络打印配置
-struct NetworkPrintConfig
-{
-    std::string hostName = "192.168.1.100";   // 主机名/IP
-    std::string protocol = "RAW";              // 协议类型 (RAW/LPR/IPP)
-    DWORD port = 9100;                         // 端口号
-    std::string queueName;                     // 队列名(LPR用)
-    std::string userName;                      // 用户名
-    std::string password;                      // 密码
-    DWORD connectTimeout = 5000;               // 连接超时
-    DWORD readTimeout = 10000;                 // 读超时
-    DWORD writeTimeout = 10000;                // 写超时
-    bool enableKeepAlive = true;               // 启用保活
-    bool reliableMode = false;                 // 可靠模式
-    
-    NetworkPrintConfig() = default;
-};
-
-// 回路测试配置
+// 回路测试配置 (配置存储版本)
 struct LoopbackTestConfig
 {
     DWORD delayMs = 10;                        // 延迟时间(ms)
@@ -143,7 +108,7 @@ struct UIConfig
 struct PortMasterConfig
 {
     AppConfig app;                             // 应用程序配置
-    SerialPortConfig serial;                   // 串口配置
+    SerialConfig serial;                       // 串口配置
     ParallelPortConfig parallel;               // 并口配置
     UsbPrintConfig usb;                        // USB打印配置
     NetworkPrintConfig network;                // 网络打印配置
@@ -176,7 +141,7 @@ public:
     
     // 分项配置访问
     const AppConfig& GetAppConfig() const;
-    const SerialPortConfig& GetSerialConfig() const;
+    const SerialConfig& GetSerialConfig() const;
     const ParallelPortConfig& GetParallelConfig() const;
     const UsbPrintConfig& GetUsbConfig() const;
     const NetworkPrintConfig& GetNetworkConfig() const;
@@ -185,7 +150,7 @@ public:
     const UIConfig& GetUIConfig() const;
     
     void SetAppConfig(const AppConfig& config);
-    void SetSerialConfig(const SerialPortConfig& config);
+    void SetSerialConfig(const SerialConfig& config);
     void SetParallelConfig(const ParallelPortConfig& config);
     void SetUsbConfig(const UsbPrintConfig& config);
     void SetNetworkConfig(const NetworkPrintConfig& config);

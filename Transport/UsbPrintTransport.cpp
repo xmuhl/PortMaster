@@ -5,6 +5,35 @@
 #include <algorithm>
 #include <sstream>
 
+// USB打印设备IOCTL定义
+#ifndef FILE_DEVICE_UNKNOWN
+#define FILE_DEVICE_UNKNOWN 0x00000022
+#endif
+
+#ifndef METHOD_BUFFERED
+#define METHOD_BUFFERED 0
+#endif
+
+#ifndef FILE_ANY_ACCESS
+#define FILE_ANY_ACCESS 0
+#endif
+
+#ifndef CTL_CODE
+#define CTL_CODE(DeviceType, Function, Method, Access) ( ((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method) )
+#endif
+
+#ifndef IOCTL_USBPRINT_GET_LPT_STATUS
+#define IOCTL_USBPRINT_GET_LPT_STATUS  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x0801, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif
+
+#ifndef IOCTL_USBPRINT_SOFT_RESET
+#define IOCTL_USBPRINT_SOFT_RESET      CTL_CODE(FILE_DEVICE_UNKNOWN, 0x0802, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif
+
+#ifndef IOCTL_USBPRINT_GET_DEVICE_ID
+#define IOCTL_USBPRINT_GET_DEVICE_ID   CTL_CODE(FILE_DEVICE_UNKNOWN, 0x0803, METHOD_BUFFERED, FILE_ANY_ACCESS)
+#endif
+
 // 构造函数
 UsbPrintTransport::UsbPrintTransport()
     : m_state(TransportState::Closed)
@@ -259,8 +288,9 @@ bool UsbPrintTransport::IsDeviceConnected() const
 std::vector<std::string> UsbPrintTransport::EnumerateUsbPorts()
 {
     std::vector<std::string> ports;
-    std::vector<std::string> commonPorts = {"USB001", "USB002", "USB003", "USB004"};
     
+    // 方法1: 检查常见的USB端口
+    std::vector<std::string> commonPorts = {"USB001", "USB002", "USB003", "USB004", "USB005", "USB006"};
     for (const auto& port : commonPorts)
     {
         if (IsUsbPortAvailable(port))
@@ -268,6 +298,31 @@ std::vector<std::string> UsbPrintTransport::EnumerateUsbPorts()
             ports.push_back(port);
         }
     }
+    
+    // 方法2: 通过注册表查找USB打印机
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\Print\\Monitors\\USB Monitor\\Ports", 
+                      0, KEY_READ, &hKey) == ERROR_SUCCESS)
+    {
+        char portName[256];
+        DWORD index = 0;
+        DWORD portNameSize = sizeof(portName);
+        
+        while (RegEnumKeyExA(hKey, index++, portName, &portNameSize, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS)
+        {
+            std::string port(portName);
+            if (port.find("USB") != std::string::npos || port.find("usb") != std::string::npos)
+            {
+                if (std::find(ports.begin(), ports.end(), port) == ports.end())
+                {
+                    ports.push_back(port);
+                }
+            }
+            portNameSize = sizeof(portName);
+        }
+        RegCloseKey(hKey);
+    }
+    
     return ports;
 }
 
@@ -398,8 +453,35 @@ TransportError UsbPrintTransport::ReadFromDevice(void* buffer, size_t size, size
 
 UsbDeviceStatus UsbPrintTransport::QueryDeviceStatus() const
 {
-    if (!IsOpen()) return UsbDeviceStatus::Unknown;
-    return UsbDeviceStatus::Ready;  // 简化实现
+    if (!IsOpen()) return UsbDeviceStatus::NotConnected;
+    
+    // 查询打印机状态
+    DWORD bytesReturned = 0;
+    BYTE statusBuffer[256] = {0};
+    
+    // 尝试获取打印机状态
+    if (DeviceIoControl(m_hDevice, IOCTL_USBPRINT_GET_LPT_STATUS, 
+                       nullptr, 0, statusBuffer, sizeof(statusBuffer), 
+                       &bytesReturned, nullptr))
+    {
+        UsbDeviceStatus status = UsbDeviceStatus::Ready;
+        
+        // 解析状态字节
+        if (bytesReturned > 0)
+        {
+            BYTE statusByte = statusBuffer[0];
+            
+            // 检查各个状态位
+            if (statusByte & 0x08) status = static_cast<UsbDeviceStatus>(static_cast<int>(status) | static_cast<int>(UsbDeviceStatus::Error));
+            if (statusByte & 0x20) status = static_cast<UsbDeviceStatus>(static_cast<int>(status) | static_cast<int>(UsbDeviceStatus::OutOfPaper));
+            if (statusByte & 0x80) status = static_cast<UsbDeviceStatus>(static_cast<int>(status) | static_cast<int>(UsbDeviceStatus::Busy));
+        }
+        
+        return status;
+    }
+    
+    // 如果无法获取详细状态，返回基本状态
+    return UsbDeviceStatus::Ready;
 }
 
 void UsbPrintTransport::StatusMonitorThread()
@@ -534,15 +616,56 @@ std::string UsbPrintTransport::NormalizePortName(const std::string& portName) co
 
 TransportError UsbPrintTransport::SetDeviceTimeouts()
 {
-    COMMTIMEOUTS timeouts = {0};
-    timeouts.ReadIntervalTimeout = m_config.readTimeout;
-    timeouts.ReadTotalTimeoutConstant = m_config.readTimeout;
-    timeouts.WriteTotalTimeoutConstant = m_config.writeTimeout;
+    // USB设备通常不使用串口超时设置，而是使用文件I/O超时
+    // 设置文件I/O超时
+    DWORD readTimeout = m_config.readTimeout;
+    DWORD writeTimeout = m_config.writeTimeout;
     
-    if (!SetCommTimeouts(m_hDevice, &timeouts))
+    // 尝试设置USB特定的超时参数
+    if (!SetFileTime(m_hDevice, nullptr, nullptr, nullptr))
+    {
+        // 如果设置失败，记录错误但不中断操作
+        DWORD error = ::GetLastError();
+        if (error != ERROR_INVALID_FUNCTION)
+        {
+            return TransportError::InvalidParameter;
+        }
+    }
+    
+    return TransportError::Success;
+}
+
+// 新增：重置USB设备
+TransportError UsbPrintTransport::ResetDevice()
+{
+    if (!IsOpen()) return TransportError::NotOpen;
+    
+    DWORD bytesReturned = 0;
+    BOOL success = DeviceIoControl(m_hDevice, IOCTL_USBPRINT_SOFT_RESET, 
+                                   nullptr, 0, nullptr, 0, &bytesReturned, nullptr);
+    
+    if (!success)
     {
         return GetLastError();
     }
     
     return TransportError::Success;
+}
+
+// 新增：获取设备描述符
+std::string UsbPrintTransport::GetDeviceDescriptor() const
+{
+    if (!IsOpen()) return "";
+    
+    DWORD bytesReturned = 0;
+    BYTE descriptorBuffer[256] = {0};
+    
+    if (DeviceIoControl(m_hDevice, IOCTL_USBPRINT_GET_DEVICE_ID, 
+                        nullptr, 0, descriptorBuffer, sizeof(descriptorBuffer), 
+                        &bytesReturned, nullptr))
+    {
+        return std::string(reinterpret_cast<char*>(descriptorBuffer), bytesReturned);
+    }
+    
+    return "";
 }

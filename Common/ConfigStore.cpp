@@ -135,7 +135,7 @@ const AppConfig& ConfigStore::GetAppConfig() const
 }
 
 // 获取串口配置
-const SerialPortConfig& ConfigStore::GetSerialConfig() const
+const SerialConfig& ConfigStore::GetSerialConfig() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     return m_config.serial;
@@ -196,7 +196,7 @@ void ConfigStore::SetAppConfig(const AppConfig& config)
 }
 
 // 设置串口配置
-void ConfigStore::SetSerialConfig(const SerialPortConfig& config)
+void ConfigStore::SetSerialConfig(const SerialConfig& config)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     m_config.serial = config;
@@ -344,9 +344,9 @@ bool ConfigStore::ValidateConfig()
     }
     
     // 验证网络配置
-    if (!ValidateIPAddress(m_config.network.hostName) && m_config.network.hostName.find('.') != std::string::npos)
+    if (!ValidateIPAddress(m_config.network.hostname) && m_config.network.hostname.find('.') != std::string::npos)
     {
-        m_config.network.hostName = "192.168.1.100";
+        m_config.network.hostname = "192.168.1.100";
         isValid = false;
     }
     
@@ -739,7 +739,7 @@ std::string ConfigStore::SerializeToJson() const
     ss << "    \"flowControl\": " << DwordToString(m_config.serial.flowControl) << ",\n";
     ss << "    \"readTimeout\": " << DwordToString(m_config.serial.readTimeout) << ",\n";
     ss << "    \"writeTimeout\": " << DwordToString(m_config.serial.writeTimeout) << ",\n";
-    ss << "    \"reliableMode\": " << BoolToString(m_config.serial.reliableMode) << "\n";
+    ss << "    \"reliableMode\": " << BoolToString(false) << "\n"; // 串口配置不再支持可靠模式
     ss << "  },\n";
     
     ss << "  \"ui\": {\n";
@@ -799,7 +799,7 @@ bool ConfigStore::DeserializeFromJson(const std::string& jsonStr)
             m_config.serial.flowControl = StringToDword(GetJsonValue(serialSection, "flowControl"));
             m_config.serial.readTimeout = StringToDword(GetJsonValue(serialSection, "readTimeout"));
             m_config.serial.writeTimeout = StringToDword(GetJsonValue(serialSection, "writeTimeout"));
-            m_config.serial.reliableMode = StringToBool(GetJsonValue(serialSection, "reliableMode"));
+            // m_config.serial.reliableMode = StringToBool(GetJsonValue(serialSection, "reliableMode")); // 串口配置不再支持可靠模式
         }
         
         // 解析UI配置
