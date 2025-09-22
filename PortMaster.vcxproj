@@ -124,6 +124,7 @@
     <ClInclude Include="src\PortMasterDlg.h" />
     <ClInclude Include="include\targetver.h" />
     <ClInclude Include="Common\CommonTypes.h" />
+    <ClInclude Include="Common\ConfigStore.h" />
     <ClInclude Include="Common\RingBuffer.h" />
     <ClInclude Include="Protocol\FrameCodec.h" />
     <ClInclude Include="Protocol\ReliableChannel.h" />
@@ -138,6 +139,7 @@
     </ClCompile>
     <ClCompile Include="src\PortMaster.cpp" />
     <ClCompile Include="src\PortMasterDlg.cpp" />
+    <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Protocol\FrameCodec.cpp" />
     <ClCompile Include="Protocol\ReliableChannel.cpp" />
     <ClCompile Include="Transport\LoopbackTransport.cpp" />

@@ -61,6 +61,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	, m_receiveSpeed(0)
 	, m_transport(nullptr)
 	, m_reliableChannel(nullptr)
+	, m_configStore(ConfigStore::GetInstance())
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -214,6 +215,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 	// 初始化传输配置
 	InitializeTransportConfig();
+	
+	// 从配置存储加载配置
+	LoadConfigurationFromStore();
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -1092,4 +1096,208 @@ LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
 	}
 	
 	return 0;
+}
+
+// 配置管理方法实现
+void CPortMasterDlg::LoadConfigurationFromStore()
+{
+	try
+	{
+		const PortMasterConfig& config = m_configStore.GetConfig();
+		
+		// 加载应用程序配置
+		if (config.app.enableLogging)
+		{
+			// 设置日志级别等
+		}
+		
+		// 加载串口配置
+		const SerialPortConfig& serialConfig = config.serial;
+		
+		// 设置端口名
+		SetDlgItemText(IDC_COMBO_PORT, CString(serialConfig.portName.c_str()));
+		
+		// 设置波特率
+		CString baudRateText;
+		baudRateText.Format(_T("%d"), serialConfig.baudRate);
+		SetDlgItemText(IDC_COMBO_BAUD_RATE, baudRateText);
+		
+		// 设置数据位
+		CString dataBitsText;
+		dataBitsText.Format(_T("%d"), serialConfig.dataBits);
+		SetDlgItemText(IDC_COMBO_DATA_BITS, dataBitsText);
+		
+		// 设置校验位
+		CString parityText;
+		switch (serialConfig.parity)
+		{
+		case NOPARITY:   parityText = _T("None"); break;
+		case ODDPARITY:  parityText = _T("Odd"); break;
+		case EVENPARITY: parityText = _T("Even"); break;
+		default:         parityText = _T("None"); break;
+		}
+		SetDlgItemText(IDC_COMBO_PARITY, parityText);
+		
+		// 设置停止位
+		CString stopBitsText;
+		switch (serialConfig.stopBits)
+		{
+		case ONESTOPBIT:   stopBitsText = _T("1"); break;
+		case ONE5STOPBITS: stopBitsText = _T("1.5"); break;
+		case TWOSTOPBITS:  stopBitsText = _T("2"); break;
+		default:           stopBitsText = _T("1"); break;
+		}
+		SetDlgItemText(IDC_COMBO_STOP_BITS, stopBitsText);
+		
+		// 设置流控制
+		CString flowControlText = (serialConfig.flowControl == 0) ? _T("None") : _T("Hardware");
+		SetDlgItemText(IDC_COMBO_FLOW_CONTROL, flowControlText);
+		
+		// 设置超时
+		CString timeoutText;
+		timeoutText.Format(_T("%d"), serialConfig.readTimeout);
+		SetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
+		
+		// 设置可靠模式
+		if (serialConfig.reliableMode)
+		{
+			m_radioReliable.SetCheck(BST_CHECKED);
+			m_radioDirect.SetCheck(BST_UNCHECKED);
+		}
+		else
+		{
+			m_radioReliable.SetCheck(BST_UNCHECKED);
+			m_radioDirect.SetCheck(BST_CHECKED);
+		}
+		
+		// 加载UI配置
+		const UIConfig& uiConfig = config.ui;
+		
+		// 设置十六进制显示选项
+		m_checkHex.SetCheck(uiConfig.hexDisplay ? BST_CHECKED : BST_UNCHECKED);
+		
+		// 更新窗口位置（如果有保存）
+		if (uiConfig.windowWidth > 0 && uiConfig.windowHeight > 0 &&
+			uiConfig.windowX != CW_USEDEFAULT && uiConfig.windowY != CW_USEDEFAULT)
+		{
+			SetWindowPos(nullptr, 
+				uiConfig.windowX, uiConfig.windowY,
+				uiConfig.windowWidth, uiConfig.windowHeight,
+				SWP_NOZORDER);
+		}
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("加载配置失败: %s"), CString(e.what()));
+		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
+	}
+}
+
+void CPortMasterDlg::SaveConfigurationToStore()
+{
+	try
+	{
+		PortMasterConfig config = m_configStore.GetConfig();
+		
+		// 保存串口配置
+		SerialPortConfig& serialConfig = config.serial;
+		
+		// 获取端口名
+		CString portName;
+		GetDlgItemText(IDC_COMBO_PORT, portName);
+		serialConfig.portName = CStringA(portName).GetString();
+		
+		// 获取波特率
+		CString baudRateText;
+		GetDlgItemText(IDC_COMBO_BAUD_RATE, baudRateText);
+		serialConfig.baudRate = _ttoi(baudRateText);
+		
+		// 获取数据位
+		CString dataBitsText;
+		GetDlgItemText(IDC_COMBO_DATA_BITS, dataBitsText);
+		serialConfig.dataBits = (BYTE)_ttoi(dataBitsText);
+		
+		// 获取校验位
+		CString parityText;
+		GetDlgItemText(IDC_COMBO_PARITY, parityText);
+		if (parityText == _T("None"))        serialConfig.parity = NOPARITY;
+		else if (parityText == _T("Odd"))    serialConfig.parity = ODDPARITY;
+		else if (parityText == _T("Even"))   serialConfig.parity = EVENPARITY;
+		else                                 serialConfig.parity = NOPARITY;
+		
+		// 获取停止位
+		CString stopBitsText;
+		GetDlgItemText(IDC_COMBO_STOP_BITS, stopBitsText);
+		if (stopBitsText == _T("1"))         serialConfig.stopBits = ONESTOPBIT;
+		else if (stopBitsText == _T("1.5"))  serialConfig.stopBits = ONE5STOPBITS;
+		else if (stopBitsText == _T("2"))    serialConfig.stopBits = TWOSTOPBITS;
+		else                                 serialConfig.stopBits = ONESTOPBIT;
+		
+		// 获取流控制
+		CString flowControlText;
+		GetDlgItemText(IDC_COMBO_FLOW_CONTROL, flowControlText);
+		serialConfig.flowControl = (flowControlText == _T("None")) ? 0 : 1;
+		
+		// 获取超时
+		CString timeoutText;
+		GetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
+		serialConfig.readTimeout = _ttoi(timeoutText);
+		serialConfig.writeTimeout = serialConfig.readTimeout;
+		
+		// 获取可靠模式
+		serialConfig.reliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+		
+		// 保存UI配置
+		UIConfig& uiConfig = config.ui;
+		
+		// 保存十六进制显示选项
+		uiConfig.hexDisplay = (m_checkHex.GetCheck() == BST_CHECKED);
+		
+		// 保存窗口位置
+		CRect windowRect;
+		GetWindowRect(&windowRect);
+		uiConfig.windowX = windowRect.left;
+		uiConfig.windowY = windowRect.top;
+		uiConfig.windowWidth = windowRect.Width();
+		uiConfig.windowHeight = windowRect.Height();
+		
+		// 更新配置到存储
+		m_configStore.SetConfig(config);
+		
+		// 触发配置变更回调
+		OnConfigurationChanged();
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("保存配置失败: %s"), CString(e.what()));
+		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONERROR);
+	}
+}
+
+void CPortMasterDlg::OnConfigurationChanged()
+{
+	// 配置变更时的处理逻辑
+	// 可以在这里通知其他组件配置已更改
+	// 例如：重新应用Transport配置、更新UI状态等
+	
+	try
+	{
+		// 更新传输配置
+		InitializeTransportConfig();
+		
+		// 如果当前已连接，可能需要重新连接以应用新配置
+		if (m_isConnected.load())
+		{
+			// 这里可以添加重新连接的逻辑（可选）
+			// 为了安全起见，通常建议用户手动重新连接
+		}
+	}
+	catch (const std::exception& e)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("应用配置变更失败: %s"), CString(e.what()));
+		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
+	}
 }

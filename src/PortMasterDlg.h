@@ -3,6 +3,7 @@
 #include "afxwin.h"
 #include "../Transport/ITransport.h"
 #include "../Protocol/ReliableChannel.h"
+#include "../Common/ConfigStore.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -100,6 +101,9 @@ private:
 	std::atomic<bool> m_isTransmitting;
 	std::thread m_receiveThread;
 	
+	// 配置管理
+	ConfigStore& m_configStore;
+	
 	// 传输配置
 	TransportConfig m_transportConfig;
 	ReliableConfig m_reliableConfig;
@@ -122,6 +126,11 @@ private:
 	void OnTransportError(const std::string& error);
 	void OnReliableProgress(uint32_t progress);
 	void OnReliableComplete(bool success);
+	
+	// 配置管理方法
+	void LoadConfigurationFromStore();
+	void SaveConfigurationToStore();
+	void OnConfigurationChanged();
 
 // 消息处理函数声明
 	afx_msg void OnBnClickedButtonConnect();
