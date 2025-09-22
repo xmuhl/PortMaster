@@ -144,6 +144,10 @@ private:
 	afx_msg void OnBnClickedCheckHex();
 	afx_msg void OnBnClickedRadioReliable();
 	afx_msg void OnBnClickedRadioDirect();
+	afx_msg void OnTimer(UINT_PTR nIDEvent);
+	
+	// 文件拖拽处理
+	afx_msg void OnDropFiles(HDROP hDropInfo);
 	
 	// 自定义消息处理
 	afx_msg LRESULT OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam);

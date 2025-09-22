@@ -15,6 +15,7 @@
 #include "../Common/CommonTypes.h"
 #include "../Common/ConfigStore.h"
 #include <chrono>
+#include <shellapi.h>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -122,6 +123,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
 	ON_WM_QUERYDRAGICON()
+	ON_WM_DROPFILES()
 	ON_BN_CLICKED(IDC_BUTTON_CONNECT, &CPortMasterDlg::OnBnClickedButtonConnect)
 	ON_BN_CLICKED(IDC_BUTTON_DISCONNECT, &CPortMasterDlg::OnBnClickedButtonDisconnect)
 	ON_BN_CLICKED(IDC_BUTTON_SEND, &CPortMasterDlg::OnBnClickedButtonSend)
@@ -135,6 +137,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_CHECK_HEX, &CPortMasterDlg::OnBnClickedCheckHex)
 	ON_BN_CLICKED(IDC_RADIO_RELIABLE, &CPortMasterDlg::OnBnClickedRadioReliable)
 	ON_BN_CLICKED(IDC_RADIO_DIRECT, &CPortMasterDlg::OnBnClickedRadioDirect)
+	ON_WM_TIMER()
 	ON_MESSAGE(WM_USER + 1, &CPortMasterDlg::OnTransportDataReceivedMessage)
 	ON_MESSAGE(WM_USER + 2, &CPortMasterDlg::OnTransportErrorMessage)
 END_MESSAGE_MAP()
@@ -228,6 +231,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	
 	// 从配置存储加载配置
 	LoadConfigurationFromStore();
+	
+	// 启用文件拖拽功能
+	DragAcceptFiles(TRUE);
 
 	return TRUE;  // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -279,6 +285,18 @@ void CPortMasterDlg::OnPaint()
 HCURSOR CPortMasterDlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
+}
+
+void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
+{
+	if (nIDEvent == 1)
+	{
+		// 定时器1：恢复连接状态显示
+		KillTimer(1);
+		UpdateConnectionStatus();
+	}
+	
+	CDialogEx::OnTimer(nIDEvent);
 }
 
 
@@ -392,45 +410,62 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		// 根据显示模式转换数据
 		if (m_checkHex.GetCheck() == BST_CHECKED)
 		{
-			// 十六进制模式
-			CString hexData = sendData;
-			hexData.Remove(' '); // 移除空格
-			hexData.Remove('\r'); // 移除回车
-			hexData.Remove('\n'); // 移除换行
+			// 十六进制模式 - 从格式化的十六进制文本中提取纯十六进制字节对
+			CString cleanHex;
+			int len = sendData.GetLength();
 			
-			// 检查长度是否为偶数
-			if (hexData.GetLength() % 2 != 0)
+			// 提取有效的十六进制字符，自动跳过偏移地址、ASCII分隔符等格式化标记
+			for (int i = 0; i < len; i++)
 			{
-				MessageBox(_T("十六进制数据长度必须为偶数"), _T("错误"), MB_OK | MB_ICONERROR);
+				TCHAR ch = sendData[i];
+				// 只保留有效的十六进制字符
+				if ((ch >= _T('0') && ch <= _T('9')) ||
+					(ch >= _T('A') && ch <= _T('F')) ||
+					(ch >= _T('a') && ch <= _T('f')))
+				{
+					cleanHex += ch;
+				}
+				// 自动跳过空格、换行符、偏移地址("00000000:")、ASCII分隔符("|...|")等
+			}
+			
+			// 检查是否有有效的十六进制数据
+			if (cleanHex.IsEmpty())
+			{
+				MessageBox(_T("未找到有效的十六进制数据"), _T("错误"), MB_OK | MB_ICONERROR);
+				return;
+			}
+			
+			// 确保字节对数为偶数
+			if (cleanHex.GetLength() % 2 != 0)
+			{
+				MessageBox(_T("十六进制数据字符数必须为偶数"), _T("错误"), MB_OK | MB_ICONERROR);
 				return;
 			}
 			
 			// 转换为字节数组
-			for (int i = 0; i < hexData.GetLength(); i += 2)
+			for (int i = 0; i < cleanHex.GetLength(); i += 2)
 			{
-				CString byteStr = hexData.Mid(i, 2);
-				int byteValue;
-				if (_stscanf_s(byteStr, _T("%02X"), &byteValue) == 1)
-				{
-					data.push_back(static_cast<uint8_t>(byteValue));
-				}
-				else
-				{
-					MessageBox(_T("十六进制数据格式错误"), _T("错误"), MB_OK | MB_ICONERROR);
-					return;
-				}
+				CString byteStr = cleanHex.Mid(i, 2);
+				uint8_t byteValue = static_cast<uint8_t>(_tcstoul(byteStr, NULL, 16));
+				data.push_back(byteValue);
 			}
 		}
 		else
 		{
-			// 文本模式
-			CT2A textData(sendData);
+			// 文本模式 - 使用UTF-8编码确保正确处理Unicode字符
+			CT2A textData(sendData, CP_UTF8);
 			const char* text = textData;
 			data.assign(text, text + strlen(text));
 		}
 		
 		// 发送数据
 		TransportError error = TransportError::Success;
+		
+		// 更新状态栏显示传输状态
+		CString statusText;
+		statusText.Format(_T("正在传输 %u 字节..."), data.size());
+		m_staticPortStatus.SetWindowText(statusText);
+		
 		if (m_reliableChannel && m_reliableChannel->IsConnected())
 		{
 			// 使用可靠传输通道
@@ -449,6 +484,9 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 			CString errorMsg;
 			errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
 			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+			
+			// 恢复连接状态显示
+			UpdateConnectionStatus();
 		}
 		else
 		{
@@ -458,6 +496,9 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 			sentText.Format(_T("%u"), m_bytesSent);
 			SetDlgItemText(IDC_STATIC_SENT, sentText);
 			
+			// TODO: 发送历史记录功能待实现 - 需要在资源文件中添加相应控件
+			// 当前暂时注释掉，避免引用不存在的控件导致运行时错误
+			/*
 			// 添加到发送历史
 			CString history;
 			GetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
@@ -467,9 +508,18 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 			}
 			history += sendData;
 			SetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
+			*/
 			
-			// 清空发送编辑框
-			SetDlgItemText(IDC_EDIT_SEND, _T(""));
+			// 清空发送编辑框 - 修正控件ID为实际存在的控件
+			SetDlgItemText(IDC_EDIT_SEND_DATA, _T(""));
+			
+			// 显示传输完成状态
+			CString completeStatus;
+			completeStatus.Format(_T("传输完成: %u 字节"), data.size());
+			m_staticPortStatus.SetWindowText(completeStatus);
+			
+			// 2秒后恢复连接状态显示
+			SetTimer(1, 2000, NULL);
 		}
 	}
 	catch (const std::exception& e)
@@ -511,31 +561,81 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 
 void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 {
-	CStdioFile file;
-	if (file.Open(filePath, CFile::modeRead | CFile::typeText))
+	// 使用CFile读取原始字节数据，支持UTF-8编码
+	CFile file;
+	if (file.Open(filePath, CFile::modeRead))
 	{
-		CString fileContent;
-		CString line;
-		
-		while (file.ReadString(line))
+		ULONGLONG fileLength = file.GetLength();
+		if (fileLength > 0)
 		{
-			fileContent += line + _T("\r\n");
+			// 读取文件数据
+			BYTE* fileData = new BYTE[(size_t)fileLength + 2];
+			file.Read(fileData, (UINT)fileLength);
+			fileData[fileLength] = 0;
+			fileData[fileLength + 1] = 0;
+			
+			// 检测文件编码
+			CString fileContent;
+			if (fileLength >= 3 && fileData[0] == 0xEF && fileData[1] == 0xBB && fileData[2] == 0xBF)
+			{
+				// UTF-8 BOM
+				int utf8Len = (int)(fileLength - 3);
+				int wideLen = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)(fileData + 3), utf8Len, NULL, 0);
+				if (wideLen > 0)
+				{
+					wchar_t* wideStr = new wchar_t[wideLen + 1];
+					MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)(fileData + 3), utf8Len, wideStr, wideLen);
+					wideStr[wideLen] = 0;
+					fileContent = wideStr;
+					delete[] wideStr;
+				}
+			}
+			else if (fileLength >= 2 && ((fileData[0] == 0xFF && fileData[1] == 0xFE) || (fileData[0] == 0xFE && fileData[1] == 0xFF)))
+			{
+				// UTF-16 BOM
+				fileContent = (LPCTSTR)(fileData + 2);
+			}
+			else
+			{
+				// 尝试UTF-8
+				int wideLen = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
+				if (wideLen > 0)
+				{
+					wchar_t* wideStr = new wchar_t[wideLen + 1];
+					MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen);
+					wideStr[wideLen] = 0;
+					fileContent = wideStr;
+					delete[] wideStr;
+				}
+				else
+				{
+					// 使用系统默认编码
+					fileContent = (LPCTSTR)fileData;
+				}
+			}
+			
+			delete[] fileData;
+			
+			// 设置到发送数据编辑框
+			m_editSendData.SetWindowText(fileContent);
+			
+			// 如果当前是十六进制模式，转换显示
+			if (m_checkHex.GetCheck())
+			{
+				CString hexContent = StringToHex(fileContent);
+				m_editSendData.SetWindowText(hexContent);
+			}
+			
+			// 更新数据源状态
+			m_staticSendSource.SetWindowText(_T("来源: 文件"));
+		}
+		else
+		{
+			m_editSendData.SetWindowText(_T(""));
+			m_staticSendSource.SetWindowText(_T("来源: 文件"));
 		}
 		
 		file.Close();
-		
-		// 设置到发送数据编辑框
-		m_editSendData.SetWindowText(fileContent);
-		
-		// 如果当前是十六进制模式，转换显示
-		if (m_checkHex.GetCheck())
-		{
-			CString hexContent = StringToHex(fileContent);
-			m_editSendData.SetWindowText(hexContent);
-		}
-		
-		// 更新数据源状态
-		m_staticSendSource.SetWindowText(_T("来源: 文件"));
 	}
 	else
 	{
@@ -706,32 +806,115 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 CString CPortMasterDlg::StringToHex(const CString& str)
 {
 	CString hexStr;
-	for (int i = 0; i < str.GetLength(); i++)
+	CString asciiStr;
+	
+	// 将CString转换为UTF-8字节序列以正确处理Unicode字符
+	CT2A utf8Str(str, CP_UTF8);
+	const char* pUtf8 = utf8Str;
+	int utf8Len = strlen(pUtf8);
+	
+	for (int i = 0; i < utf8Len; i++)
 	{
-		CString temp;
-		temp.Format(_T("%02X "), (BYTE)str[i]);
-		hexStr += temp;
+		uint8_t byte = static_cast<uint8_t>(pUtf8[i]);
+		
+		// 添加偏移地址（每16字节一行）
+		if (i % 16 == 0)
+		{
+			if (i > 0)
+			{
+				// 添加ASCII显示部分
+				hexStr += _T("  |");
+				hexStr += asciiStr;
+				hexStr += _T("|\r\n");
+				asciiStr.Empty();
+			}
+			
+			CString offset;
+			offset.Format(_T("%08X: "), i);
+			hexStr += offset;
+		}
+		
+		// 添加16进制值
+		CString hexByte;
+		hexByte.Format(_T("%02X "), byte);
+		hexStr += hexByte;
+		
+		// 添加可打印字符到ASCII部分
+		if (byte >= 32 && byte <= 126)
+		{
+			asciiStr += (TCHAR)byte;
+		}
+		else
+		{
+			asciiStr += _T(".");
+		}
 	}
-	hexStr.TrimRight();
+	
+	// 处理最后一行
+	if (utf8Len % 16 != 0)
+	{
+		// 补齐空格
+		int remain = 16 - (utf8Len % 16);
+		for (int i = 0; i < remain; i++)
+		{
+			hexStr += _T("   ");
+		}
+	}
+	
+	// 添加ASCII显示部分
+	hexStr += _T("  |");
+	hexStr += asciiStr;
+	hexStr += _T("|");
+	
 	return hexStr;
 }
 
 CString CPortMasterDlg::HexToString(const CString& hex)
 {
-	CString result;
-	CString hexData = hex;
-	hexData.Replace(_T(" "), _T(""));
+	// 从格式化的十六进制文本中提取纯十六进制字节对
+	CString cleanHex;
+	int len = hex.GetLength();
 	
-	for (int i = 0; i < hexData.GetLength(); i += 2)
+	for (int i = 0; i < len; i++)
 	{
-		if (i + 1 < hexData.GetLength())
+		TCHAR ch = hex[i];
+		// 只保留有效的十六进制字符
+		if ((ch >= _T('0') && ch <= _T('9')) ||
+			(ch >= _T('A') && ch <= _T('F')) ||
+			(ch >= _T('a') && ch <= _T('f')))
 		{
-			CString hexByte = hexData.Mid(i, 2);
-			BYTE byteValue = (BYTE)_tcstol(hexByte, NULL, 16);
-			result += (TCHAR)byteValue;
+			cleanHex += ch;
 		}
+		// 跳过偏移地址、ASCII分隔符等格式化标记
+		// 格式: "00000000: 48 65 6C 6C 6F  |Hello|"
 	}
-	return result;
+	
+	// 确保字节对数为偶数
+	if (cleanHex.GetLength() % 2 != 0)
+	{
+		// 如果长度为奇数，移除最后一个字符
+		cleanHex = cleanHex.Left(cleanHex.GetLength() - 1);
+	}
+	
+	// 转换十六进制字节对为字节数组
+	std::vector<uint8_t> bytes;
+	for (int i = 0; i < cleanHex.GetLength(); i += 2)
+	{
+		CString hexByte = cleanHex.Mid(i, 2);
+		uint8_t byteValue = static_cast<uint8_t>(_tcstoul(hexByte, NULL, 16));
+		bytes.push_back(byteValue);
+	}
+	
+	// 将字节数组转换为UTF-8编码的CString
+	if (!bytes.empty())
+	{
+		// 添加null终止符确保字符串安全
+		bytes.push_back(0);
+		CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
+		return CString(utf8Result);
+	}
+	
+	return CString();
 }
 
 void CPortMasterDlg::OnBnClickedRadioReliable()
@@ -1292,8 +1475,40 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			}
 			else
 			{
-				// 文本显示
-				dataText = CString(reinterpret_cast<const char*>(data->data()), data->size());
+				// 文本显示 - 安全地处理UTF-8编码的数据，支持包含NUL字符的二进制数据
+				if (!data->empty())
+				{
+					// 创建一个包含null终止符的副本，确保字符串安全
+					std::vector<char> safeData(data->begin(), data->end());
+					safeData.push_back('\0');
+					
+					// 尝试将数据作为UTF-8字符串解码
+					try
+					{
+						CA2T utf8Text(safeData.data(), CP_UTF8);
+						dataText = CString(utf8Text);
+					}
+					catch (...)
+					{
+						// 如果UTF-8解码失败，回退到安全的字符显示
+						// 显示可打印字符，不可打印字符显示为'.'
+						for (uint8_t byte : *data)
+						{
+							if (byte >= 32 && byte <= 126)
+							{
+								dataText += (TCHAR)byte;
+							}
+							else if (byte == 0)
+							{
+								dataText += _T("[NUL]"); // 明确显示NUL字符
+							}
+							else
+							{
+								dataText += _T(".");
+							}
+						}
+					}
+				}
 			}
 			
 			// 添加到接收显示
@@ -1543,4 +1758,51 @@ void CPortMasterDlg::OnConfigurationChanged()
 		errorMsg.Format(_T("应用配置变更失败: %s"), CString(e.what()));
 		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 	}
+}
+
+// 文件拖拽处理函数
+void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
+{
+	// 获取拖拽的文件数量
+	UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, nullptr, 0);
+	
+	if (fileCount > 0)
+	{
+		// 只处理第一个文件
+		TCHAR filePath[MAX_PATH];
+		if (DragQueryFile(hDropInfo, 0, filePath, MAX_PATH) > 0)
+		{
+			// 检查文件扩展名
+			CString fileName(filePath);
+			fileName.MakeLower();
+			
+			// 支持常见的文本文件格式
+			if (fileName.Right(4) == _T(".txt") || 
+				fileName.Right(4) == _T(".log") ||
+				fileName.Right(5) == _T(".data") ||
+				fileName.Right(3) == _T(".in") ||
+				fileName.Right(4) == _T(".out") ||
+				fileName.Right(4) == _T(".hex") ||
+				fileName.Right(4) == _T(".bin"))
+			{
+				// 加载文件内容到发送窗口
+				LoadDataFromFile(filePath);
+				
+				// 更新状态栏提示
+				CString statusMsg;
+				statusMsg.Format(_T("已加载文件: %s"), PathFindFileName(filePath));
+				SetDlgItemText(IDC_STATIC_LOG, statusMsg);
+			}
+			else
+			{
+				MessageBox(_T("不支持该文件格式，请拖拽文本文件或二进制文件"), _T("提示"), MB_OK | MB_ICONWARNING);
+			}
+		}
+	}
+	
+	// 释放拖拽信息结构
+	DragFinish(hDropInfo);
+	
+	// 调用基类处理
+	CDialogEx::OnDropFiles(hDropInfo);
 }
