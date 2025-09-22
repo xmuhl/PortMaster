@@ -561,7 +561,7 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 
 void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 {
-	// 使用CFile读取原始字节数据，支持UTF-8编码
+	// 使用CFile读取原始字节数据，支持多种编码自动检测
 	CFile file;
 	if (file.Open(filePath, CFile::modeRead))
 	{
@@ -574,69 +574,140 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 			fileData[fileLength] = 0;
 			fileData[fileLength + 1] = 0;
 			
-			// 检测文件编码
+			// 检测文件编码 - 改进的编码检测策略
 			CString fileContent;
+			bool decodingSuccess = false;
+			CString debugInfo;  // 用于调试的编码信息
+			
+			// 1. 检测UTF-8 BOM
 			if (fileLength >= 3 && fileData[0] == 0xEF && fileData[1] == 0xBB && fileData[2] == 0xBF)
 			{
-				// UTF-8 BOM
+				debugInfo = _T("UTF-8 BOM detected");
 				int utf8Len = (int)(fileLength - 3);
-				int wideLen = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)(fileData + 3), utf8Len, NULL, 0);
+				int wideLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)(fileData + 3), utf8Len, NULL, 0);
 				if (wideLen > 0)
 				{
 					wchar_t* wideStr = new wchar_t[wideLen + 1];
-					MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)(fileData + 3), utf8Len, wideStr, wideLen);
+					MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)(fileData + 3), utf8Len, wideStr, wideLen);
 					wideStr[wideLen] = 0;
 					fileContent = wideStr;
 					delete[] wideStr;
+					decodingSuccess = true;
+					debugInfo += _T(" - success");
+				}
+				else
+				{
+					debugInfo += _T(" - failed");
 				}
 			}
+			// 2. 检测UTF-16 BOM
 			else if (fileLength >= 2 && ((fileData[0] == 0xFF && fileData[1] == 0xFE) || (fileData[0] == 0xFE && fileData[1] == 0xFF)))
 			{
-				// UTF-16 BOM
-				fileContent = (LPCTSTR)(fileData + 2);
+				debugInfo = _T("UTF-16 BOM detected");
+				// 简化UTF-16处理，直接转换
+				if (fileData[0] == 0xFF && fileData[1] == 0xFE)
+				{
+					// Little Endian UTF-16
+					fileContent = CString((LPCWSTR)(fileData + 2), (int)(fileLength - 2) / 2);
+				}
+				else
+				{
+					// Big Endian UTF-16 需要字节序转换，这里暂时跳过
+					debugInfo += _T(" - Big Endian not supported");
+				}
+				decodingSuccess = !fileContent.IsEmpty();
 			}
+			// 3. 无BOM文件：优先尝试中文常用编码（GBK/GB2312），再尝试UTF-8
 			else
 			{
-				// 尝试UTF-8编码
-				int wideLen = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
+				// 先尝试系统默认ANSI编码（中文Windows通常是GBK/GB2312）
+				debugInfo = _T("Trying CP_ACP (GBK/GB2312)");
+				int wideLen = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, NULL, 0);
 				if (wideLen > 0)
 				{
 					wchar_t* wideStr = new wchar_t[wideLen + 1];
-					MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen);
-					wideStr[wideLen] = 0;
-					fileContent = wideStr;
+					int result = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen);
+					if (result > 0)
+					{
+						wideStr[wideLen] = 0;
+						fileContent = wideStr;
+						decodingSuccess = true;
+						debugInfo += _T(" - success");
+					}
+					else
+					{
+						debugInfo += _T(" - conversion failed");
+					}
 					delete[] wideStr;
 				}
 				else
 				{
-					// UTF-8解码失败，尝试使用系统默认ANSI编码（中文Windows通常是GBK/GB2312）
-					int wideLen2 = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
+					debugInfo += _T(" - invalid");
+				}
+				
+				// 如果GBK失败，尝试UTF-8（使用严格验证）
+				if (!decodingSuccess)
+				{
+					debugInfo += _T(", trying UTF-8");
+					int wideLen2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, NULL, 0);
 					if (wideLen2 > 0)
 					{
 						wchar_t* wideStr = new wchar_t[wideLen2 + 1];
-						MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen2);
-						wideStr[wideLen2] = 0;
-						fileContent = wideStr;
+						int result = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen2);
+						if (result > 0)
+						{
+							wideStr[wideLen2] = 0;
+							fileContent = wideStr;
+							decodingSuccess = true;
+							debugInfo += _T(" - UTF-8 success");
+						}
+						else
+						{
+							debugInfo += _T(" - UTF-8 conversion failed");
+						}
 						delete[] wideStr;
 					}
 					else
 					{
-						// 编码检测完全失败，回退到安全的字节显示模式
-						// 将每个字节显示为可打印字符或十六进制表示
-						for (size_t i = 0; i < fileLength; i++)
-						{
-							BYTE byte = fileData[i];
-							if (byte >= 32 && byte <= 126)
-							{
-								fileContent += (TCHAR)byte;
-							}
-							else
-							{
-								CString hexByte;
-								hexByte.Format(_T("\\x%02X"), byte);
-								fileContent += hexByte;
-							}
-						}
+						debugInfo += _T(" - UTF-8 invalid");
+					}
+				}
+				
+				// 最后尝试无验证的CP_ACP作为回退
+				if (!decodingSuccess)
+				{
+					debugInfo += _T(", fallback to CP_ACP no validation");
+					int wideLen3 = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
+					if (wideLen3 > 0)
+					{
+						wchar_t* wideStr = new wchar_t[wideLen3 + 1];
+						MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen3);
+						wideStr[wideLen3] = 0;
+						fileContent = wideStr;
+						delete[] wideStr;
+						decodingSuccess = true;
+						debugInfo += _T(" - fallback success");
+					}
+				}
+			}
+			
+			// 如果所有编码尝试都失败，使用字节级显示
+			if (!decodingSuccess || fileContent.IsEmpty())
+			{
+				debugInfo += _T(", using byte display");
+				fileContent.Empty();
+				for (size_t i = 0; i < fileLength; i++)
+				{
+					BYTE byte = fileData[i];
+					if (byte >= 32 && byte <= 126)
+					{
+						fileContent += (TCHAR)byte;
+					}
+					else
+					{
+						CString hexByte;
+						hexByte.Format(_T("\\x%02X"), byte);
+						fileContent += hexByte;
 					}
 				}
 			}
@@ -820,12 +891,20 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 		if (!strSendData.IsEmpty())
 		{
 			CString textSend = HexToString(strSendData);
-			m_editSendData.SetWindowText(textSend);
+			// 只有转换成功且非空时才设置，避免清空用户内容
+			if (!textSend.IsEmpty())
+			{
+				m_editSendData.SetWindowText(textSend);
+			}
 		}
 		if (!strReceiveData.IsEmpty())
 		{
 			CString textReceive = HexToString(strReceiveData);
-			m_editReceiveData.SetWindowText(textReceive);
+			// 只有转换成功且非空时才设置，避免清空用户内容
+			if (!textReceive.IsEmpty())
+			{
+				m_editReceiveData.SetWindowText(textReceive);
+			}
 		}
 	}
 }
@@ -941,6 +1020,7 @@ CString CPortMasterDlg::HexToString(const CString& hex)
 		return CString(utf8Result);
 	}
 	
+	// 如果没有有效的十六进制数据，返回空字符串
 	return CString();
 }
 
@@ -1491,12 +1571,13 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			CString dataText;
 			if (m_checkHex.GetCheck() == BST_CHECKED)
 			{
-				// 十六进制显示
-				for (uint8_t byte : *data)
+				// 十六进制格式化显示 - 使用StringToHex函数获得完整格式化效果
+				if (!data->empty())
 				{
-					CString byteText;
-					byteText.Format(_T("%02X "), byte);
-					dataText += byteText;
+					// 先将字节数据转换为临时字符串
+					std::string tempStr(data->begin(), data->end());
+					CString tempCString(tempStr.c_str());
+					dataText = StringToHex(tempCString);
 				}
 			}
 			else
