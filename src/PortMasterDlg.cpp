@@ -510,8 +510,8 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 			SetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
 			*/
 			
-			// 清空发送编辑框 - 修正控件ID为实际存在的控件
-			SetDlgItemText(IDC_EDIT_SEND_DATA, _T(""));
+			// 移除自动清空逻辑 - 让用户手动控制何时清空输入数据
+			// 发送完成后保留输入内容，方便用户重复发送或修改后再发送
 			
 			// 显示传输完成状态
 			CString completeStatus;
@@ -597,7 +597,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 			}
 			else
 			{
-				// 尝试UTF-8
+				// 尝试UTF-8编码
 				int wideLen = MultiByteToWideChar(CP_UTF8, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
 				if (wideLen > 0)
 				{
@@ -609,8 +609,35 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 				}
 				else
 				{
-					// 使用系统默认编码
-					fileContent = (LPCTSTR)fileData;
+					// UTF-8解码失败，尝试使用系统默认ANSI编码（中文Windows通常是GBK/GB2312）
+					int wideLen2 = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
+					if (wideLen2 > 0)
+					{
+						wchar_t* wideStr = new wchar_t[wideLen2 + 1];
+						MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen2);
+						wideStr[wideLen2] = 0;
+						fileContent = wideStr;
+						delete[] wideStr;
+					}
+					else
+					{
+						// 编码检测完全失败，回退到安全的字节显示模式
+						// 将每个字节显示为可打印字符或十六进制表示
+						for (size_t i = 0; i < fileLength; i++)
+						{
+							BYTE byte = fileData[i];
+							if (byte >= 32 && byte <= 126)
+							{
+								fileContent += (TCHAR)byte;
+							}
+							else
+							{
+								CString hexByte;
+								hexByte.Format(_T("\\x%02X"), byte);
+								fileContent += hexByte;
+							}
+						}
+					}
 				}
 			}
 			
@@ -928,9 +955,8 @@ void CPortMasterDlg::OnBnClickedRadioReliable()
 
 void CPortMasterDlg::OnBnClickedButtonClearAll()
 {
-	// 清空发送和接收数据
+	// 只清空发送数据编辑框（重命名为"清空发送框"后的新功能）
 	m_editSendData.SetWindowText(_T(""));
-	m_editReceiveData.SetWindowText(_T(""));
 	
 	// 重置数据源显示
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("来源: 手动输入"));
@@ -940,13 +966,13 @@ void CPortMasterDlg::OnBnClickedButtonClearAll()
 	GetDlgItemText(IDC_STATIC_LOG, logText);
 	CTime time = CTime::GetCurrentTime();
 	CString timeStr = time.Format(_T("[%H:%M:%S] "));
-	logText = timeStr + _T("清空全部数据") + _T(" ") + logText;
+	logText = timeStr + _T("清空发送框") + _T(" ") + logText;
 	SetDlgItemText(IDC_STATIC_LOG, logText);
 }
 
 void CPortMasterDlg::OnBnClickedButtonClearReceive()
 {
-	// 只清空接收数据
+	// 只清空接收数据编辑框（重命名为"清空接收框"后的功能保持不变）
 	m_editReceiveData.SetWindowText(_T(""));
 	
 	// 更新日志
@@ -954,7 +980,7 @@ void CPortMasterDlg::OnBnClickedButtonClearReceive()
 	GetDlgItemText(IDC_STATIC_LOG, logText);
 	CTime time = CTime::GetCurrentTime();
 	CString timeStr = time.Format(_T("[%H:%M:%S] "));
-	logText = timeStr + _T("清空接收数据") + _T(" ") + logText;
+	logText = timeStr + _T("清空接收框") + _T(" ") + logText;
 	SetDlgItemText(IDC_STATIC_LOG, logText);
 }
 
