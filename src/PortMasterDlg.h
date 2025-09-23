@@ -7,6 +7,7 @@
 #include <memory>
 #include <thread>
 #include <atomic>
+#include <fstream>
 
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
@@ -51,15 +52,18 @@ protected:
 	void UpdateDataDisplay();
 	void LoadDataFromFile(const CString &filePath);
 	void SaveDataToFile(const CString &filePath, const CString &data);
+	void SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data);
 
 	// 十六进制转换函数
 	CString StringToHex(const CString &str);
 	CString HexToString(const CString &hex);
+	CString ExtractHexAsciiText(const CString &hex);
 
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
 	void UpdateSendCache(const CString &data);				   // 更新发送缓存
+	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
 	void UpdateReceiveCache(const std::vector<uint8_t> &data); // 更新接收缓存
 
 	DECLARE_MESSAGE_MAP()
@@ -133,6 +137,13 @@ private:
 	bool m_sendCacheValid;					 // 发送缓存是否有效
 	bool m_receiveCacheValid;				 // 接收缓存是否有效
 
+	// 临时缓存文件管理
+	CString m_tempCacheFilePath;			 // 临时缓存文件路径
+	std::ofstream m_tempCacheFile;			 // 临时缓存文件流
+	bool m_useTempCacheFile;				 // 是否使用临时缓存文件
+	uint64_t m_totalReceivedBytes;			 // 总接收字节数
+	uint64_t m_totalSentBytes;				 // 总发送字节数
+
 	// 内部方法
 	void InitializeTransportConfig();
 	bool CreateTransport();
@@ -146,6 +157,17 @@ private:
 	void OnReliableProgress(uint32_t progress);
 	void OnReliableComplete(bool success);
 	void OnReliableStateChanged(bool connected);
+
+	// 临时缓存文件管理方法
+	bool InitializeTempCacheFile();
+	void CloseTempCacheFile();
+	bool WriteDataToTempCache(const std::vector<uint8_t>& data);
+	std::vector<uint8_t> ReadDataFromTempCache(uint64_t offset, size_t length);
+	std::vector<uint8_t> ReadAllDataFromTempCache();
+	void ClearTempCacheFile();
+
+	// 重写虚函数用于资源清理
+	virtual void PostNcDestroy();
 
 	// 配置管理方法
 	void LoadConfigurationFromStore();

@@ -260,6 +260,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 启用文件拖拽功能
 	DragAcceptFiles(TRUE);
 
+	// 初始化临时缓存文件
+	InitializeTempCacheFile();
+
 	return TRUE; // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -325,6 +328,14 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 	}
 
 	CDialogEx::OnTimer(nIDEvent);
+}
+
+void CPortMasterDlg::PostNcDestroy()
+{
+	// 清理临时缓存文件
+	CloseTempCacheFile();
+	
+	CDialogEx::PostNcDestroy();
 }
 
 void CPortMasterDlg::OnBnClickedButtonConnect()
@@ -401,6 +412,9 @@ void CPortMasterDlg::OnBnClickedButtonDisconnect()
 	// 销毁传输对象
 	DestroyTransport();
 
+	// 清理临时缓存文件（断开连接时清空缓存）
+	ClearTempCacheFile();
+
 	// 更新状态条连接状态
 	UpdateConnectionStatus();
 
@@ -445,44 +459,63 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		// 根据显示模式转换数据
 		if (m_checkHex.GetCheck() == BST_CHECKED)
 		{
-			// 十六进制模式 - 从格式化的十六进制文本中提取纯十六进制字节对
-			CString cleanHex;
+			// 十六进制模式 - 检查是否为格式化字符串
+			bool isFormattedHex = false;
 			int len = sendData.GetLength();
-
-			// 提取有效的十六进制字符，自动跳过偏移地址、ASCII分隔符等格式化标记
-			for (int i = 0; i < len; i++)
+			
+			// 检测是否为格式化的十六进制字符串
+			if (sendData.Find(_T("00000000:")) >= 0 || 
+				(sendData.Find(_T(':')) >= 0 && sendData.Find(_T('|')) >= 0))
 			{
-				TCHAR ch = sendData[i];
-				// 只保留有效的十六进制字符
-				if ((ch >= _T('0') && ch <= _T('9')) ||
-					(ch >= _T('A') && ch <= _T('F')) ||
-					(ch >= _T('a') && ch <= _T('f')))
+				isFormattedHex = true;
+			}
+			
+			if (isFormattedHex)
+			{
+				// 如果是格式化字符串，直接发送原始UTF-8字节数据
+				CT2A textData(sendData, CP_UTF8);
+				const char *text = textData;
+				data.assign(text, text + strlen(text));
+			}
+			else
+			{
+				// 如果是纯十六进制字符，提取并转换为字节
+				CString cleanHex;
+				
+				// 提取有效的十六进制字符，自动跳过空格、换行符等
+				for (int i = 0; i < len; i++)
 				{
-					cleanHex += ch;
+					TCHAR ch = sendData[i];
+					// 只保留有效的十六进制字符
+					if ((ch >= _T('0') && ch <= _T('9')) ||
+						(ch >= _T('A') && ch <= _T('F')) ||
+						(ch >= _T('a') && ch <= _T('f')))
+					{
+						cleanHex += ch;
+					}
 				}
-				// 自动跳过空格、换行符、偏移地址("00000000:")、ASCII分隔符("|...|")等
-			}
 
-			// 检查是否有有效的十六进制数据
-			if (cleanHex.IsEmpty())
-			{
-				MessageBox(_T("未找到有效的十六进制数据"), _T("错误"), MB_OK | MB_ICONERROR);
-				return;
-			}
+				// 检查是否有有效的十六进制数据
+				if (cleanHex.IsEmpty())
+				{
+					MessageBox(_T("未找到有效的十六进制数据"), _T("错误"), MB_OK | MB_ICONERROR);
+					return;
+				}
 
-			// 确保字节对数为偶数
-			if (cleanHex.GetLength() % 2 != 0)
-			{
-				MessageBox(_T("十六进制数据字符数必须为偶数"), _T("错误"), MB_OK | MB_ICONERROR);
-				return;
-			}
+				// 确保字节对数为偶数
+				if (cleanHex.GetLength() % 2 != 0)
+				{
+					MessageBox(_T("十六进制数据字符数必须为偶数"), _T("错误"), MB_OK | MB_ICONERROR);
+					return;
+				}
 
-			// 转换为字节数组
-			for (int i = 0; i < cleanHex.GetLength(); i += 2)
-			{
-				CString byteStr = cleanHex.Mid(i, 2);
-				uint8_t byteValue = static_cast<uint8_t>(_tcstoul(byteStr, NULL, 16));
-				data.push_back(byteValue);
+				// 转换为字节数组
+				for (int i = 0; i < cleanHex.GetLength(); i += 2)
+				{
+					CString byteStr = cleanHex.Mid(i, 2);
+					uint8_t byteValue = static_cast<uint8_t>(_tcstoul(byteStr, NULL, 16));
+					data.push_back(byteValue);
+				}
 			}
 		}
 		else
@@ -993,23 +1026,41 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 	CString currentSendData;
 	m_editSendData.GetWindowText(currentSendData);
 
-	// 如果有内容但缓存无效，尝试重建缓存
-	if (!currentSendData.IsEmpty() && (!m_sendCacheValid || m_sendDataCache.empty()))
+	// 如果有内容，重新解析数据
+	if (!currentSendData.IsEmpty())
 	{
 		if (isHexMode)
 		{
-			// 当前切换到十六进制显示，直接缓存现有文本数据
-			UpdateSendCache(currentSendData);
+			// 切换到十六进制模式：解析当前显示的内容
+			// 如果当前显示的是文本，需要转换为十六进制
+			if (!m_sendCacheValid)
+			{
+				// 缓存无效，直接缓存当前文本数据
+				UpdateSendCache(currentSendData);
+			}
+			// 缓存有效，从缓存更新显示
 		}
 		else
 		{
-			// 从十六进制显示中提取数据
-			CString textData = HexToString(currentSendData);
-			UpdateSendCache(textData);
+			// 切换到文本模式：如果缓存有效，直接使用缓存
+			if (!m_sendCacheValid)
+			{
+				// 缓存无效，尝试从当前显示的十六进制数据中提取
+				CString textData = HexToString(currentSendData);
+				if (!textData.IsEmpty())
+				{
+					UpdateSendCache(textData);
+				}
+				else
+				{
+					// 如果无法提取，假设当前显示的就是文本
+					UpdateSendCache(currentSendData);
+				}
+			}
 		}
 	}
-	// 如果缓存有效但编辑框为空，清空缓存
-	else if (currentSendData.IsEmpty() && m_sendCacheValid)
+	// 如果编辑框为空，清空缓存
+	else if (m_sendCacheValid)
 	{
 		m_sendDataCache.clear();
 		m_sendCacheValid = false;
@@ -1152,6 +1203,44 @@ CString CPortMasterDlg::HexToString(const CString &hex)
 
 	// 如果没有有效的十六进制数据，返回空字符串
 	return CString();
+}
+
+CString CPortMasterDlg::ExtractHexAsciiText(const CString &hex)
+{
+	// 从格式化的十六进制文本中提取ASCII部分
+	CString asciiText;
+	int len = hex.GetLength();
+	bool inAsciiSection = false;
+
+	for (int i = 0; i < len; i++)
+	{
+		TCHAR ch = hex[i];
+
+		// 检测ASCII部分开始（在'|'字符处开始）
+		if (ch == _T('|'))
+		{
+			inAsciiSection = true;
+			continue;
+		}
+
+		// 检测ASCII部分结束（在第二个'|'字符处结束）
+		if (inAsciiSection && ch == _T('|'))
+		{
+			break;
+		}
+
+		// 收集ASCII部分的字符
+		if (inAsciiSection)
+		{
+			asciiText += ch;
+		}
+	}
+
+	// 移除可能的换行符和回车符
+	asciiText.Remove(_T('\r'));
+	asciiText.Remove(_T('\n'));
+
+	return asciiText;
 }
 
 // 基于缓存的格式转换函数实现
@@ -1323,78 +1412,110 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 	// 根据当前显示模式从缓存更新显示
 	if (m_checkHex.GetCheck() == BST_CHECKED)
 	{
-		// 十六进制模式：将字节缓存转换为十六进制显示
-		// 直接将字节数据转换为十六进制显示，避免字符串转换问题
-		CString hexDisplay;
-		CString asciiStr;
+		// 检查接收到的数据是否已经是格式化的十六进制字符串
+		CString receivedText;
+		std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
+		safeData.push_back('\0');
+		CA2T utf8Text(safeData.data(), CP_UTF8);
+		receivedText = CString(utf8Text);
 
-		for (size_t i = 0; i < m_receiveDataCache.size(); i++)
+		// 检测是否为格式化的十六进制字符串（包含偏移地址格式"00000000:"）
+		if (receivedText.Find(_T("00000000:")) >= 0 || 
+			(receivedText.Find(_T(':')) >= 0 && receivedText.Find(_T('|')) >= 0))
 		{
-			uint8_t byte = m_receiveDataCache[i];
+			// 如果是格式化的十六进制字符串，直接显示
+			m_editReceiveData.SetWindowText(receivedText);
+		}
+		else
+		{
+			// 十六进制模式：将字节缓存转换为十六进制显示
+			// 直接将字节数据转换为十六进制显示，避免字符串转换问题
+			CString hexDisplay;
+			CString asciiStr;
 
-			// 添加偏移地址（每16字节一行）
-			if (i % 16 == 0)
+			for (size_t i = 0; i < m_receiveDataCache.size(); i++)
 			{
-				if (i > 0)
+				uint8_t byte = m_receiveDataCache[i];
+
+				// 添加偏移地址（每16字节一行）
+				if (i % 16 == 0)
 				{
-					// 添加ASCII显示部分
-					hexDisplay += _T("  |");
-					hexDisplay += asciiStr;
-					hexDisplay += _T("|\r\n");
-					asciiStr.Empty();
+					if (i > 0)
+					{
+						// 添加ASCII显示部分
+						hexDisplay += _T("  |");
+						hexDisplay += asciiStr;
+						hexDisplay += _T("|\r\n");
+						asciiStr.Empty();
+					}
+
+					CString offset;
+					offset.Format(_T("%08X: "), (int)i);
+					hexDisplay += offset;
 				}
 
-				CString offset;
-				offset.Format(_T("%08X: "), (int)i);
-				hexDisplay += offset;
+				// 添加16进制值
+				CString hexByte;
+				hexByte.Format(_T("%02X "), byte);
+				hexDisplay += hexByte;
+
+				// 添加可打印字符到ASCII部分
+				if (byte >= 32 && byte <= 126)
+				{
+					asciiStr += (TCHAR)byte;
+				}
+				else
+				{
+					asciiStr += _T(".");
+				}
 			}
 
-			// 添加16进制值
-			CString hexByte;
-			hexByte.Format(_T("%02X "), byte);
-			hexDisplay += hexByte;
+			// 处理最后一行
+			if (m_receiveDataCache.size() % 16 != 0)
+			{
+				// 补齐空格
+				size_t remain = 16 - (m_receiveDataCache.size() % 16);
+				for (size_t i = 0; i < remain; i++)
+				{
+					hexDisplay += _T("   ");
+				}
+			}
 
-			// 添加可打印字符到ASCII部分
-			if (byte >= 32 && byte <= 126)
-			{
-				asciiStr += (TCHAR)byte;
-			}
-			else
-			{
-				asciiStr += _T(".");
-			}
+			// 添加ASCII显示部分
+			hexDisplay += _T("  |");
+			hexDisplay += asciiStr;
+			hexDisplay += _T("|");
+
+			m_editReceiveData.SetWindowText(hexDisplay);
 		}
-
-		// 处理最后一行
-		if (m_receiveDataCache.size() % 16 != 0)
-		{
-			// 补齐空格
-			size_t remain = 16 - (m_receiveDataCache.size() % 16);
-			for (size_t i = 0; i < remain; i++)
-			{
-				hexDisplay += _T("   ");
-			}
-		}
-
-		// 添加ASCII显示部分
-		hexDisplay += _T("  |");
-		hexDisplay += asciiStr;
-		hexDisplay += _T("|");
-
-		m_editReceiveData.SetWindowText(hexDisplay);
 	}
 	else
 	{
 		// 文本模式：将字节缓存转换为文本显示
-		// 创建包含null终止符的副本，确保字符串安全
+		// 首先检查接收到的数据是否可能是格式化的十六进制字符串
 		std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
 		safeData.push_back('\0');
+		
+		CA2T utf8Text(safeData.data(), CP_UTF8);
+		CString receivedText = CString(utf8Text);
+		
+		// 检测是否为格式化的十六进制字符串（包含偏移地址格式"00000000:"）
+		if (receivedText.Find(_T("00000000:")) >= 0 && 
+			receivedText.Find(_T('|')) >= 0)
+		{
+			// 如果是格式化的十六进制字符串，提取其中的ASCII部分
+			CString asciiText = ExtractHexAsciiText(receivedText);
+			if (!asciiText.IsEmpty())
+			{
+				m_editReceiveData.SetWindowText(asciiText);
+				return;
+			}
+		}
 
 		// 尝试将数据作为UTF-8字符串解码
 		try
 		{
-			CA2T utf8Text(safeData.data(), CP_UTF8);
-			m_editReceiveData.SetWindowText(CString(utf8Text));
+			m_editReceiveData.SetWindowText(receivedText);
 		}
 		catch (...)
 		{
@@ -1458,11 +1579,64 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 	m_sendCacheValid = true;
 }
 
+void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
+{
+	// 在十六进制模式下，将十六进制字符串解析为字节数据并缓存
+	m_sendDataCache.clear();
+
+	// 提取有效的十六进制字符
+	CString cleanHex;
+	int len = hexData.GetLength();
+
+	for (int i = 0; i < len; i++)
+	{
+		TCHAR ch = hexData[i];
+		// 只保留有效的十六进制字符
+		if ((ch >= _T('0') && ch <= _T('9')) ||
+			(ch >= _T('A') && ch <= _T('F')) ||
+			(ch >= _T('a') && ch <= _T('f')))
+		{
+			cleanHex += ch;
+		}
+		// 自动跳过空格、换行符、偏移地址("00000000:")、ASCII分隔符("|...|")等
+	}
+
+	// 检查是否有有效的十六进制数据
+	if (cleanHex.IsEmpty())
+	{
+		m_sendCacheValid = false;
+		return;
+	}
+
+	// 确保字节对数为偶数
+	if (cleanHex.GetLength() % 2 != 0)
+	{
+		// 如果长度为奇数，移除最后一个字符
+		cleanHex = cleanHex.Left(cleanHex.GetLength() - 1);
+	}
+
+	// 转换为字节数组
+	for (int i = 0; i < cleanHex.GetLength(); i += 2)
+	{
+		CString byteStr = cleanHex.Mid(i, 2);
+		uint8_t byteValue = static_cast<uint8_t>(_tcstoul(byteStr, NULL, 16));
+		m_sendDataCache.push_back(byteValue);
+	}
+
+	m_sendCacheValid = true;
+}
+
 void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
 {
 	// 直接缓存接收到的字节数据
 	m_receiveDataCache = data;
 	m_receiveCacheValid = true;
+	
+	// 同时写入临时缓存文件（如果已初始化）
+	if (m_useTempCacheFile && m_tempCacheFile.is_open())
+	{
+		WriteDataToTempCache(data);
+	}
 }
 
 void CPortMasterDlg::LogMessage(const CString &message)
@@ -1545,8 +1719,17 @@ void CPortMasterDlg::OnEnChangeEditSendData()
 
 	if (!currentData.IsEmpty())
 	{
-		// 更新缓存以保持数据一致性
-		UpdateSendCache(currentData);
+		// 根据当前模式更新缓存
+		if (m_checkHex.GetCheck() == BST_CHECKED)
+		{
+			// 十六进制模式：解析十六进制字符串为字节数据
+			UpdateSendCacheFromHex(currentData);
+		}
+		else
+		{
+			// 文本模式：直接缓存文本数据
+			UpdateSendCache(currentData);
+		}
 	}
 	else
 	{
@@ -1575,6 +1758,9 @@ void CPortMasterDlg::OnBnClickedButtonClearReceive()
 	// 只清空接收数据编辑框（重命名为"清空接收框"后的功能保持不变）
 	m_editReceiveData.SetWindowText(_T(""));
 
+	// 清空临时缓存文件
+	ClearTempCacheFile();
+
 	// 更新日志
 	CTime time = CTime::GetCurrentTime();
 	CString timeStr = time.Format(_T("[%H:%M:%S] "));
@@ -1584,20 +1770,105 @@ void CPortMasterDlg::OnBnClickedButtonClearReceive()
 void CPortMasterDlg::OnBnClickedButtonCopyAll()
 {
 	// 复制接收数据到剪贴板
-	CString receiveData;
-	m_editReceiveData.GetWindowText(receiveData);
+	CString copyData;
+	
+	// 优先从临时缓存文件读取原始数据（如果可用）
+	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
+	{
+		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
+		if (!cachedData.empty())
+		{
+			if (m_checkHex.GetCheck() == BST_CHECKED)
+			{
+				// 十六进制模式：复制原始二进制数据而非十六进制字符串
+				// 将原始字节数据转换为可复制的文本格式，每个字节作为一个字符
+				for (uint8_t byte : cachedData)
+				{
+					copyData += (TCHAR)byte;
+				}
+			}
+			else
+			{
+				// 文本模式：将原始数据转换为文本显示
+				try
+				{
+					std::vector<char> safeData(cachedData.begin(), cachedData.end());
+					safeData.push_back('\0');
+					CA2T utf8Text(safeData.data(), CP_UTF8);
+					copyData = CString(utf8Text);
+				}
+				catch (...)
+				{
+					// UTF-8解码失败，显示可打印字符
+					for (uint8_t byte : cachedData)
+					{
+						if (byte >= 32 && byte <= 126)
+						{
+							copyData += (TCHAR)byte;
+						}
+						else if (byte == 0)
+						{
+							copyData += _T("[NUL]");
+						}
+						else
+						{
+							copyData += _T(".");
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// 如果临时缓存不可用，使用原有逻辑
+	if (copyData.IsEmpty())
+	{
+		// 如果处于十六进制模式，从当前显示内容中提取纯十六进制数据
+		if (m_checkHex.GetCheck() == BST_CHECKED)
+		{
+			// 获取当前显示内容
+			CString displayContent;
+			m_editReceiveData.GetWindowText(displayContent);
+			
+			if (!displayContent.IsEmpty())
+			{
+				// 提取纯十六进制字符（去除偏移地址、空格、ASCII部分等格式）
+				CString cleanHex;
+				int len = displayContent.GetLength();
+				
+				for (int i = 0; i < len; i++)
+				{
+					TCHAR ch = displayContent[i];
+					// 只保留有效的十六进制字符
+					if ((ch >= _T('0') && ch <= _T('9')) ||
+						(ch >= _T('A') && ch <= _T('F')) ||
+						(ch >= _T('a') && ch <= _T('f')))
+					{
+						cleanHex += ch;
+					}
+				}
+				
+				copyData = cleanHex;
+			}
+		}
+		else
+		{
+			// 文本模式：直接复制当前显示的内容
+			m_editReceiveData.GetWindowText(copyData);
+		}
+	}
 
-	if (!receiveData.IsEmpty())
+	if (!copyData.IsEmpty())
 	{
 		if (OpenClipboard())
 		{
 			EmptyClipboard();
 
-			HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, (receiveData.GetLength() + 1) * sizeof(TCHAR));
+			HGLOBAL hGlobal = GlobalAlloc(GMEM_MOVEABLE, (copyData.GetLength() + 1) * sizeof(TCHAR));
 			if (hGlobal)
 			{
 				LPTSTR lpszData = (LPTSTR)GlobalLock(hGlobal);
-				_tcscpy_s(lpszData, receiveData.GetLength() + 1, receiveData);
+				_tcscpy_s(lpszData, copyData.GetLength() + 1, copyData);
 				GlobalUnlock(hGlobal);
 
 #ifdef UNICODE
@@ -1620,18 +1891,126 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 void CPortMasterDlg::OnBnClickedButtonSaveAll()
 {
 	// 保存接收数据到文件
-	CString receiveData;
-	m_editReceiveData.GetWindowText(receiveData);
-
-	if (!receiveData.IsEmpty())
+	std::vector<uint8_t> binaryData;
+	CString saveData;
+	bool isBinaryMode = false;
+	
+	// 优先从临时缓存文件读取原始数据（如果可用）
+	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
 	{
+		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
+		if (!cachedData.empty())
+		{
+			if (m_checkHex.GetCheck() == BST_CHECKED)
+			{
+				// 十六进制模式：直接保存原始二进制数据
+				binaryData = cachedData;
+				isBinaryMode = true;
+			}
+			else
+			{
+				// 文本模式：将原始数据转换为文本显示
+				try
+				{
+					std::vector<char> safeData(cachedData.begin(), cachedData.end());
+					safeData.push_back('\0');
+					CA2T utf8Text(safeData.data(), CP_UTF8);
+					saveData = CString(utf8Text);
+				}
+				catch (...)
+				{
+					// UTF-8解码失败，显示可打印字符
+					for (uint8_t byte : cachedData)
+					{
+						if (byte >= 32 && byte <= 126)
+						{
+							saveData += (TCHAR)byte;
+						}
+						else if (byte == 0)
+						{
+							saveData += _T("[NUL]");
+						}
+						else
+						{
+							saveData += _T(".");
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// 如果临时缓存不可用，使用原有逻辑
+	if (saveData.IsEmpty() && !isBinaryMode)
+	{
+		// 如果处于十六进制模式，从当前显示内容中提取十六进制数据并转换为二进制
+		if (m_checkHex.GetCheck() == BST_CHECKED)
+		{
+			// 获取当前显示内容
+			CString displayContent;
+			m_editReceiveData.GetWindowText(displayContent);
+			
+			if (!displayContent.IsEmpty())
+			{
+				// 提取纯十六进制字符（去除偏移地址、空格、ASCII部分等格式）
+				CString cleanHex;
+				int len = displayContent.GetLength();
+				
+				for (int i = 0; i < len; i++)
+				{
+					TCHAR ch = displayContent[i];
+					// 只保留有效的十六进制字符
+					if ((ch >= _T('0') && ch <= _T('9')) ||
+						(ch >= _T('A') && ch <= _T('F')) ||
+						(ch >= _T('a') && ch <= _T('f')))
+					{
+						cleanHex += ch;
+					}
+				}
+				
+				// 将十六进制字符串转换为二进制数据
+				if (!cleanHex.IsEmpty() && cleanHex.GetLength() % 2 == 0)
+				{
+					for (int i = 0; i < cleanHex.GetLength(); i += 2)
+					{
+						CString hexByte = cleanHex.Mid(i, 2);
+						uint8_t byte = (uint8_t)_tcstol(hexByte, nullptr, 16);
+						binaryData.push_back(byte);
+					}
+					isBinaryMode = true;
+				}
+			}
+		}
+		else
+		{
+			// 文本模式：直接保存当前显示的内容
+			m_editReceiveData.GetWindowText(saveData);
+		}
+	}
+
+	// 根据数据类型选择合适的文件对话框和保存方法
+	if (isBinaryMode && !binaryData.empty())
+	{
+		// 二进制模式：保存为二进制文件
+		CFileDialog dlg(FALSE, _T("bin"), _T("ReceiveData"),
+						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+						_T("二进制文件 (*.bin)|*.bin|数据文件 (*.dat)|*.dat|所有文件 (*.*)|*.*||"));
+
+		if (dlg.DoModal() == IDOK)
+		{
+			SaveBinaryDataToFile(dlg.GetPathName(), binaryData);
+		}
+	}
+	else if (!saveData.IsEmpty())
+	{
+		// 文本模式：保存为文本文件
 		CFileDialog dlg(FALSE, _T("txt"), _T("ReceiveData"),
 						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
 						_T("文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*||"));
 
 		if (dlg.DoModal() == IDOK)
 		{
-			SaveDataToFile(dlg.GetPathName(), receiveData);
+			SaveDataToFile(dlg.GetPathName(), saveData);
 		}
 	}
 	else
@@ -1659,6 +2038,32 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 	else
 	{
 		MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
+}
+
+void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data)
+{
+	CFile file;
+	if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeBinary))
+	{
+		file.Write(data.data(), (UINT)data.size());
+		file.Close();
+
+		CString message;
+		message.Format(_T("二进制数据保存成功 (%zu 字节)"), data.size());
+		MessageBox(message, _T("提示"), MB_OK | MB_ICONINFORMATION);
+
+		// 更新日志
+		CTime time = CTime::GetCurrentTime();
+		CString timeStr = time.Format(_T("[%H:%M:%S] "));
+		CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
+		CString logMessage;
+		logMessage.Format(_T("二进制数据保存至: %s (%zu 字节)"), fileName.GetString(), data.size());
+		LogMessage(timeStr + logMessage);
+	}
+	else
+	{
+		MessageBox(_T("保存二进制文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 	}
 }
 
@@ -1969,38 +2374,41 @@ void CPortMasterDlg::StartReceiveThread()
 
 	m_receiveThread = std::thread([this]()
 								  {
-		std::vector<uint8_t> buffer(4096);
-		
-		while (m_isConnected)
-		{
-			try
-			{
-				if (m_reliableChannel && m_reliableChannel->IsConnected())
-				{
-					// 使用可靠传输通道接收数据
-					std::vector<uint8_t> data;
-					if (m_reliableChannel->Receive(data, 100)) // 100ms超时
-					{
-						OnTransportDataReceived(data);
-					}
-				}
-				else if (m_transport && m_transport->IsOpen())
-				{
-					// 使用原始传输接收数据
-					size_t bytesRead = 0;
-					auto result = m_transport->Read(buffer.data(), buffer.size(), &bytesRead, 100);
-					if (result == TransportError::Success && bytesRead > 0)
-					{
-						std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
-						OnTransportDataReceived(data);
-					}
-				}
-			}
-			catch (const std::exception& e)
-			{
-				OnTransportError(e.what());
-			}
-		} });
+        std::vector<uint8_t> buffer(4096);
+
+        while (m_isConnected)
+        {
+            try
+            {
+                if (m_reliableChannel && m_reliableChannel->IsConnected())
+                {
+                    // 使用可靠传输通道接收数据
+                    std::vector<uint8_t> data;
+                    if (m_reliableChannel->Receive(data, 100)) // 100ms超时
+                    {
+                        OnTransportDataReceived(data);
+                    }
+                }
+                else if (m_transport && m_transport->IsOpen())
+                {
+                    // 使用原始传输接收数据
+                    // 每次读取前清零缓冲区，避免旧数据残留
+                    std::fill(buffer.begin(), buffer.end(), 0);
+
+                    size_t bytesRead = 0;
+                    auto result = m_transport->Read(buffer.data(), buffer.size(), &bytesRead, 100);
+                    if (result == TransportError::Success && bytesRead > 0)
+                    {
+                        std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
+                        OnTransportDataReceived(data);
+                    }
+                }
+            }
+            catch (const std::exception& e)
+            {
+                OnTransportError(e.what());
+            }
+        } });
 }
 
 void CPortMasterDlg::StopReceiveThread()
@@ -2380,6 +2788,168 @@ void CPortMasterDlg::OnConfigurationChanged()
 		CString errorMsg;
 		errorMsg.Format(_T("应用配置变更失败: %s"), CString(e.what()));
 		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
+	}
+}
+
+// 临时缓存文件管理方法实现
+bool CPortMasterDlg::InitializeTempCacheFile()
+{
+	try
+	{
+		// 生成临时文件名
+		TCHAR tempPath[MAX_PATH];
+		TCHAR tempFileName[MAX_PATH];
+		
+		if (GetTempPath(MAX_PATH, tempPath) == 0)
+		{
+			return false;
+		}
+		
+		if (GetTempFileName(tempPath, _T("PM_"), 0, tempFileName) == 0)
+		{
+			return false;
+		}
+		
+		m_tempCacheFilePath = tempFileName;
+		
+		// 打开临时文件用于写入（二进制模式）
+		m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::trunc);
+		if (!m_tempCacheFile.is_open())
+		{
+			return false;
+		}
+		
+		m_useTempCacheFile = true;
+		m_totalReceivedBytes = 0;
+		m_totalSentBytes = 0;
+		
+		WriteLog("临时缓存文件已创建: " + std::string(CStringA(m_tempCacheFilePath)));
+		return true;
+	}
+	catch (const std::exception &e)
+	{
+		WriteLog("创建临时缓存文件失败: " + std::string(e.what()));
+		return false;
+	}
+}
+
+void CPortMasterDlg::CloseTempCacheFile()
+{
+	if (m_tempCacheFile.is_open())
+	{
+		m_tempCacheFile.close();
+	}
+	
+	// 删除临时文件
+	if (!m_tempCacheFilePath.IsEmpty() && PathFileExists(m_tempCacheFilePath))
+	{
+		DeleteFile(m_tempCacheFilePath);
+		WriteLog("临时缓存文件已删除");
+	}
+	
+	m_tempCacheFilePath.Empty();
+	m_useTempCacheFile = false;
+	m_totalReceivedBytes = 0;
+	m_totalSentBytes = 0;
+}
+
+bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t> &data)
+{
+	if (!m_tempCacheFile.is_open() || data.empty())
+	{
+		return false;
+	}
+	
+	try
+	{
+		m_tempCacheFile.write(reinterpret_cast<const char*>(data.data()), data.size());
+		if (m_tempCacheFile.fail())
+		{
+			WriteLog("写入临时缓存文件失败");
+			return false;
+		}
+		
+		m_tempCacheFile.flush(); // 确保数据立即写入磁盘
+		m_totalReceivedBytes += data.size();
+		return true;
+	}
+	catch (const std::exception &e)
+	{
+		WriteLog("写入临时缓存文件异常: " + std::string(e.what()));
+		return false;
+	}
+}
+
+std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size_t length)
+{
+	std::vector<uint8_t> result;
+	
+	if (m_tempCacheFilePath.IsEmpty() || !PathFileExists(m_tempCacheFilePath))
+	{
+		return result;
+	}
+	
+	try
+	{
+		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
+		if (!file.is_open())
+		{
+			return result;
+		}
+		
+		// 检查文件大小
+		file.seekg(0, std::ios::end);
+		std::streamsize fileSize = file.tellg();
+		file.seekg(0, std::ios::beg);
+		
+		// 验证偏移量
+		if (offset >= static_cast<uint64_t>(fileSize))
+		{
+			return result;
+		}
+		
+		// 计算实际可读取的长度
+		size_t availableLength = static_cast<size_t>(fileSize - offset);
+		size_t readLength = (length == 0 || length > availableLength) ? availableLength : length;
+		
+		if (readLength > 0)
+		{
+			result.resize(readLength);
+			file.seekg(offset);
+			file.read(reinterpret_cast<char*>(result.data()), readLength);
+			
+			if (file.fail())
+			{
+				result.clear();
+			}
+		}
+		
+		file.close();
+		return result;
+	}
+	catch (const std::exception &e)
+	{
+		WriteLog("从临时缓存文件读取数据异常: " + std::string(e.what()));
+		return result;
+	}
+}
+
+std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCache()
+{
+	return ReadDataFromTempCache(0, 0); // 0长度表示读取全部数据
+}
+
+void CPortMasterDlg::ClearTempCacheFile()
+{
+	if (m_tempCacheFile.is_open())
+	{
+		m_tempCacheFile.close();
+		m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::trunc);
+		if (m_tempCacheFile.is_open())
+		{
+			m_totalReceivedBytes = 0;
+			WriteLog("临时缓存文件已清空");
+		}
 	}
 }
 
