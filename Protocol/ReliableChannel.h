@@ -140,6 +140,7 @@ private:
     bool SendEnd();
 
     void RetransmitPacket(uint16_t sequence);
+    void RetransmitPacketInternal(uint16_t sequence); // 内部版本，假设已持有窗口锁
     void AdvanceSendWindow();
     void UpdateReceiveWindow(uint16_t sequence);
 

@@ -630,7 +630,7 @@ void ReliableChannel::ProcessThread()
                     {
                         WriteLog("ProcessThread: retransmitting packet sequence=" + std::to_string(slot.packet->sequence));
                         m_retransmitting = true; // 设置重传标志
-                        RetransmitPacket(slot.packet->sequence);
+                        RetransmitPacketInternal(slot.packet->sequence); // 使用内部版本，已持有锁
                         m_retransmitting = false; // 清除重传标志
                         retransmitCount++;
                     }
@@ -1121,7 +1121,7 @@ void ReliableChannel::ProcessNakFrame(uint16_t sequence)
     {
         WriteLog("ProcessNakFrame: retransmitting packet " + std::to_string(sequence));
         m_retransmitting = true; // 设置重传标志
-        RetransmitPacket(sequence);
+        RetransmitPacketInternal(sequence); // 使用内部版本，已持有锁
         m_retransmitting = false; // 清除重传标志
         WriteLog("ProcessNakFrame: retransmission completed");
     }
@@ -1357,62 +1357,59 @@ bool ReliableChannel::SendEnd()
     return SendPacket(sequence, {}, FrameType::FRAME_END);
 }
 
-// 重传数据包
-void ReliableChannel::RetransmitPacket(uint16_t sequence)
+// 重传数据包（内部版本，假设已持有窗口锁）
+void ReliableChannel::RetransmitPacketInternal(uint16_t sequence)
 {
-    WriteLog("RetransmitPacket called: sequence=" + std::to_string(sequence));
-
-    std::lock_guard<std::mutex> lock(m_windowMutex);
-    WriteLog("RetransmitPacket: locked window mutex");
+    WriteLog("RetransmitPacketInternal called: sequence=" + std::to_string(sequence));
 
     // 确保窗口大小有效
     if (m_config.windowSize == 0 || m_sendWindow.empty())
     {
-        WriteLog("RetransmitPacket: ERROR - send window not initialized or size is 0");
+        WriteLog("RetransmitPacketInternal: ERROR - send window not initialized or size is 0");
         ReportError("发送窗口未初始化或大小为0");
         return;
     }
 
     uint16_t index = sequence % m_config.windowSize;
-    WriteLog("RetransmitPacket: calculated index=" + std::to_string(index) +
+    WriteLog("RetransmitPacketInternal: calculated index=" + std::to_string(index) +
              ", sendWindow.size()=" + std::to_string(m_sendWindow.size()));
 
     // 边界检查
     if (index >= m_sendWindow.size())
     {
-        WriteLog("RetransmitPacket: ERROR - send window index out of bounds: " + std::to_string(index) +
+        WriteLog("RetransmitPacketInternal: ERROR - send window index out of bounds: " + std::to_string(index) +
                  " >= " + std::to_string(m_sendWindow.size()));
         ReportError("发送窗口索引越界: " + std::to_string(index) + " >= " + std::to_string(m_sendWindow.size()));
         return;
     }
 
-    WriteLog("RetransmitPacket: checking slot " + std::to_string(index) +
+    WriteLog("RetransmitPacketInternal: checking slot " + std::to_string(index) +
              ", inUse=" + std::to_string(m_sendWindow[index].inUse));
 
     if (m_sendWindow[index].inUse && m_sendWindow[index].packet)
     {
-        WriteLog("RetransmitPacket: incrementing retry count from " + std::to_string(m_sendWindow[index].packet->retryCount));
+        WriteLog("RetransmitPacketInternal: incrementing retry count from " + std::to_string(m_sendWindow[index].packet->retryCount));
         m_sendWindow[index].packet->retryCount++;
         m_sendWindow[index].packet->timestamp = std::chrono::steady_clock::now();
-        WriteLog("RetransmitPacket: new retry count=" + std::to_string(m_sendWindow[index].packet->retryCount));
+        WriteLog("RetransmitPacketInternal: new retry count=" + std::to_string(m_sendWindow[index].packet->retryCount));
 
         // 重新发送数据包
-        WriteLog("RetransmitPacket: encoding data frame for retransmission");
+        WriteLog("RetransmitPacketInternal: encoding data frame for retransmission");
         try
         {
             std::vector<uint8_t> frameData = m_frameCodec->EncodeDataFrame(
                 sequence, m_sendWindow[index].packet->data);
-            WriteLog("RetransmitPacket: frame encoded, size=" + std::to_string(frameData.size()));
+            WriteLog("RetransmitPacketInternal: frame encoded, size=" + std::to_string(frameData.size()));
 
             size_t written = 0;
-            WriteLog("RetransmitPacket: writing to transport...");
+            WriteLog("RetransmitPacketInternal: writing to transport...");
             TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
-            WriteLog("RetransmitPacket: transport write completed, written=" + std::to_string(written) +
+            WriteLog("RetransmitPacketInternal: transport write completed, written=" + std::to_string(written) +
                      ", error=" + std::to_string(static_cast<int>(error)));
 
             if (error != TransportError::Success)
             {
-                WriteLog("RetransmitPacket: ERROR - transport write failed with error: " + std::to_string(static_cast<int>(error)));
+                WriteLog("RetransmitPacketInternal: ERROR - transport write failed with error: " + std::to_string(static_cast<int>(error)));
                 ReportError("重传数据包失败，传输错误: " + std::to_string(static_cast<int>(error)));
                 return;
             }
@@ -1421,28 +1418,41 @@ void ReliableChannel::RetransmitPacket(uint16_t sequence)
             {
                 std::lock_guard<std::mutex> statsLock(m_statsMutex);
                 m_stats.packetsRetransmitted++;
-                WriteLog("RetransmitPacket: stats updated, packetsRetransmitted=" + std::to_string(m_stats.packetsRetransmitted));
+                WriteLog("RetransmitPacketInternal: stats updated, packetsRetransmitted=" + std::to_string(m_stats.packetsRetransmitted));
             }
 
-            WriteLog("RetransmitPacket: retransmission completed successfully");
+            WriteLog("RetransmitPacketInternal: retransmission completed successfully");
         }
         catch (const std::exception &e)
         {
-            WriteLog("RetransmitPacket: EXCEPTION during retransmission: " + std::string(e.what()));
+            WriteLog("RetransmitPacketInternal: EXCEPTION during retransmission: " + std::string(e.what()));
             ReportError("重传数据包异常: " + std::string(e.what()));
         }
         catch (...)
         {
-            WriteLog("RetransmitPacket: UNKNOWN EXCEPTION during retransmission");
+            WriteLog("RetransmitPacketInternal: UNKNOWN EXCEPTION during retransmission");
             ReportError("重传数据包未知异常");
         }
     }
     else
     {
-        WriteLog("RetransmitPacket: ERROR - slot not in use or no packet: inUse=" + std::to_string(m_sendWindow[index].inUse) +
+        WriteLog("RetransmitPacketInternal: ERROR - slot not in use or no packet: inUse=" + std::to_string(m_sendWindow[index].inUse) +
                  ", hasPacket=" + std::to_string(m_sendWindow[index].packet != nullptr));
     }
 
+    WriteLog("RetransmitPacketInternal: completed");
+}
+
+// 重传数据包（外部版本，负责获取锁）
+void ReliableChannel::RetransmitPacket(uint16_t sequence)
+{
+    WriteLog("RetransmitPacket called: sequence=" + std::to_string(sequence));
+
+    std::lock_guard<std::mutex> lock(m_windowMutex);
+    WriteLog("RetransmitPacket: locked window mutex");
+    
+    RetransmitPacketInternal(sequence);
+    
     WriteLog("RetransmitPacket: completed");
 }
 
