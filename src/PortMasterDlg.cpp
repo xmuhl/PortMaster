@@ -771,174 +771,74 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 
 void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 {
-	// 使用CFile读取原始字节数据，支持多种编码自动检测
 	CFile file;
 	if (file.Open(filePath, CFile::modeRead))
 	{
 		ULONGLONG fileLength = file.GetLength();
 		if (fileLength > 0)
 		{
-			// 读取文件数据
-			BYTE *fileData = new BYTE[(size_t)fileLength + 2];
-			file.Read(fileData, (UINT)fileLength);
-			fileData[fileLength] = 0;
-			fileData[fileLength + 1] = 0;
+			BYTE *fileBuffer = new BYTE[(size_t)fileLength + 2];
+			file.Read(fileBuffer, (UINT)fileLength);
+			fileBuffer[fileLength] = 0;
+			fileBuffer[fileLength + 1] = 0;
 
-			// 检测文件编码 - 改进的编码检测策略
+			// 获取文件扩展名检测二进制文件
+			CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
+			CString fileExt = fileName.Mid(fileName.ReverseFind('.') + 1);
+			fileExt.MakeLower();
+			
+			bool isBinaryFile = (fileExt == _T("prn") || fileExt == _T("bin") || 
+								fileExt == _T("dat") || fileExt == _T("exe") || 
+								fileExt == _T("dll") || fileExt == _T("img"));
+
 			CString fileContent;
-			bool decodingSuccess = false;
-			CString debugInfo; // 用于调试的编码信息
-
-			// 1. 检测UTF-8 BOM
-			if (fileLength >= 3 && fileData[0] == 0xEF && fileData[1] == 0xBB && fileData[2] == 0xBF)
+			
+			if (isBinaryFile)
 			{
-				debugInfo = _T("UTF-8 BOM detected");
-				int utf8Len = (int)(fileLength - 3);
-				int wideLen = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)(fileData + 3), utf8Len, NULL, 0);
+				// 二进制文件：直接转换字节为字符
+				for (size_t i = 0; i < fileLength; i++)
+				{
+					fileContent += (TCHAR)fileBuffer[i];
+				}
+			}
+			else
+			{
+				// 文本文件：使用GBK编码转换
+				int wideLen = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)fileLength, NULL, 0);
 				if (wideLen > 0)
 				{
 					wchar_t *wideStr = new wchar_t[wideLen + 1];
-					MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)(fileData + 3), utf8Len, wideStr, wideLen);
+					MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)fileLength, wideStr, wideLen);
 					wideStr[wideLen] = 0;
 					fileContent = wideStr;
 					delete[] wideStr;
-					decodingSuccess = true;
-					debugInfo += _T(" - success");
 				}
 				else
 				{
-					debugInfo += _T(" - failed");
-				}
-			}
-			// 2. 检测UTF-16 BOM
-			else if (fileLength >= 2 && ((fileData[0] == 0xFF && fileData[1] == 0xFE) || (fileData[0] == 0xFE && fileData[1] == 0xFF)))
-			{
-				debugInfo = _T("UTF-16 BOM detected");
-				// 简化UTF-16处理，直接转换
-				if (fileData[0] == 0xFF && fileData[1] == 0xFE)
-				{
-					// Little Endian UTF-16
-					fileContent = CString((LPCWSTR)(fileData + 2), (int)(fileLength - 2) / 2);
-				}
-				else
-				{
-					// Big Endian UTF-16 需要字节序转换，这里暂时跳过
-					debugInfo += _T(" - Big Endian not supported");
-				}
-				decodingSuccess = !fileContent.IsEmpty();
-			}
-			// 3. 无BOM文件：优先尝试中文常用编码（GBK/GB2312），再尝试UTF-8
-			else
-			{
-				// 先尝试系统默认ANSI编码（中文Windows通常是GBK/GB2312）
-				debugInfo = _T("Trying CP_ACP (GBK/GB2312)");
-				int wideLen = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, NULL, 0);
-				if (wideLen > 0)
-				{
-					wchar_t *wideStr = new wchar_t[wideLen + 1];
-					int result = MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen);
-					if (result > 0)
+					// 编码失败，使用原始字节
+					for (size_t i = 0; i < fileLength; i++)
 					{
-						wideStr[wideLen] = 0;
-						fileContent = wideStr;
-						decodingSuccess = true;
-						debugInfo += _T(" - success");
-					}
-					else
-					{
-						debugInfo += _T(" - conversion failed");
-					}
-					delete[] wideStr;
-				}
-				else
-				{
-					debugInfo += _T(" - invalid");
-				}
-
-				// 如果GBK失败，尝试UTF-8（使用严格验证）
-				if (!decodingSuccess)
-				{
-					debugInfo += _T(", trying UTF-8");
-					int wideLen2 = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, NULL, 0);
-					if (wideLen2 > 0)
-					{
-						wchar_t *wideStr = new wchar_t[wideLen2 + 1];
-						int result = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen2);
-						if (result > 0)
-						{
-							wideStr[wideLen2] = 0;
-							fileContent = wideStr;
-							decodingSuccess = true;
-							debugInfo += _T(" - UTF-8 success");
-						}
-						else
-						{
-							debugInfo += _T(" - UTF-8 conversion failed");
-						}
-						delete[] wideStr;
-					}
-					else
-					{
-						debugInfo += _T(" - UTF-8 invalid");
-					}
-				}
-
-				// 最后尝试无验证的CP_ACP作为回退
-				if (!decodingSuccess)
-				{
-					debugInfo += _T(", fallback to CP_ACP no validation");
-					int wideLen3 = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, NULL, 0);
-					if (wideLen3 > 0)
-					{
-						wchar_t *wideStr = new wchar_t[wideLen3 + 1];
-						MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileData, (int)fileLength, wideStr, wideLen3);
-						wideStr[wideLen3] = 0;
-						fileContent = wideStr;
-						delete[] wideStr;
-						decodingSuccess = true;
-						debugInfo += _T(" - fallback success");
+						fileContent += (TCHAR)fileBuffer[i];
 					}
 				}
 			}
 
-			// 如果所有编码尝试都失败，使用字节级显示
-			if (!decodingSuccess || fileContent.IsEmpty())
-			{
-				debugInfo += _T(", using byte display");
-				fileContent.Empty();
-				for (size_t i = 0; i < fileLength; i++)
-				{
-					BYTE byte = fileData[i];
-					if (byte >= 32 && byte <= 126)
-					{
-						fileContent += (TCHAR)byte;
-					}
-					else
-					{
-						CString hexByte;
-						hexByte.Format(_T("\\x%02X"), byte);
-						fileContent += hexByte;
-					}
-				}
-			}
+			delete[] fileBuffer;
 
-			delete[] fileData;
-
-			// 关键修复：先更新发送缓存，确保数据能被发送
-			// 缓存应该存储原始字节数据，而不是显示格式
+			// 更新发送缓存
 			UpdateSendCache(fileContent);
 
 			// 设置到发送数据编辑框
-			m_editSendData.SetWindowText(fileContent);
-
-			// 如果当前是十六进制模式，转换显示
 			if (m_checkHex.GetCheck())
 			{
 				CString hexContent = StringToHex(fileContent);
 				m_editSendData.SetWindowText(hexContent);
 			}
+			else
+			{
+				m_editSendData.SetWindowText(fileContent);
+			}
 
-			// 更新数据源状态
 			m_staticSendSource.SetWindowText(_T("来源: 文件"));
 		}
 		else
