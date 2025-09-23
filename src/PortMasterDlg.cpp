@@ -795,11 +795,8 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			
 			if (isBinaryFile)
 			{
-				// 二进制文件：直接转换字节为字符
-				for (size_t i = 0; i < fileLength; i++)
-				{
-					fileContent += (TCHAR)fileBuffer[i];
-				}
+				// 二进制文件：保持原始字节数据用于16进制显示
+				// 不使用fileContent，而是直接使用原始字节数据
 			}
 			else
 			{
@@ -823,21 +820,39 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 				}
 			}
 
-			delete[] fileBuffer;
-
-			// 更新发送缓存
-			UpdateSendCache(fileContent);
-
-			// 设置到发送数据编辑框
-			if (m_checkHex.GetCheck())
+			// 根据文件类型处理显示
+			if (isBinaryFile)
 			{
-				CString hexContent = StringToHex(fileContent);
+				// 二进制文件：直接使用BytesToHex处理原始字节
+				CString hexContent = BytesToHex(fileBuffer, (size_t)fileLength);
 				m_editSendData.SetWindowText(hexContent);
+				
+				// 对于二进制文件，需要创建合适的发送缓存
+				CString binaryFileContent;
+				for (size_t i = 0; i < fileLength; i++)
+				{
+					binaryFileContent += (TCHAR)fileBuffer[i];
+				}
+				UpdateSendCache(binaryFileContent);
 			}
 			else
 			{
-				m_editSendData.SetWindowText(fileContent);
+				// 文本文件：正常处理
+				UpdateSendCache(fileContent);
+
+				// 设置到发送数据编辑框
+				if (m_checkHex.GetCheck())
+				{
+					CString hexContent = StringToHex(fileContent);
+					m_editSendData.SetWindowText(hexContent);
+				}
+				else
+				{
+					m_editSendData.SetWindowText(fileContent);
+				}
 			}
+
+			delete[] fileBuffer;
 
 			m_staticSendSource.SetWindowText(_T("来源: 文件"));
 		}
@@ -1086,6 +1101,67 @@ CString CPortMasterDlg::StringToHex(const CString &str)
 	{
 		// 补齐空格
 		int remain = 16 - (utf8Len % 16);
+		for (int i = 0; i < remain; i++)
+		{
+			hexStr += _T("   ");
+		}
+	}
+
+	// 添加ASCII显示部分
+	hexStr += _T("  |");
+	hexStr += asciiStr;
+	hexStr += _T("|");
+
+	return hexStr;
+}
+
+CString CPortMasterDlg::BytesToHex(const BYTE* data, size_t length)
+{
+	CString hexStr;
+	CString asciiStr;
+
+	for (size_t i = 0; i < length; i++)
+	{
+		uint8_t byte = data[i];
+
+		// 添加偏移地址（每16字节一行）
+		if (i % 16 == 0)
+		{
+			if (i > 0)
+			{
+				// 添加ASCII显示部分
+				hexStr += _T("  |");
+				hexStr += asciiStr;
+				hexStr += _T("|\r\n");
+				asciiStr.Empty();
+			}
+
+			CString offset;
+			offset.Format(_T("%08X: "), (unsigned int)i);
+			hexStr += offset;
+		}
+
+		// 添加16进制值
+		CString hexByte;
+		hexByte.Format(_T("%02X "), byte);
+		hexStr += hexByte;
+
+		// 添加可打印字符到ASCII部分
+		if (byte >= 32 && byte <= 126)
+		{
+			asciiStr += (TCHAR)byte;
+		}
+		else
+		{
+			asciiStr += _T(".");
+		}
+	}
+
+	// 处理最后一行
+	if (length % 16 != 0)
+	{
+		// 补齐空格
+		int remain = 16 - (length % 16);
 		for (int i = 0; i < remain; i++)
 		{
 			hexStr += _T("   ");

@@ -56,6 +56,7 @@ protected:
 
 	// 十六进制转换函数
 	CString StringToHex(const CString &str);
+	CString BytesToHex(const BYTE* data, size_t length); // 新增：处理原始字节数据
 	CString HexToString(const CString &hex);
 	CString ExtractHexAsciiText(const CString &hex);
 
