@@ -472,10 +472,40 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 			
 			if (isFormattedHex)
 			{
-				// 如果是格式化字符串，直接发送原始UTF-8字节数据
-				CT2A textData(sendData, CP_UTF8);
-				const char *text = textData;
-				data.assign(text, text + strlen(text));
+				// 如果是格式化字符串，提取其中的原始十六进制数据
+				CString cleanHex;
+				int len = sendData.GetLength();
+				
+				// 提取纯十六进制字符（去除偏移地址、空格、ASCII部分等格式）
+				for (int i = 0; i < len; i++)
+				{
+					TCHAR ch = sendData[i];
+					// 只保留有效的十六进制字符
+					if ((ch >= _T('0') && ch <= _T('9')) ||
+						(ch >= _T('A') && ch <= _T('F')) ||
+						(ch >= _T('a') && ch <= _T('f')))
+					{
+						cleanHex += ch;
+					}
+				}
+				
+				// 将十六进制字符串转换为二进制数据
+				if (!cleanHex.IsEmpty() && cleanHex.GetLength() % 2 == 0)
+				{
+					for (int i = 0; i < cleanHex.GetLength(); i += 2)
+					{
+						CString hexByte = cleanHex.Mid(i, 2);
+						uint8_t byte = (uint8_t)_tcstol(hexByte, nullptr, 16);
+						data.push_back(byte);
+					}
+				}
+				else
+				{
+					// 如果提取失败，回退到发送格式化文本
+					CT2A textData(sendData, CP_UTF8);
+					const char *text = textData;
+					data.assign(text, text + strlen(text));
+				}
 			}
 			else
 			{
@@ -2891,6 +2921,12 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 	
 	try
 	{
+		// 确保写入文件被刷新，以便读取到最新数据
+		if (m_tempCacheFile.is_open())
+		{
+			m_tempCacheFile.flush();
+		}
+		
 		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
 		if (!file.is_open())
 		{
