@@ -2019,98 +2019,20 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 
 		if (!cachedData.empty())
 		{
+			this->WriteLog("保存策略：直接保存原始字节数据，避免编码转换问题");
+			
+			// 无论是十六进制还是文本模式，都直接保存原始二进制数据
+			// 这样可以确保数据的100%完整性，避免所有编码转换问题
+			binaryData = cachedData;
+			isBinaryMode = true;
+			
 			if (m_checkHex.GetCheck() == BST_CHECKED)
 			{
-				// 十六进制模式：直接保存原始二进制数据
-				binaryData = cachedData;
-				isBinaryMode = true;
-				this->WriteLog("十六进制模式：将保存为二进制文件");
+				this->WriteLog("十六进制模式：保存原始二进制数据");
 			}
 			else
 			{
-				// 文本模式：智能编码检测和转换
-				this->WriteLog("文本模式：开始智能编码检测...");
-				
-				// 创建安全的C字符串
-				std::vector<char> safeData(cachedData.begin(), cachedData.end());
-				safeData.push_back('\0');
-				
-				// 记录原始数据的前32字节用于编码检测调试
-				std::string hexPreview;
-				size_t previewSize = (std::min)(cachedData.size(), (size_t)32);
-				for (size_t i = 0; i < previewSize; i++)
-				{
-					char hexByte[4];
-					sprintf_s(hexByte, "%02X ", cachedData[i]);
-					hexPreview += hexByte;
-				}
-				this->WriteLog("编码检测 - 原始数据预览: " + hexPreview);
-				
-				bool decoded = false;
-				
-				// 方案1：尝试UTF-8解码
-				try
-				{
-					CA2T utf8Text(safeData.data(), CP_UTF8);
-					CString testResult = CString(utf8Text);
-					
-					// 验证UTF-8解码结果的有效性
-					if (!testResult.IsEmpty() && testResult.GetLength() > 10)
-					{
-						saveData = testResult;
-						decoded = true;
-						this->WriteLog("编码检测 - UTF-8解码成功，文本长度: " + std::to_string(saveData.GetLength()));
-					}
-					else
-					{
-						this->WriteLog("编码检测 - UTF-8解码结果太短，可能不正确");
-					}
-				}
-				catch (...)
-				{
-					this->WriteLog("编码检测 - UTF-8解码失败");
-				}
-				
-				// 方案2：如果UTF-8失败，尝试GBK解码
-				if (!decoded)
-				{
-					try
-					{
-						CA2T gbkText(safeData.data(), CP_ACP); // 使用系统默认代码页(通常是GBK)
-						CString testResult = CString(gbkText);
-						
-						if (!testResult.IsEmpty() && testResult.GetLength() > 10)
-						{
-							saveData = testResult;
-							decoded = true;
-							this->WriteLog("编码检测 - GBK解码成功，文本长度: " + std::to_string(saveData.GetLength()));
-						}
-						else
-						{
-							this->WriteLog("编码检测 - GBK解码结果太短，可能不正确");
-						}
-					}
-					catch (...)
-					{
-						this->WriteLog("编码检测 - GBK解码失败");
-					}
-				}
-				
-				// 方案3：如果所有编码都失败，保留原始字节数据
-				if (!decoded)
-				{
-					this->WriteLog("编码检测 - 所有编码方式失败，保存原始字节数据");
-					
-					// 直接从字节数组创建CString，不进行编码转换
-					saveData.Empty();
-					for (size_t i = 0; i < cachedData.size(); i++)
-					{
-						uint8_t byte = cachedData[i];
-						saveData += (TCHAR)byte; // 直接转换为TCHAR
-					}
-					
-					this->WriteLog("编码检测 - 原始字节数据转换完成，文本长度: " + std::to_string(saveData.GetLength()));
-				}
+				this->WriteLog("文本模式：保存原始二进制数据（用户可用任何编辑器以正确编码打开）");
 			}
 		}
 	}
@@ -2166,11 +2088,12 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	// 根据数据类型选择合适的文件对话框和保存方法
 	if (isBinaryMode && !binaryData.empty())
 	{
-		this->WriteLog("准备保存二进制数据，大小: " + std::to_string(binaryData.size()) + " 字节");
-		// 二进制模式：保存为二进制文件
-		CFileDialog dlg(FALSE, _T("bin"), _T("ReceiveData"),
+		this->WriteLog("准备保存原始字节数据，大小: " + std::to_string(binaryData.size()) + " 字节");
+		
+		// 提供多种文件格式选择，包括原始编码的文本文件
+		CFileDialog dlg(FALSE, _T("txt"), _T("ReceiveData"),
 						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-						_T("二进制文件 (*.bin)|*.bin|数据文件 (*.dat)|*.dat|所有文件 (*.*)|*.*||"));
+						_T("原始文本文件 (*.txt)|*.txt|日志文件 (*.log)|*.log|数据文件 (*.dat)|*.dat|二进制文件 (*.bin)|*.bin|所有文件 (*.*)|*.*||"));
 
 		if (dlg.DoModal() == IDOK)
 		{
@@ -2201,50 +2124,122 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 
 void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data)
 {
-	CStdioFile file;
-	if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText))
-	{
-		file.WriteString(data);
-		file.Close();
+	this->WriteLog("=== SaveDataToFile 开始 ===");
+	this->WriteLog("保存文件路径: " + std::string(CT2A(filePath)));
+	this->WriteLog("输入数据长度: " + std::to_string(data.GetLength()) + " 字符");
 
-		MessageBox(_T("数据保存成功"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 添加数据内容预览用于调试
+	CString preview = data.Left(100);  // 前100个字符
+	this->WriteLog("数据预览: " + std::string(CT2A(preview)));
 
-		// 更新日志
-		CTime time = CTime::GetCurrentTime();
-		CString timeStr = time.Format(_T("[%H:%M:%S] "));
-		CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
-		LogMessage(timeStr + _T("数据保存至: ") + fileName);
-	}
-	else
+	try 
 	{
-		MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
+		// 改用更可靠的文件写入方式
+		// 方法1：使用CFile二进制模式 + UTF-8编码
+		CFile file;
+		if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeBinary))
+		{
+			// 将CString转换为UTF-8字节序列
+			CT2A utf8Data(data, CP_UTF8);
+			int utf8Length = strlen(utf8Data);
+			
+			this->WriteLog("UTF-8转换后字节长度: " + std::to_string(utf8Length));
+			
+			// 写入UTF-8字节序列
+			file.Write(utf8Data, utf8Length);
+			file.Close();
+
+			this->WriteLog("文件写入成功");
+
+			MessageBox(_T("数据保存成功"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+
+			// 更新日志
+			CTime time = CTime::GetCurrentTime();
+			CString timeStr = time.Format(_T("[%H:%M:%S] "));
+			CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
+			LogMessage(timeStr + _T("数据保存至: ") + fileName);
+		}
+		else
+		{
+			this->WriteLog("文件打开失败");
+			MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
+		}
 	}
+	catch (const std::exception& e)
+	{
+		this->WriteLog("保存过程异常: " + std::string(e.what()));
+		MessageBox(_T("保存文件异常"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
+	catch (...)
+	{
+		this->WriteLog("保存过程发生未知异常");
+		MessageBox(_T("保存文件发生未知异常"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
+
+	this->WriteLog("=== SaveDataToFile 结束 ===");
 }
 
 void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data)
 {
-	CFile file;
-	if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeBinary))
-	{
-		file.Write(data.data(), (UINT)data.size());
-		file.Close();
+	this->WriteLog("=== SaveBinaryDataToFile 开始 ===");
+	this->WriteLog("保存文件路径: " + std::string(CT2A(filePath)));
+	this->WriteLog("原始字节数据大小: " + std::to_string(data.size()) + " 字节");
 
-		CString message;
-		message.Format(_T("二进制数据保存成功 (%zu 字节)"), data.size());
-		MessageBox(message, _T("提示"), MB_OK | MB_ICONINFORMATION);
-
-		// 更新日志
-		CTime time = CTime::GetCurrentTime();
-		CString timeStr = time.Format(_T("[%H:%M:%S] "));
-		CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
-		CString logMessage;
-		logMessage.Format(_T("二进制数据保存至: %s (%zu 字节)"), fileName.GetString(), data.size());
-		LogMessage(timeStr + logMessage);
-	}
-	else
+	// 添加数据内容预览
+	std::string hexPreview;
+	size_t previewSize = (std::min)(data.size(), (size_t)32);
+	for (size_t i = 0; i < previewSize; i++)
 	{
-		MessageBox(_T("保存二进制文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
+		char hexByte[4];
+		sprintf_s(hexByte, "%02X ", data[i]);
+		hexPreview += hexByte;
 	}
+	if (data.size() > 32)
+	{
+		hexPreview += "...";
+	}
+	this->WriteLog("数据预览(十六进制): " + hexPreview);
+
+	try
+	{
+		CFile file;
+		if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeBinary))
+		{
+			file.Write(data.data(), (UINT)data.size());
+			file.Close();
+
+			this->WriteLog("原始字节数据写入成功");
+
+			CString message;
+			message.Format(_T("原始数据保存成功 (%zu 字节)"), data.size());
+			MessageBox(message, _T("提示"), MB_OK | MB_ICONINFORMATION);
+
+			// 更新日志
+			CTime time = CTime::GetCurrentTime();
+			CString timeStr = time.Format(_T("[%H:%M:%S] "));
+			CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
+			CString logMessage;
+			logMessage.Format(_T("原始数据保存至: %s (%zu 字节)"), fileName.GetString(), data.size());
+			LogMessage(timeStr + logMessage);
+		}
+		else
+		{
+			this->WriteLog("文件打开失败");
+			MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
+		}
+	}
+	catch (const std::exception& e)
+	{
+		this->WriteLog("保存过程异常: " + std::string(e.what()));
+		MessageBox(_T("保存文件异常"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
+	catch (...)
+	{
+		this->WriteLog("保存过程发生未知异常");
+		MessageBox(_T("保存文件发生未知异常"), _T("错误"), MB_OK | MB_ICONERROR);
+	}
+
+	this->WriteLog("=== SaveBinaryDataToFile 结束 ===");
 }
 
 void CPortMasterDlg::OnBnClickedRadioDirect()
