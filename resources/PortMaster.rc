@@ -1,4 +1,4 @@
-﻿// Microsoft Visual C++ generated resource script.
+// Microsoft Visual C++ generated resource script.
 //
 #pragma code_page(65001)
 
@@ -54,8 +54,8 @@ BEGIN
     "\r\n"
     "#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)\r\n"
     "LANGUAGE 4, 2\r\n"
-    "#include ""res\\PortMaster.rc2""  // 闂?Microsoft Visual C++ 缂傛牞绶惃鍕カ濠?\n"
-    "#include ""afxres.rc""      // 閺嶅洤鍣紒鍕\r\n"
+    "#include ""res\\PortMaster.rc2""  // 闂?Microsoft Visual C++ 缂傚倹鐗炵欢顐︽儍閸曨喚銈繝?\n"
+    "#include ""afxres.rc""      // 闁哄秴娲ら崳顖滅磼閸曨亝顐?\n"
     "#endif\r\n"
     "\0"
 END
@@ -120,8 +120,8 @@ BEGIN
     PUSHBUTTON      "断开",IDC_BUTTON_DISCONNECT,135,240,70,30
     GROUPBOX        "数据发送",IDC_STATIC,240,10,420,140
     LTEXT           "输入数据",IDC_STATIC,250,30,50,12
-    CONTROL         "十六进制显示",IDC_CHECK_HEX,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,320,30,90,12
-    LTEXT           "来源: 手动输入",IDC_STATIC_SEND_SOURCE,430,30,80,12
+    CONTROL         "十六进制显示",IDC_CHECK_HEX,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,320,29,90,12
+    LTEXT           "来源: 手动输入",IDC_STATIC_SEND_SOURCE,430,30,219,12
     EDITTEXT        IDC_EDIT_SEND_DATA,250,45,400,80,ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | WS_VSCROLL
     LTEXT           "(支持拖入单个文件；超大文件仅显示头部)",IDC_STATIC,250,130,300,12
     GROUPBOX        "数据接收（格式随十六进制选项同步切换）",IDC_STATIC,240,160,420,130
@@ -136,13 +136,13 @@ BEGIN
     PUSHBUTTON      "复制",IDC_BUTTON_COPY_ALL,682,210,60,25
     PUSHBUTTON      "保存",IDC_BUTTON_SAVE_ALL,682,240,60,25
     LTEXT           "日志:",IDC_STATIC,20,320,30,12
-    LTEXT           "...",IDC_STATIC_LOG,55,320,150,12
-    LTEXT           "端口:",IDC_STATIC,220,320,30,12
-    LTEXT           "COM1",IDC_STATIC_PORT_STATUS,255,320,40,12
-    LTEXT           "模式:",IDC_STATIC,310,320,30,12
-    LTEXT           "可靠",IDC_STATIC_MODE,345,320,30,12
-    LTEXT           "速率:",IDC_STATIC,390,320,30,12
-    LTEXT           "12KB/s",IDC_STATIC_SPEED,425,320,50,12
+    LTEXT           "...",IDC_STATIC_LOG,55,320,382,12
+    LTEXT           "端口:",IDC_STATIC,463,320,30,12
+    LTEXT           "COM1",IDC_STATIC_PORT_STATUS,498,320,40,12
+    LTEXT           "模式:",IDC_STATIC,553,320,30,12
+    LTEXT           "可靠",IDC_STATIC_MODE,588,320,30,12
+    LTEXT           "速率:",IDC_STATIC,633,320,30,12
+    LTEXT           "12KB/s",IDC_STATIC_SPEED,668,320,50,12
     CONTROL         "",IDC_PROGRESS,"msctls_progress32",WS_BORDER,20,340,704,16
     LTEXT           "PortMaster v1.0.0 - 端口大师 | Copyright © 2025",IDC_STATIC,20,370,400,12
     GROUPBOX        "",IDC_STATIC,5,300,747,66
@@ -213,9 +213,10 @@ END
 
 #if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_CHS)
 LANGUAGE 4, 2
-#include "res\PortMaster.rc2"  // 闂?Microsoft Visual C++ 缂傛牞绶惃鍕カ濠?
-#include "afxres.rc"      // 閺嶅洤鍣紒鍕
+#include "res\PortMaster.rc2"  // 闂?Microsoft Visual C++ 缂傚倹鐗炵欢顐︽儍閸曨喚銈繝?
+#include "afxres.rc"      // 闁哄秴娲ら崳顖滅磼閸曨亝顐?
 #endif
 
 /////////////////////////////////////////////////////////////////////////////
 #endif    // not APSTUDIO_INVOKED
+
