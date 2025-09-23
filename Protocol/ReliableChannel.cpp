@@ -121,6 +121,10 @@ void ReliableChannel::Shutdown()
 
     m_shutdown = true;
 
+    // 通知所有等待的线程
+    m_sendCondition.notify_all();
+    m_receiveCondition.notify_all();
+
     // 停止所有线程
     if (m_processThread.joinable())
     {
@@ -267,7 +271,7 @@ bool ReliableChannel::Receive(std::vector<uint8_t> &data, uint32_t timeout)
     {
         auto result = m_receiveCondition.wait_for(lock, std::chrono::milliseconds(timeout),
                                                   [this]
-                                                  { return !m_receiveQueue.empty() || !m_connected; });
+                                                  { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
 
         if (!result)
         {
@@ -277,12 +281,12 @@ bool ReliableChannel::Receive(std::vector<uint8_t> &data, uint32_t timeout)
     else
     {
         m_receiveCondition.wait(lock, [this]
-                                { return !m_receiveQueue.empty() || !m_connected; });
+                                { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
     }
 
-    if (!m_connected && m_receiveQueue.empty())
+    if ((!m_connected || m_shutdown) && m_receiveQueue.empty())
     {
-        return false;
+        return false; // 连接已断开或正在关闭
     }
 
     if (!m_receiveQueue.empty())
