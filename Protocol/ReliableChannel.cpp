@@ -29,7 +29,7 @@ void ReliableChannel::WriteLog(const std::string &message)
 
 // 构造函数
 ReliableChannel::ReliableChannel()
-    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
+    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
 {
     m_lastActivity = std::chrono::steady_clock::now();
     WriteLog("ReliableChannel constructor called");
@@ -101,6 +101,7 @@ bool ReliableChannel::Initialize(std::shared_ptr<ITransport> transport, const Re
     m_sendNext = 0;
     m_receiveBase = 0;
     m_receiveNext = 0;
+    m_heartbeatSequence = 0;  // 重置心跳序列号
 
     // 重置统计
     ResetStats();
@@ -1323,7 +1324,10 @@ bool ReliableChannel::SendNak(uint16_t sequence)
 // 发送心跳
 bool ReliableChannel::SendHeartbeat()
 {
-    uint16_t sequence = AllocateSequence();
+    // 使用独立的心跳序列号，不占用数据传输序列号
+    uint16_t sequence = m_heartbeatSequence++;
+    WriteLog("SendHeartbeat: using independent heartbeat sequence " + std::to_string(sequence));
+    
     std::vector<uint8_t> frameData = m_frameCodec->EncodeHeartbeatFrame(sequence);
     size_t written = 0;
     return m_transport->Write(frameData.data(), frameData.size(), &written) == TransportError::Success && written == frameData.size();

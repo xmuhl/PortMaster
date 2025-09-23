@@ -185,6 +185,7 @@ private:
     uint16_t m_sendNext;                     // 下一个发送序列
     uint16_t m_receiveBase;                  // 接收窗口基
     uint16_t m_receiveNext;                  // 下一个接收序列
+    uint16_t m_heartbeatSequence;            // 心跳包独立序列号
 
     // 队列
     std::queue<std::vector<uint8_t>> m_sendQueue;    // 发送队列
