@@ -1098,7 +1098,12 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 
 	// 根据缓存更新显示（这会基于原始数据进行正确的格式转换）
 	UpdateSendDisplayFromCache();
-	UpdateReceiveDisplayFromCache();
+	
+	// 只有在接收缓存有效时才更新接收显示，避免模式切换时错误填充接收框
+	if (m_receiveCacheValid && !m_receiveDataCache.empty())
+	{
+		UpdateReceiveDisplayFromCache();
+	}
 }
 
 CString CPortMasterDlg::StringToHex(const CString &str)
@@ -1785,8 +1790,12 @@ void CPortMasterDlg::OnBnClickedButtonClearAll()
 
 void CPortMasterDlg::OnBnClickedButtonClearReceive()
 {
-	// 只清空接收数据编辑框（重命名为"清空接收框"后的功能保持不变）
+	// 清空接收数据编辑框
 	m_editReceiveData.SetWindowText(_T(""));
+
+	// 清空内存中的接收缓存（关键修复）
+	m_receiveDataCache.clear();
+	m_receiveCacheValid = false;
 
 	// 清空临时缓存文件
 	ClearTempCacheFile();
