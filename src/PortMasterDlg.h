@@ -64,6 +64,7 @@ protected:
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
 	void UpdateSendCache(const CString &data);				   // 更新发送缓存
+	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
 	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
 	void UpdateReceiveCache(const std::vector<uint8_t> &data); // 更新接收缓存
 

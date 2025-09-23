@@ -827,13 +827,8 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 				CString hexContent = BytesToHex(fileBuffer, (size_t)fileLength);
 				m_editSendData.SetWindowText(hexContent);
 				
-				// 对于二进制文件，需要创建合适的发送缓存
-				CString binaryFileContent;
-				for (size_t i = 0; i < fileLength; i++)
-				{
-					binaryFileContent += (TCHAR)fileBuffer[i];
-				}
-				UpdateSendCache(binaryFileContent);
+				// 对于二进制文件，直接从字节数据更新缓存，避免编码转换
+				UpdateSendCacheFromBytes(fileBuffer, (size_t)fileLength);
 			}
 			else
 			{
@@ -1620,10 +1615,25 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 				m_sendDataCache.push_back(static_cast<uint8_t>(utf8Buf[j]));
 			}
 		}
-
-		this->WriteLog("=== UpdateSendCache 结束 ===");
 	}
 
+	this->WriteLog("=== UpdateSendCache 结束 ===");
+	m_sendCacheValid = true;
+}
+
+void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
+{
+	// 直接从字节数据更新缓存，避免任何编码转换
+	m_sendDataCache.clear();
+	m_sendDataCache.reserve(length);
+	
+	// 直接复制字节数据，保持原始值不变
+	for (size_t i = 0; i < length; i++)
+	{
+		m_sendDataCache.push_back(data[i]);
+	}
+	
+	this->WriteLog("=== UpdateSendCacheFromBytes 结束 ===");
 	m_sendCacheValid = true;
 }
 
