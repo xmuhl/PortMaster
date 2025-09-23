@@ -15,6 +15,7 @@
 #include "../Common/CommonTypes.h"
 #include "../Common/ConfigStore.h"
 #include <chrono>
+#include <thread>
 #include <shellapi.h>
 #include <ctime>
 #include <fstream>
@@ -504,6 +505,19 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		m_progress.SetRange(0, 100);
 		m_progress.SetPos(0);
 
+		// 添加调试输出：检查传输通道状态
+		this->WriteLog("=== 发送通道状态检查 ===");
+		this->WriteLog("可靠传输通道指针: " + std::string(m_reliableChannel ? "有效" : "无效"));
+		if (m_reliableChannel)
+		{
+			this->WriteLog("可靠传输通道连接状态: " + std::string(m_reliableChannel->IsConnected() ? "已连接" : "未连接"));
+		}
+		this->WriteLog("原始传输指针: " + std::string(m_transport ? "有效" : "无效"));
+		if (m_transport)
+		{
+			this->WriteLog("原始传输打开状态: " + std::string(m_transport->IsOpen() ? "已打开" : "未打开"));
+		}
+
 		if (m_reliableChannel && m_reliableChannel->IsConnected())
 		{
 			this->WriteLog("OnBnClickedButtonSend: Using reliable channel");
@@ -596,8 +610,80 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		}
 		else if (m_transport && m_transport->IsOpen())
 		{
-			// 使用原始传输 - 也支持进度显示
-			error = m_transport->Write(data.data(), data.size());
+			this->WriteLog("OnBnClickedButtonSend: Using raw transport");
+			
+			// 使用原始传输 - 添加分块发送支持以确保大数据完整传输
+			if (data.size() > 4096)  // 对于大于4KB的数据进行分块发送
+			{
+				this->WriteLog("OnBnClickedButtonSend: Large data for raw transport, size=" + std::to_string(data.size()) + ", using chunked send");
+				
+				const size_t chunkSize = 4096;  // 原始传输使用较大的块大小
+				size_t totalSent = 0;
+				bool transmissionCancelled = false;
+				
+				while (totalSent < data.size() && !transmissionCancelled)
+				{
+					size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
+					
+					this->WriteLog("OnBnClickedButtonSend: Sending raw chunk " + std::to_string(totalSent / chunkSize + 1) +
+								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
+								   ", size=" + std::to_string(currentChunkSize));
+					
+					TransportError chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
+					if (chunkError != TransportError::Success)
+					{
+						this->WriteLog("OnBnClickedButtonSend: Raw chunk send failed at " + std::to_string(totalSent) +
+									   "/" + std::to_string(data.size()) + ", error=" + std::to_string(static_cast<int>(chunkError)));
+						error = chunkError;
+						break;
+					}
+					
+					totalSent += currentChunkSize;
+					
+					// 更新进度条
+					int progress = (int)((totalSent * 100) / data.size());
+					m_progress.SetPos(progress);
+					
+					// 更新状态
+					CString progressStatus;
+					progressStatus.Format(_T("原始传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
+					m_staticPortStatus.SetWindowText(progressStatus);
+					
+					// 处理UI消息，保持界面响应
+					MSG msg;
+					while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+					{
+						if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
+						{
+							transmissionCancelled = true;
+							break;
+						}
+						TranslateMessage(&msg);
+						DispatchMessage(&msg);
+					}
+					
+					if (transmissionCancelled)
+					{
+						this->WriteLog("OnBnClickedButtonSend: Raw transmission cancelled by user");
+						error = TransportError::WriteFailed;
+						break;
+					}
+					
+					// 添加小延迟，避免过快发送导致接收端处理不及时
+					std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				}
+				
+				if (totalSent == data.size() && error == TransportError::Success)
+				{
+					this->WriteLog("OnBnClickedButtonSend: Raw chunked transmission completed successfully");
+				}
+			}
+			else
+			{
+				this->WriteLog("OnBnClickedButtonSend: Small data for raw transport, size=" + std::to_string(data.size()) + ", sending directly");
+				error = m_transport->Write(data.data(), data.size());
+				this->WriteLog("OnBnClickedButtonSend: Raw direct send result: " + std::to_string(static_cast<int>(error)));
+			}
 		}
 
 		if (error != TransportError::Success)
@@ -1460,40 +1546,66 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 	}
 	else
 	{
-	// 文本模式：将字节缓存转换为文本显示
-	// 修复：移除错误的数据格式检测逻辑，避免误将原始数据当作十六进制格式处理
-	std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
-	safeData.push_back('\0');
-
-	CA2T utf8Text(safeData.data(), CP_UTF8);
-	CString receivedText = CString(utf8Text);
-
-	// 尝试将数据作为UTF-8字符串解码
-	try
-	{
-		m_editReceiveData.SetWindowText(receivedText);
-	}
-	catch (...)
-	{
-		// 如果UTF-8解码失败，显示可打印字符
-		CString textDisplay;
-		for (uint8_t byte : m_receiveDataCache)
+		// 文本模式：智能编码检测和显示
+		this->WriteLog("显示更新 - 开始智能编码检测...");
+		
+		std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
+		safeData.push_back('\0');
+		
+		CString displayText;
+		bool decoded = false;
+		
+		// 方案1：尝试UTF-8解码
+		try
 		{
-			if (byte >= 32 && byte <= 126)
+			CA2T utf8Text(safeData.data(), CP_UTF8);
+			CString testResult = CString(utf8Text);
+			
+			if (!testResult.IsEmpty() && testResult.GetLength() > 10)
 			{
-				textDisplay += (TCHAR)byte;
-			}
-			else if (byte == 0)
-			{
-				textDisplay += _T("[NUL]");
-			}
-			else
-			{
-				textDisplay += _T(".");
+				displayText = testResult;
+				decoded = true;
+				this->WriteLog("显示更新 - UTF-8解码成功，文本长度: " + std::to_string(displayText.GetLength()));
 			}
 		}
-		m_editReceiveData.SetWindowText(textDisplay);
-	}
+		catch (...)
+		{
+			this->WriteLog("显示更新 - UTF-8解码失败");
+		}
+		
+		// 方案2：如果UTF-8失败，尝试GBK解码
+		if (!decoded)
+		{
+			try
+			{
+				CA2T gbkText(safeData.data(), CP_ACP);
+				CString testResult = CString(gbkText);
+				
+				if (!testResult.IsEmpty() && testResult.GetLength() > 10)
+				{
+					displayText = testResult;
+					decoded = true;
+					this->WriteLog("显示更新 - GBK解码成功，文本长度: " + std::to_string(displayText.GetLength()));
+				}
+			}
+			catch (...)
+			{
+				this->WriteLog("显示更新 - GBK解码失败");
+			}
+		}
+		
+		// 方案3：如果所有编码都失败，显示可打印字符
+		if (!decoded)
+		{
+			this->WriteLog("显示更新 - 使用原始字节显示");
+			for (size_t i = 0; i < m_receiveDataCache.size(); i++)
+			{
+				uint8_t byte = m_receiveDataCache[i];
+				displayText += (TCHAR)byte;
+			}
+		}
+		
+		m_editReceiveData.SetWindowText(displayText);
 	}
 
 	this->WriteLog("=== UpdateReceiveDisplayFromCache 结束 ===");
@@ -1916,34 +2028,88 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 			}
 			else
 			{
-				// 文本模式：将原始数据转换为文本显示
+				// 文本模式：智能编码检测和转换
+				this->WriteLog("文本模式：开始智能编码检测...");
+				
+				// 创建安全的C字符串
+				std::vector<char> safeData(cachedData.begin(), cachedData.end());
+				safeData.push_back('\0');
+				
+				// 记录原始数据的前32字节用于编码检测调试
+				std::string hexPreview;
+				size_t previewSize = (std::min)(cachedData.size(), (size_t)32);
+				for (size_t i = 0; i < previewSize; i++)
+				{
+					char hexByte[4];
+					sprintf_s(hexByte, "%02X ", cachedData[i]);
+					hexPreview += hexByte;
+				}
+				this->WriteLog("编码检测 - 原始数据预览: " + hexPreview);
+				
+				bool decoded = false;
+				
+				// 方案1：尝试UTF-8解码
 				try
 				{
-					std::vector<char> safeData(cachedData.begin(), cachedData.end());
-					safeData.push_back('\0');
 					CA2T utf8Text(safeData.data(), CP_UTF8);
-					saveData = CString(utf8Text);
-					this->WriteLog("文本模式：UTF-8解码成功，文本长度: " + std::to_string(saveData.GetLength()));
+					CString testResult = CString(utf8Text);
+					
+					// 验证UTF-8解码结果的有效性
+					if (!testResult.IsEmpty() && testResult.GetLength() > 10)
+					{
+						saveData = testResult;
+						decoded = true;
+						this->WriteLog("编码检测 - UTF-8解码成功，文本长度: " + std::to_string(saveData.GetLength()));
+					}
+					else
+					{
+						this->WriteLog("编码检测 - UTF-8解码结果太短，可能不正确");
+					}
 				}
 				catch (...)
 				{
-					// UTF-8解码失败，显示可打印字符
-					for (uint8_t byte : cachedData)
+					this->WriteLog("编码检测 - UTF-8解码失败");
+				}
+				
+				// 方案2：如果UTF-8失败，尝试GBK解码
+				if (!decoded)
+				{
+					try
 					{
-						if (byte >= 32 && byte <= 126)
+						CA2T gbkText(safeData.data(), CP_ACP); // 使用系统默认代码页(通常是GBK)
+						CString testResult = CString(gbkText);
+						
+						if (!testResult.IsEmpty() && testResult.GetLength() > 10)
 						{
-							saveData += (TCHAR)byte;
-						}
-						else if (byte == 0)
-						{
-							saveData += _T("[NUL]");
+							saveData = testResult;
+							decoded = true;
+							this->WriteLog("编码检测 - GBK解码成功，文本长度: " + std::to_string(saveData.GetLength()));
 						}
 						else
 						{
-							saveData += _T(".");
+							this->WriteLog("编码检测 - GBK解码结果太短，可能不正确");
 						}
 					}
-					this->WriteLog("文本模式：UTF-8解码失败，使用可打印字符显示，文本长度: " + std::to_string(saveData.GetLength()));
+					catch (...)
+					{
+						this->WriteLog("编码检测 - GBK解码失败");
+					}
+				}
+				
+				// 方案3：如果所有编码都失败，保留原始字节数据
+				if (!decoded)
+				{
+					this->WriteLog("编码检测 - 所有编码方式失败，保存原始字节数据");
+					
+					// 直接从字节数组创建CString，不进行编码转换
+					saveData.Empty();
+					for (size_t i = 0; i < cachedData.size(); i++)
+					{
+						uint8_t byte = cachedData[i];
+						saveData += (TCHAR)byte; // 直接转换为TCHAR
+					}
+					
+					this->WriteLog("编码检测 - 原始字节数据转换完成，文本长度: " + std::to_string(saveData.GetLength()));
 				}
 			}
 		}
