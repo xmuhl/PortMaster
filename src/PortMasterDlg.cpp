@@ -433,8 +433,6 @@ void CPortMasterDlg::OnBnClickedButtonDisconnect()
 
 void CPortMasterDlg::OnBnClickedButtonSend()
 {
-	// TODO: 在此添加控件通知处理程序代码
-
 	// 检查是否已连接
 	if (!m_isConnected)
 	{
@@ -442,119 +440,17 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		return;
 	}
 
-	// 获取发送数据
-	CString sendData;
-	m_editSendData.GetWindowText(sendData);
-
-	if (sendData.IsEmpty())
+	// 基于缓存的架构：检查缓存有效性
+	if (!m_sendCacheValid || m_sendDataCache.empty())
 	{
-		MessageBox(_T("请输入要发送的数据"), _T("提示"), MB_OK | MB_ICONWARNING);
+		MessageBox(_T("没有可发送的数据，请先输入数据"), _T("提示"), MB_OK | MB_ICONWARNING);
 		return;
 	}
 
 	try
 	{
-		std::vector<uint8_t> data;
-
-		// 根据显示模式转换数据
-		if (m_checkHex.GetCheck() == BST_CHECKED)
-		{
-			// 十六进制模式 - 检查是否为格式化字符串
-			bool isFormattedHex = false;
-			int len = sendData.GetLength();
-			
-			// 检测是否为格式化的十六进制字符串
-			if (sendData.Find(_T("00000000:")) >= 0 || 
-				(sendData.Find(_T(':')) >= 0 && sendData.Find(_T('|')) >= 0))
-			{
-				isFormattedHex = true;
-			}
-			
-			if (isFormattedHex)
-			{
-				// 如果是格式化字符串，提取其中的原始十六进制数据
-				CString cleanHex;
-				int len = sendData.GetLength();
-				
-				// 提取纯十六进制字符（去除偏移地址、空格、ASCII部分等格式）
-				for (int i = 0; i < len; i++)
-				{
-					TCHAR ch = sendData[i];
-					// 只保留有效的十六进制字符
-					if ((ch >= _T('0') && ch <= _T('9')) ||
-						(ch >= _T('A') && ch <= _T('F')) ||
-						(ch >= _T('a') && ch <= _T('f')))
-					{
-						cleanHex += ch;
-					}
-				}
-				
-				// 将十六进制字符串转换为二进制数据
-				if (!cleanHex.IsEmpty() && cleanHex.GetLength() % 2 == 0)
-				{
-					for (int i = 0; i < cleanHex.GetLength(); i += 2)
-					{
-						CString hexByte = cleanHex.Mid(i, 2);
-						uint8_t byte = (uint8_t)_tcstol(hexByte, nullptr, 16);
-						data.push_back(byte);
-					}
-				}
-				else
-				{
-					// 如果提取失败，回退到发送格式化文本
-					CT2A textData(sendData, CP_UTF8);
-					const char *text = textData;
-					data.assign(text, text + strlen(text));
-				}
-			}
-			else
-			{
-				// 如果是纯十六进制字符，提取并转换为字节
-				CString cleanHex;
-				
-				// 提取有效的十六进制字符，自动跳过空格、换行符等
-				for (int i = 0; i < len; i++)
-				{
-					TCHAR ch = sendData[i];
-					// 只保留有效的十六进制字符
-					if ((ch >= _T('0') && ch <= _T('9')) ||
-						(ch >= _T('A') && ch <= _T('F')) ||
-						(ch >= _T('a') && ch <= _T('f')))
-					{
-						cleanHex += ch;
-					}
-				}
-
-				// 检查是否有有效的十六进制数据
-				if (cleanHex.IsEmpty())
-				{
-					MessageBox(_T("未找到有效的十六进制数据"), _T("错误"), MB_OK | MB_ICONERROR);
-					return;
-				}
-
-				// 确保字节对数为偶数
-				if (cleanHex.GetLength() % 2 != 0)
-				{
-					MessageBox(_T("十六进制数据字符数必须为偶数"), _T("错误"), MB_OK | MB_ICONERROR);
-					return;
-				}
-
-				// 转换为字节数组
-				for (int i = 0; i < cleanHex.GetLength(); i += 2)
-				{
-					CString byteStr = cleanHex.Mid(i, 2);
-					uint8_t byteValue = static_cast<uint8_t>(_tcstoul(byteStr, NULL, 16));
-					data.push_back(byteValue);
-				}
-			}
-		}
-		else
-		{
-			// 文本模式 - 使用UTF-8编码确保正确处理Unicode字符
-			CT2A textData(sendData, CP_UTF8);
-			const char *text = textData;
-			data.assign(text, text + strlen(text));
-		}
+		// 直接使用缓存中的原始字节数据，无需任何解析转换
+		const std::vector<uint8_t> &data = m_sendDataCache;
 
 		// 发送数据
 		TransportError error = TransportError::Success;
