@@ -367,28 +367,22 @@ void CPortMasterDlg::OnBnClickedButtonConnect()
 	}
 
 	// 打开传输连接
-	WriteLog("OnBnClickedButtonConnect: Starting connection...");
 
 	TransportError error = TransportError::Success;
 	if (m_reliableChannel)
 	{
-		WriteLog("OnBnClickedButtonConnect: Connecting reliable channel...");
 		bool connected = m_reliableChannel->Connect();
-		WriteLog("OnBnClickedButtonConnect: Reliable channel connect result: " + std::to_string(connected));
 		error = connected ? static_cast<TransportError>(TransportError::Success) : static_cast<TransportError>(TransportError::ConnectionClosed);
 	}
 	else if (m_transport)
 	{
-		WriteLog("OnBnClickedButtonConnect: Using direct transport...");
 		// 传输对象已经在CreateTransport中打开，这里不需要重复打开
 		if (!m_transport->IsOpen())
 		{
-			WriteLog("OnBnClickedButtonConnect: Transport not open");
 			error = TransportError::NotOpen;
 		}
 		else
 		{
-			WriteLog("OnBnClickedButtonConnect: Transport already open");
 		}
 	}
 
@@ -539,13 +533,11 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 {
 	// 添加调试日志
-	WriteLog("LoadDataFromFile: 开始加载文件 - " + std::string(CT2A(filePath)));
 	
 	CFile file;
 	if (file.Open(filePath, CFile::modeRead))
 	{
 		ULONGLONG fileLength = file.GetLength();
-		WriteLog("LoadDataFromFile: 文件大小=" + std::to_string(fileLength));
 		
 		if (fileLength > 0)
 		{
@@ -634,13 +626,11 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 				m_editSendData.SetWindowText(hexContent);
 				
 				// 对于二进制文件，缓存完整文件数据用于传输，不管显示多少
-				WriteLog("LoadDataFromFile: 二进制文件，调用UpdateSendCacheFromBytes");
 				UpdateSendCacheFromBytes(fileBuffer, (size_t)fileLength);
 			}
 			else
 			{
 				// 文本文件：正常处理
-				WriteLog("LoadDataFromFile: 文本文件，调用UpdateSendCache");
 				UpdateSendCache(fileContent);
 
 				// 设置到发送数据编辑框
@@ -1375,18 +1365,10 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 
 void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 {
-	// 添加调试输出：记录显示更新过程
-	this->WriteLog("=== UpdateReceiveDisplayFromCache 开始 ===");
-	this->WriteLog("更新接收显示 - 缓存状态: " + std::string(m_receiveCacheValid ? "有效" : "无效"));
-	this->WriteLog("更新接收显示 - 缓存数据大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
-	this->WriteLog("更新接收显示 - 当前显示模式: " + std::string(m_checkHex.GetCheck() == BST_CHECKED ? "十六进制" : "文本"));
-
 	// 如果接收缓存无效，直接返回
 	if (!m_receiveCacheValid || m_receiveDataCache.empty())
 	{
-		this->WriteLog("更新接收显示 - 缓存无效或为空，清空显示");
 		m_editReceiveData.SetWindowText(_T(""));
-		this->WriteLog("=== UpdateReceiveDisplayFromCache 结束 ===");
 		return;
 	}
 
@@ -1457,7 +1439,6 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 	else
 	{
 		// 文本模式：智能编码检测和显示
-		this->WriteLog("显示更新 - 开始智能编码检测...");
 		
 		std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
 		safeData.push_back('\0');
@@ -1476,12 +1457,12 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 			{
 				displayText = testResult;
 				decoded = true;
-				this->WriteLog("显示更新 - UTF-8解码成功，文本长度: " + std::to_string(displayText.GetLength()));
+				// UTF-8解码成功
 			}
 		}
 		catch (...)
 		{
-			this->WriteLog("显示更新 - UTF-8解码失败");
+				// UTF-8解码失败
 		}
 		
 		// 方案2：如果UTF-8失败，尝试GBK解码
@@ -1497,19 +1478,19 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				{
 					displayText = testResult;
 					decoded = true;
-					this->WriteLog("显示更新 - GBK解码成功，文本长度: " + std::to_string(displayText.GetLength()));
+					// GBK解码成功
 				}
 			}
 			catch (...)
 			{
-				this->WriteLog("显示更新 - GBK解码失败");
+					// GBK解码失败
 			}
 		}
 		
 		// 方案3：如果所有编码都失败，显示可打印字符
 		if (!decoded)
 		{
-			this->WriteLog("显示更新 - 使用原始字节显示");
+			// 使用原始字节显示
 			for (size_t i = 0; i < m_receiveDataCache.size(); i++)
 			{
 				uint8_t byte = m_receiveDataCache[i];
@@ -1520,13 +1501,10 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 		m_editReceiveData.SetWindowText(displayText);
 	}
 
-	this->WriteLog("=== UpdateReceiveDisplayFromCache 结束 ===");
 }
 
 void CPortMasterDlg::UpdateSendCache(const CString &data)
 {
-	// 添加调试日志
-	WriteLog("UpdateSendCache: 输入数据长度=" + std::to_string(data.GetLength()));
 	
 	// 将CString转换为字节序列并缓存
 	m_sendDataCache.clear();
@@ -1561,9 +1539,7 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 		}
 	}
 
-	WriteLog("UpdateSendCache: 转换后缓存大小=" + std::to_string(m_sendDataCache.size()));
 	m_sendCacheValid = true;
-	WriteLog("UpdateSendCache: 缓存状态设置为有效");
 }
 
 void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
@@ -1578,7 +1554,6 @@ void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
 		m_sendDataCache.push_back(data[i]);
 	}
 	
-	this->WriteLog("=== UpdateSendCacheFromBytes 结束 ===");
 	m_sendCacheValid = true;
 }
 
@@ -1610,7 +1585,7 @@ void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
 	// 检查是否有有效的十六进制数据
 	if (cleanHex.IsEmpty())
 	{
-		WriteLog("UpdateSendCacheFromHex: 无有效十六进制数据");
+		// 无有效十六进制数据
 		m_sendCacheValid = false;
 		return;
 	}
@@ -1630,51 +1605,36 @@ void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
 		m_sendDataCache.push_back(byteValue);
 	}
 
-	WriteLog("UpdateSendCacheFromHex: 解析后缓存大小=" + std::to_string(m_sendDataCache.size()));
 	m_sendCacheValid = true;
-	WriteLog("UpdateSendCacheFromHex: 缓存状态设置为有效");
 }
 
 void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
 {
-	// 添加调试输出：记录缓存更新过程
-	this->WriteLog("=== UpdateReceiveCache 开始 ===");
-	this->WriteLog("更新接收缓存 - 输入数据大小: " + std::to_string(data.size()) + " 字节");
-	this->WriteLog("更新接收缓存 - 当前缓存状态: " + std::string(m_receiveCacheValid ? "有效" : "无效"));
-	this->WriteLog("更新接收缓存 - 当前缓存数据大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
 
 	// 修复：追加接收到的字节数据，而不是覆盖
 	if (!m_receiveCacheValid || m_receiveDataCache.empty())
 	{
 		// 如果缓存无效或为空，直接设置新数据
-		this->WriteLog("更新接收缓存 - 缓存无效或为空，直接设置新数据");
 		m_receiveDataCache = data;
 	}
 	else
 	{
 		// 如果缓存有效且不为空，追加新数据
-		this->WriteLog("更新接收缓存 - 追加新数据到现有缓存");
-		size_t oldSize = m_receiveDataCache.size();
 		m_receiveDataCache.insert(m_receiveDataCache.end(), data.begin(), data.end());
-		this->WriteLog("更新接收缓存 - 数据追加完成，从 " + std::to_string(oldSize) + " 字节增加到 " + std::to_string(m_receiveDataCache.size()) + " 字节");
 	}
 	m_receiveCacheValid = true;
 
-	this->WriteLog("更新接收缓存 - 缓存更新完成，新的缓存数据大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
 
 	// 同时写入临时缓存文件（如果已初始化）
 	if (m_useTempCacheFile && m_tempCacheFile.is_open())
 	{
-		this->WriteLog("更新接收缓存 - 写入临时缓存文件...");
-		bool writeResult = WriteDataToTempCache(data);
-		this->WriteLog("更新接收缓存 - 临时缓存文件写入结果: " + std::string(writeResult ? "成功" : "失败"));
+		WriteDataToTempCache(data);
 	}
 	else
 	{
-		this->WriteLog("更新接收缓存 - 临时缓存文件未启用或未打开");
+		// 临时缓存文件未启用
 	}
 
-	this->WriteLog("=== UpdateReceiveCache 结束 ===");
 }
 
 void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &data)
@@ -1722,84 +1682,25 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 	}
 	else
 	{
-		// 文本模式：智能编码处理（修复中文字符显示问题）
+		// 文本模式：简化编码处理，避免多重转换导致乱码
+		// 创建包含null终止符的安全数据副本
 		std::vector<char> safeData(data.begin(), data.end());
 		safeData.push_back('\0');
 		
-		CString decodedText;
-		bool decoded = false;
+		// 尝试直接用系统默认编码解释数据，不进行多次编码转换
+		std::string rawText(safeData.data());
 		
-		// 方案1：尝试UTF-8解码
-		try
+		// 按行处理数据，避免CString与std::string间的反复转换
+		std::string currentLine;
+		
+		for (size_t i = 0; i < rawText.length(); i++)
 		{
-			CA2T utf8Text(safeData.data(), CP_UTF8);
-			CString testResult = CString(utf8Text);
+			char ch = rawText[i];
 			
-			if (!testResult.IsEmpty())
-			{
-				decodedText = testResult;
-				decoded = true;
-			}
-		}
-		catch (...)
-		{
-			// UTF-8解码失败，继续尝试其他编码
-		}
-		
-		// 方案2：如果UTF-8失败，尝试GBK解码
-		if (!decoded)
-		{
-			try
-			{
-				CA2T gbkText(safeData.data(), CP_ACP);
-				CString testResult = CString(gbkText);
-				
-				if (!testResult.IsEmpty())
-				{
-					decodedText = testResult;
-					decoded = true;
-				}
-			}
-			catch (...)
-			{
-				// GBK解码也失败
-			}
-		}
-		
-		// 方案3：如果所有编码都失败，使用原始字节显示
-		if (!decoded)
-		{
-			for (size_t i = 0; i < data.size(); i++)
-			{
-				uint8_t byte = data[i];
-				if (byte >= 32 && byte <= 126)
-				{
-					decodedText += (TCHAR)byte;
-				}
-				else if (byte == '\n' || byte == '\r')
-				{
-					decodedText += (TCHAR)byte;
-				}
-				else
-				{
-					decodedText += _T(".");
-				}
-			}
-		}
-		
-		// 将解码后的文本按行分割添加到显示缓冲区
-		CString currentLine;
-		int textLen = decodedText.GetLength();
-		
-		for (int i = 0; i < textLen; i++)
-		{
-			TCHAR ch = decodedText[i];
-			
-			if (ch == _T('\n'))
+			if (ch == '\n')
 			{
 				// 遇到换行符，添加当前行到缓冲区
-				std::string line = CT2A(currentLine, CP_UTF8);
-				m_receiveDisplayLines.push_back(line);
+				m_receiveDisplayLines.push_back(currentLine);
 				
 				// 如果超过最大行数，删除最旧的行
 				if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
@@ -1807,9 +1708,9 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 					m_receiveDisplayLines.pop_front();
 				}
 				
-				currentLine.Empty();
+				currentLine.clear();
 			}
-			else if (ch == _T('\r'))
+			else if (ch == '\r')
 			{
 				// 忽略回车符
 				continue;
@@ -1819,27 +1720,25 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 				currentLine += ch;
 				
 				// 如果行太长，强制换行（避免界面卡顿）
-				if (currentLine.GetLength() >= 80)
+				if (currentLine.length() >= 80)
 				{
-					std::string line = CT2A(currentLine, CP_UTF8);
-					m_receiveDisplayLines.push_back(line);
+					m_receiveDisplayLines.push_back(currentLine);
 					if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
 					{
 						m_receiveDisplayLines.pop_front();
 					}
-					currentLine.Empty();
+					currentLine.clear();
 				}
 			}
 		}
 		
 		// 如果还有剩余数据，添加到缓冲区
-		if (!currentLine.IsEmpty())
+		if (!currentLine.empty())
 		{
-			std::string line = CT2A(currentLine, CP_UTF8);
 			if (!m_receiveDisplayLines.empty())
 			{
 				// 追加到最后一行
-				m_receiveDisplayLines.back() += line;
+				m_receiveDisplayLines.back() += currentLine;
 				
 				// 检查最后一行是否过长
 				if (m_receiveDisplayLines.back().length() >= 80)
@@ -1854,7 +1753,7 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 			else
 			{
 				// 第一行
-				m_receiveDisplayLines.push_back(line);
+				m_receiveDisplayLines.push_back(currentLine);
 			}
 		}
 	}
