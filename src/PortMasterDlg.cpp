@@ -1871,12 +1871,8 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 		{
 			if (m_checkHex.GetCheck() == BST_CHECKED)
 			{
-				// 十六进制模式：复制原始二进制数据而非十六进制字符串
-				// 将原始字节数据转换为可复制的文本格式，每个字节作为一个字符
-				for (uint8_t byte : cachedData)
-				{
-					copyData += (TCHAR)byte;
-				}
+				// 十六进制模式：复制格式化的十六进制文本（避免null字符截断问题）
+				copyData = BytesToHex(cachedData.data(), cachedData.size());
 			}
 			else
 			{
@@ -1914,33 +1910,11 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 	// 如果临时缓存不可用，使用原有逻辑
 	if (copyData.IsEmpty())
 	{
-		// 如果处于十六进制模式，从当前显示内容中提取纯十六进制数据
+		// 如果处于十六进制模式，复制当前显示的完整格式化内容
 		if (m_checkHex.GetCheck() == BST_CHECKED)
 		{
-			// 获取当前显示内容
-			CString displayContent;
-			m_editReceiveData.GetWindowText(displayContent);
-
-			if (!displayContent.IsEmpty())
-			{
-				// 提取纯十六进制字符（去除偏移地址、空格、ASCII部分等格式）
-				CString cleanHex;
-				int len = displayContent.GetLength();
-
-				for (int i = 0; i < len; i++)
-				{
-					TCHAR ch = displayContent[i];
-					// 只保留有效的十六进制字符
-					if ((ch >= _T('0') && ch <= _T('9')) ||
-						(ch >= _T('A') && ch <= _T('F')) ||
-						(ch >= _T('a') && ch <= _T('f')))
-					{
-						cleanHex += ch;
-					}
-				}
-
-				copyData = cleanHex;
-			}
+			// 直接复制当前显示的完整16进制格式内容
+			m_editReceiveData.GetWindowText(copyData);
 		}
 		else
 		{
