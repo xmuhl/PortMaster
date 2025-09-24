@@ -95,7 +95,7 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 // CPortMasterDlg 对话框
 
 CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
-	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance())
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_transmissionState(TransmissionState::IDLE), m_pauseTransmission(false), m_stopTransmission(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance())
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -271,6 +271,10 @@ BOOL CPortMasterDlg::OnInitDialog()
 	m_needUpdateReceiveDisplay = false;
 	m_receiveDisplayLines.clear();
 
+	// 初始化传输状态和界面
+	UpdateSendButtonState();
+	UpdateStatusDisplay();
+
 	return TRUE; // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -441,318 +445,69 @@ void CPortMasterDlg::OnBnClickedButtonDisconnect()
 
 void CPortMasterDlg::OnBnClickedButtonSend()
 {
-	// 检查是否已连接
-	if (!m_isConnected)
+	TransmissionState currentState = m_transmissionState.load();
+	
+	switch (currentState)
 	{
-		MessageBox(_T("请先连接端口"), _T("提示"), MB_OK | MB_ICONWARNING);
-		return;
-	}
-
-	// 基于缓存的架构：检查缓存有效性
-	if (!m_sendCacheValid || m_sendDataCache.empty())
-	{
-		MessageBox(_T("没有可发送的数据，请先输入数据"), _T("提示"), MB_OK | MB_ICONWARNING);
-		return;
-	}
-
-	try
-	{
-		// 直接使用缓存中的原始字节数据，无需任何解析转换
-		const std::vector<uint8_t> &data = m_sendDataCache;
-
-		// 添加调试输出：记录发送数据的详细信息
-		this->WriteLog("=== 发送数据调试信息 ===");
-		this->WriteLog("发送数据大小: " + std::to_string(data.size()) + " 字节");
-
-		// 记录前32字节的十六进制内容用于调试
-		std::string hexPreview;
-		size_t previewSize = (std::min)(data.size(), (size_t)32);
-		for (size_t i = 0; i < previewSize; i++)
+	case TransmissionState::IDLE:
+	case TransmissionState::STOPPED:
+		// 开始传输
 		{
-			char hexByte[4];
-			sprintf_s(hexByte, "%02X ", data[i]);
-			hexPreview += hexByte;
-		}
-		if (data.size() > 32)
-		{
-			hexPreview += "...";
-		}
-		this->WriteLog("发送数据预览(十六进制): " + hexPreview);
-
-		// 记录前32字节的ASCII内容用于调试
-		std::string asciiPreview;
-		for (size_t i = 0; i < previewSize; i++)
-		{
-			uint8_t byte = data[i];
-			if (byte >= 32 && byte <= 126)
+			// 检查是否已连接
+			if (!m_isConnected)
 			{
-				asciiPreview += (char)byte;
-			}
-			else
-			{
-				asciiPreview += '.';
-			}
-		}
-		if (data.size() > 32)
-		{
-			asciiPreview += "...";
-		}
-		this->WriteLog("发送数据预览(ASCII): " + asciiPreview);
-
-		// 发送数据
-		TransportError error = TransportError::Success;
-
-		// 更新状态栏显示传输状态
-		CString statusText;
-		statusText.Format(_T("正在传输 %u 字节..."), data.size());
-		m_staticPortStatus.SetWindowText(statusText);
-
-		// 初始化进度条
-		m_progress.SetRange(0, 100);
-		m_progress.SetPos(0);
-
-		// 添加调试输出：检查传输通道状态
-		this->WriteLog("=== 发送通道状态检查 ===");
-		this->WriteLog("可靠传输通道指针: " + std::string(m_reliableChannel ? "有效" : "无效"));
-		if (m_reliableChannel)
-		{
-			this->WriteLog("可靠传输通道连接状态: " + std::string(m_reliableChannel->IsConnected() ? "已连接" : "未连接"));
-		}
-		this->WriteLog("原始传输指针: " + std::string(m_transport ? "有效" : "无效"));
-		if (m_transport)
-		{
-			this->WriteLog("原始传输打开状态: " + std::string(m_transport->IsOpen() ? "已打开" : "未打开"));
-		}
-
-		if (m_reliableChannel && m_reliableChannel->IsConnected())
-		{
-			this->WriteLog("OnBnClickedButtonSend: Using reliable channel");
-
-			// 使用可靠传输通道
-			bool success = false;
-
-			// 对于较大的数据（>1KB），模拟进度更新
-			if (data.size() > 1024)
-			{
-				this->WriteLog("OnBnClickedButtonSend: Large data detected, size=" + std::to_string(data.size()) + ", using chunked send");
-
-				// 分块发送以显示进度
-				const size_t chunkSize = 1024;
-				size_t totalSent = 0;
-				bool transmissionCancelled = false;
-
-				while (totalSent < data.size() && !transmissionCancelled)
-				{
-					size_t currentChunkSize = min(chunkSize, data.size() - totalSent);
-					std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + currentChunkSize);
-
-					this->WriteLog("OnBnClickedButtonSend: Sending chunk " + std::to_string(totalSent / chunkSize + 1) +
-								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
-								   ", size=" + std::to_string(currentChunkSize));
-
-					success = m_reliableChannel->Send(chunk);
-					if (!success)
-					{
-						this->WriteLog("OnBnClickedButtonSend: Chunk send failed at " + std::to_string(totalSent) +
-									   "/" + std::to_string(data.size()));
-						break;
-					}
-
-					totalSent += currentChunkSize;
-
-					// 更新进度条
-					int progress = (int)((totalSent * 100) / data.size());
-					m_progress.SetPos(progress);
-
-					// 更新状态
-					CString progressStatus;
-					progressStatus.Format(_T("正在传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
-					m_staticPortStatus.SetWindowText(progressStatus);
-
-					// 处理UI消息，保持界面响应
-					MSG msg;
-					while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-					{
-						if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
-						{
-							transmissionCancelled = true;
-							break;
-						}
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
-					}
-
-					if (transmissionCancelled)
-					{
-						this->WriteLog("OnBnClickedButtonSend: Transmission cancelled by user");
-						break;
-					}
-				}
-
-				// 检查是否因为取消而退出
-				if (transmissionCancelled && totalSent < data.size())
-				{
-					this->WriteLog("OnBnClickedButtonSend: Transmission cancelled, " + std::to_string(totalSent) +
-								   "/" + std::to_string(data.size()) + " bytes sent");
-					error = TransportError::WriteFailed;
-					MessageBox(_T("传输已取消"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-				}
-				else
-				{
-					this->WriteLog("OnBnClickedButtonSend: Chunked transmission completed, success=" + std::to_string(success));
-					error = success ? TransportError::Success : TransportError::WriteFailed;
-				}
-			}
-			else
-			{
-				this->WriteLog("OnBnClickedButtonSend: Small data, size=" + std::to_string(data.size()) + ", sending directly");
-				// 小数据直接发送
-				success = m_reliableChannel->Send(data);
-				this->WriteLog("OnBnClickedButtonSend: Direct send result: " + std::to_string(success));
-				error = success ? TransportError::Success : TransportError::WriteFailed;
+				MessageBox(_T("请先连接端口"), _T("提示"), MB_OK | MB_ICONWARNING);
+				return;
 			}
 
-			m_isTransmitting = true;
-		}
-		else if (m_transport && m_transport->IsOpen())
-		{
-			this->WriteLog("OnBnClickedButtonSend: Using raw transport");
+			// 检查缓存有效性
+			if (!m_sendCacheValid || m_sendDataCache.empty())
+			{
+				MessageBox(_T("没有可发送的数据，请先输入数据"), _T("提示"), MB_OK | MB_ICONWARNING);
+				return;
+			}
+
+			// 重置控制标志
+			m_pauseTransmission = false;
+			m_stopTransmission = false;
 			
-			// 使用原始传输 - 添加分块发送支持以确保大数据完整传输
-			if (data.size() > 4096)  // 对于大于4KB的数据进行分块发送
-			{
-				this->WriteLog("OnBnClickedButtonSend: Large data for raw transport, size=" + std::to_string(data.size()) + ", using chunked send");
-				
-				const size_t chunkSize = 4096;  // 原始传输使用较大的块大小
-				size_t totalSent = 0;
-				bool transmissionCancelled = false;
-				
-				while (totalSent < data.size() && !transmissionCancelled)
-				{
-					size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
-					
-					this->WriteLog("OnBnClickedButtonSend: Sending raw chunk " + std::to_string(totalSent / chunkSize + 1) +
-								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
-								   ", size=" + std::to_string(currentChunkSize));
-					
-					TransportError chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
-					if (chunkError != TransportError::Success)
-					{
-						this->WriteLog("OnBnClickedButtonSend: Raw chunk send failed at " + std::to_string(totalSent) +
-									   "/" + std::to_string(data.size()) + ", error=" + std::to_string(static_cast<int>(chunkError)));
-						error = chunkError;
-						break;
-					}
-					
-					totalSent += currentChunkSize;
-					
-					// 更新进度条
-					int progress = (int)((totalSent * 100) / data.size());
-					m_progress.SetPos(progress);
-					
-					// 更新状态
-					CString progressStatus;
-					progressStatus.Format(_T("原始传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
-					m_staticPortStatus.SetWindowText(progressStatus);
-					
-					// 处理UI消息，保持界面响应
-					MSG msg;
-					while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
-					{
-						if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
-						{
-							transmissionCancelled = true;
-							break;
-						}
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
-					}
-					
-					if (transmissionCancelled)
-					{
-						this->WriteLog("OnBnClickedButtonSend: Raw transmission cancelled by user");
-						error = TransportError::WriteFailed;
-						break;
-					}
-					
-					// 添加小延迟，避免过快发送导致接收端处理不及时
-					std::this_thread::sleep_for(std::chrono::milliseconds(10));
-				}
-				
-				if (totalSent == data.size() && error == TransportError::Success)
-				{
-					this->WriteLog("OnBnClickedButtonSend: Raw chunked transmission completed successfully");
-				}
-			}
-			else
-			{
-				this->WriteLog("OnBnClickedButtonSend: Small data for raw transport, size=" + std::to_string(data.size()) + ", sending directly");
-				error = m_transport->Write(data.data(), data.size());
-				this->WriteLog("OnBnClickedButtonSend: Raw direct send result: " + std::to_string(static_cast<int>(error)));
-			}
+			// 开始传输
+			UpdateTransmissionState(TransmissionState::TRANSMITTING);
+			PerformDataTransmission();
 		}
-
-		if (error != TransportError::Success)
-		{
-			CString errorMsg;
-			errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
-			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
-
-			// 重置进度条
-			m_progress.SetPos(0);
-
-			// 恢复连接状态显示
-			UpdateConnectionStatus();
-		}
-		else
-		{
-			// 更新发送统计
-			m_bytesSent += data.size();
-			CString sentText;
-			sentText.Format(_T("%u"), m_bytesSent);
-			SetDlgItemText(IDC_STATIC_SENT, sentText);
-
-			// TODO: 发送历史记录功能待实现 - 需要在资源文件中添加相应控件
-			// 当前暂时注释掉，避免引用不存在的控件导致运行时错误
-			/*
-			// 添加到发送历史
-			CString history;
-			GetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
-			if (!history.IsEmpty())
-			{
-				history += _T("\r\n");
-			}
-			history += sendData;
-			SetDlgItemText(IDC_EDIT_SEND_HISTORY, history);
-			*/
-
-			// 移除自动清空逻辑 - 让用户手动控制何时清空输入数据
-			// 发送完成后保留输入内容，方便用户重复发送或修改后再发送
-
-			// 显示传输完成状态并设置进度条为100%
-			CString completeStatus;
-			completeStatus.Format(_T("传输完成: %u 字节"), data.size());
-			m_staticPortStatus.SetWindowText(completeStatus);
-			m_progress.SetPos(100);
-
-			// 2秒后恢复连接状态显示并重置进度条
-			SetTimer(1, 2000, NULL);
-		}
-
-		this->WriteLog("=== 发送数据调试信息结束 ===");
-	}
-	catch (const std::exception &e)
-	{
-		CString errorMsg;
-		errorMsg.Format(_T("发送数据失败: %s"), CString(e.what()));
-		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		break;
+		
+	case TransmissionState::TRANSMITTING:
+		// 暂停传输
+		PauseTransmission();
+		break;
+		
+	case TransmissionState::PAUSED:
+		// 恢复传输
+		ResumeTransmission();
+		break;
+		
+	case TransmissionState::STOPPING:
+		// 正在停止中，忽略按钮点击
+		break;
 	}
 }
 
 void CPortMasterDlg::OnBnClickedButtonStop()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("停止功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 检查是否有传输在进行
+	if (!IsTransmissionActive())
+	{
+		MessageBox(_T("当前没有传输正在进行"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+
+	// 显示确认对话框
+	if (ConfirmStopTransmission())
+	{
+		// 用户确认停止传输
+		StopTransmission();
+	}
 }
 
 void CPortMasterDlg::OnBnClickedButtonFile()
@@ -2838,7 +2593,7 @@ void CPortMasterDlg::DestroyTransport()
 	}
 
 	m_isConnected = false;
-	m_isTransmitting = false;
+	UpdateTransmissionState(TransmissionState::IDLE);
 }
 
 void CPortMasterDlg::StartReceiveThread()
@@ -2982,7 +2737,7 @@ void CPortMasterDlg::OnReliableProgress(uint32_t progress)
 
 void CPortMasterDlg::OnReliableComplete(bool success)
 {
-	m_isTransmitting = false;
+	UpdateTransmissionState(TransmissionState::IDLE);
 
 	if (success)
 	{
@@ -3022,6 +2777,288 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 		CString statusText = _T("连接断开");
 		m_staticPortStatus.SetWindowText(statusText);
 		m_progress.SetPos(0);
+	}
+}
+
+// 传输控制方法实现
+
+void CPortMasterDlg::UpdateTransmissionState(TransmissionState newState)
+{
+	TransmissionState oldState = m_transmissionState.exchange(newState);
+	
+	if (oldState != newState)
+	{
+		// 状态发生变化，更新界面
+		UpdateSendButtonState();
+		UpdateStatusDisplay();
+		
+		// 记录状态变化
+		std::string stateNames[] = {"IDLE", "TRANSMITTING", "PAUSED", "STOPPING", "STOPPED"};
+		WriteLog("传输状态变化: " + stateNames[static_cast<int>(oldState)] + " -> " + stateNames[static_cast<int>(newState)]);
+	}
+}
+
+void CPortMasterDlg::UpdateSendButtonState()
+{
+	TransmissionState currentState = m_transmissionState.load();
+	
+	switch (currentState)
+	{
+	case TransmissionState::IDLE:
+	case TransmissionState::STOPPED:
+		m_btnSend.SetWindowText(_T("发送"));
+		m_btnSend.EnableWindow(m_isConnected && m_sendCacheValid && !m_sendDataCache.empty());
+		break;
+		
+	case TransmissionState::TRANSMITTING:
+		m_btnSend.SetWindowText(_T("中断"));
+		m_btnSend.EnableWindow(TRUE);
+		break;
+		
+	case TransmissionState::PAUSED:
+		m_btnSend.SetWindowText(_T("继续"));
+		m_btnSend.EnableWindow(TRUE);
+		break;
+		
+	case TransmissionState::STOPPING:
+		m_btnSend.SetWindowText(_T("停止中..."));
+		m_btnSend.EnableWindow(FALSE);
+		break;
+	}
+}
+
+void CPortMasterDlg::UpdateStatusDisplay()
+{
+	TransmissionState currentState = m_transmissionState.load();
+	CString statusText;
+	
+	switch (currentState)
+	{
+	case TransmissionState::IDLE:
+		statusText = _T("准备就绪");
+		break;
+		
+	case TransmissionState::TRANSMITTING:
+		statusText = _T("数据传输已开始");
+		break;
+		
+	case TransmissionState::PAUSED:
+		statusText = _T("传输已暂停");
+		break;
+		
+	case TransmissionState::STOPPING:
+		statusText = _T("正在停止传输...");
+		break;
+		
+	case TransmissionState::STOPPED:
+		statusText = _T("传输已终止");
+		break;
+	}
+	
+	m_staticPortStatus.SetWindowText(statusText);
+}
+
+bool CPortMasterDlg::ConfirmStopTransmission()
+{
+	TransmissionState currentState = m_transmissionState.load();
+	
+	if (currentState == TransmissionState::TRANSMITTING || currentState == TransmissionState::PAUSED)
+	{
+		int result = MessageBox(
+			_T("确认要终止当前传输吗？\n传输中断后无法恢复。"),
+			_T("确认终止传输"),
+			MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2
+		);
+		
+		return (result == IDYES);
+	}
+	
+	return true;
+}
+
+void CPortMasterDlg::PauseTransmission()
+{
+	m_pauseTransmission = true;
+	UpdateTransmissionState(TransmissionState::PAUSED);
+	WriteLog("传输已暂停");
+}
+
+void CPortMasterDlg::ResumeTransmission()
+{
+	m_pauseTransmission = false;
+	UpdateTransmissionState(TransmissionState::TRANSMITTING);
+	WriteLog("传输已恢复");
+}
+
+void CPortMasterDlg::StopTransmission()
+{
+	m_stopTransmission = true;
+	m_pauseTransmission = false;
+	UpdateTransmissionState(TransmissionState::STOPPING);
+	WriteLog("正在停止传输");
+	
+	// 等待传输线程响应停止信号
+	std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	
+	// 强制停止状态
+	UpdateTransmissionState(TransmissionState::STOPPED);
+	
+	// 重置进度条
+	m_progress.SetPos(0);
+}
+
+bool CPortMasterDlg::IsTransmissionActive() const
+{
+	TransmissionState currentState = m_transmissionState.load();
+	return (currentState == TransmissionState::TRANSMITTING || currentState == TransmissionState::PAUSED);
+}
+
+void CPortMasterDlg::PerformDataTransmission()
+{
+	try
+	{
+		// 直接使用缓存中的原始字节数据
+		const std::vector<uint8_t> &data = m_sendDataCache;
+
+		// 添加调试输出：记录发送数据的详细信息
+		this->WriteLog("=== 开始数据传输 ===");
+		this->WriteLog("传输数据大小: " + std::to_string(data.size()) + " 字节");
+
+		// 传输逻辑
+		TransportError error = TransportError::Success;
+		bool transmissionCompleted = false;
+
+		if (m_reliableChannel && m_reliableChannel->IsConnected())
+		{
+			this->WriteLog("使用可靠传输通道");
+
+			// 分块发送以支持暂停/恢复
+			const size_t chunkSize = 1024;
+			size_t totalSent = 0;
+
+			while (totalSent < data.size() && !m_stopTransmission && m_transmissionState.load() != TransmissionState::STOPPED)
+			{
+				// 检查暂停状态
+				while (m_pauseTransmission && !m_stopTransmission)
+				{
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				}
+
+				if (m_stopTransmission)
+					break;
+
+				size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
+				std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + currentChunkSize);
+
+				bool success = m_reliableChannel->Send(chunk);
+				if (!success)
+				{
+					this->WriteLog("传输失败于位置: " + std::to_string(totalSent));
+					error = TransportError::WriteFailed;
+					break;
+				}
+
+				totalSent += currentChunkSize;
+
+				// 更新进度条
+				int progress = (int)((totalSent * 100) / data.size());
+				m_progress.SetPos(progress);
+
+				// 更新统计
+				m_bytesSent += currentChunkSize;
+				CString sentText;
+				sentText.Format(_T("%u"), m_bytesSent);
+				SetDlgItemText(IDC_STATIC_SENT, sentText);
+			}
+
+			transmissionCompleted = (totalSent == data.size()) && (error == TransportError::Success);
+		}
+		else if (m_transport && m_transport->IsOpen())
+		{
+			this->WriteLog("使用原始传输");
+
+			// 原始传输也支持分块和暂停
+			const size_t chunkSize = 4096;
+			size_t totalSent = 0;
+
+			while (totalSent < data.size() && !m_stopTransmission && m_transmissionState.load() != TransmissionState::STOPPED)
+			{
+				// 检查暂停状态
+				while (m_pauseTransmission && !m_stopTransmission)
+				{
+					std::this_thread::sleep_for(std::chrono::milliseconds(100));
+				}
+
+				if (m_stopTransmission)
+					break;
+
+				size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
+				TransportError chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
+				
+				if (chunkError != TransportError::Success)
+				{
+					this->WriteLog("传输失败于位置: " + std::to_string(totalSent));
+					error = chunkError;
+					break;
+				}
+
+				totalSent += currentChunkSize;
+
+				// 更新进度条
+				int progress = (int)((totalSent * 100) / data.size());
+				m_progress.SetPos(progress);
+
+				// 更新统计
+				m_bytesSent += currentChunkSize;
+				CString sentText;
+				sentText.Format(_T("%u"), m_bytesSent);
+				SetDlgItemText(IDC_STATIC_SENT, sentText);
+
+				// 小延迟避免过快发送
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+			}
+
+			transmissionCompleted = (totalSent == data.size()) && (error == TransportError::Success);
+		}
+
+		// 根据传输结果更新状态
+		if (m_stopTransmission)
+		{
+			this->WriteLog("传输被用户终止");
+			UpdateTransmissionState(TransmissionState::STOPPED);
+			m_progress.SetPos(0);
+		}
+		else if (error != TransportError::Success)
+		{
+			this->WriteLog("传输发生错误: " + std::to_string(static_cast<int>(error)));
+			UpdateTransmissionState(TransmissionState::STOPPED);
+			
+			CString errorMsg;
+			errorMsg.Format(_T("传输失败: %d"), static_cast<int>(error));
+			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+			m_progress.SetPos(0);
+		}
+		else if (transmissionCompleted)
+		{
+			this->WriteLog("传输成功完成");
+			UpdateTransmissionState(TransmissionState::IDLE);
+			
+			// 显示完成进度
+			m_progress.SetPos(100);
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+			m_progress.SetPos(0);
+
+			WriteLog("数据传输成功, 大小: " + std::to_string(data.size()) + " 字节");
+		}
+
+		this->WriteLog("=== 传输结束 ===");
+	}
+	catch (const std::exception &e)
+	{
+		CString errorMsg;
+		errorMsg.Format(_T("传输过程发生异常: %s"), CString(e.what()));
+		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		UpdateTransmissionState(TransmissionState::STOPPED);
 	}
 }
 

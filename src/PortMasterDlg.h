@@ -11,6 +11,16 @@
 #include <deque>
 #include <string>
 
+// 传输状态枚举
+enum class TransmissionState
+{
+	IDLE = 0,        // 空闲状态（初始状态）
+	TRANSMITTING,    // 传输中
+	PAUSED,          // 已暂停
+	STOPPING,        // 正在停止
+	STOPPED          // 已停止
+};
+
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
 {
@@ -128,7 +138,12 @@ private:
 	std::shared_ptr<ITransport> m_transport;
 	std::unique_ptr<ReliableChannel> m_reliableChannel;
 	std::atomic<bool> m_isConnected;
-	std::atomic<bool> m_isTransmitting;
+	
+	// 传输状态管理（替换原有的m_isTransmitting）
+	std::atomic<TransmissionState> m_transmissionState;
+	std::atomic<bool> m_pauseTransmission;
+	std::atomic<bool> m_stopTransmission;
+	
 	std::thread m_receiveThread;
 
 	// 配置管理
@@ -175,6 +190,17 @@ private:
 	void OnReliableProgress(uint32_t progress);
 	void OnReliableComplete(bool success);
 	void OnReliableStateChanged(bool connected);
+
+	// 传输控制方法
+	void UpdateTransmissionState(TransmissionState newState);
+	void UpdateSendButtonState();
+	void UpdateStatusDisplay();
+	bool ConfirmStopTransmission();
+	void PauseTransmission();
+	void ResumeTransmission();
+	void StopTransmission();
+	bool IsTransmissionActive() const;
+	void PerformDataTransmission(); // 执行实际的数据传输逻辑
 
 	// 临时缓存文件管理方法
 	bool InitializeTempCacheFile();
