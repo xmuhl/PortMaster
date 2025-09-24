@@ -532,10 +532,15 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 
 void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 {
+	// 添加调试日志
+	WriteLog("LoadDataFromFile: 开始加载文件 - " + std::string(CT2A(filePath)));
+	
 	CFile file;
 	if (file.Open(filePath, CFile::modeRead))
 	{
 		ULONGLONG fileLength = file.GetLength();
+		WriteLog("LoadDataFromFile: 文件大小=" + std::to_string(fileLength));
+		
 		if (fileLength > 0)
 		{
 			BYTE *fileBuffer = new BYTE[(size_t)fileLength + 2];
@@ -623,11 +628,13 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 				m_editSendData.SetWindowText(hexContent);
 				
 				// 对于二进制文件，缓存完整文件数据用于传输，不管显示多少
+				WriteLog("LoadDataFromFile: 二进制文件，调用UpdateSendCacheFromBytes");
 				UpdateSendCacheFromBytes(fileBuffer, (size_t)fileLength);
 			}
 			else
 			{
 				// 文本文件：正常处理
+				WriteLog("LoadDataFromFile: 文本文件，调用UpdateSendCache");
 				UpdateSendCache(fileContent);
 
 				// 设置到发送数据编辑框
@@ -665,6 +672,9 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 		}
 
 		file.Close();
+		
+		// 更新发送按钮状态以反映文件导入后的缓存变化
+		UpdateSendButtonState();
 	}
 	else
 	{
@@ -959,17 +969,11 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 	// 根据缓存更新显示（这会基于原始数据进行正确的格式转换）
 	UpdateSendDisplayFromCache();
 
-	// 接收数据显示模式切换：重新构建显示缓冲区
+	// 接收数据显示模式切换：直接从缓存更新显示
 	if (m_receiveCacheValid && !m_receiveDataCache.empty())
 	{
-		// 清空当前显示缓冲区
-		m_receiveDisplayLines.clear();
-		
-		// 重新使用原始数据构建显示缓冲区
-		AddReceiveDataToDisplayBuffer(m_receiveDataCache);
-		
-		// 更新显示
-		UpdateReceiveDisplayFromBuffer();
+		// 直接使用UpdateReceiveDisplayFromCache来正确处理16进制格式化
+		UpdateReceiveDisplayFromCache();
 	}
 }
 
@@ -1513,6 +1517,9 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 
 void CPortMasterDlg::UpdateSendCache(const CString &data)
 {
+	// 添加调试日志
+	WriteLog("UpdateSendCache: 输入数据长度=" + std::to_string(data.GetLength()));
+	
 	// 将CString转换为字节序列并缓存
 	m_sendDataCache.clear();
 
@@ -1546,8 +1553,9 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 		}
 	}
 
-	this->WriteLog("=== UpdateSendCache 结束 ===");
+	WriteLog("UpdateSendCache: 转换后缓存大小=" + std::to_string(m_sendDataCache.size()));
 	m_sendCacheValid = true;
+	WriteLog("UpdateSendCache: 缓存状态设置为有效");
 }
 
 void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
@@ -1568,6 +1576,9 @@ void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
 
 void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
 {
+	// 添加调试日志
+	WriteLog("UpdateSendCacheFromHex: 输入数据长度=" + std::to_string(hexData.GetLength()));
+	
 	// 在十六进制模式下，将十六进制字符串解析为字节数据并缓存
 	m_sendDataCache.clear();
 
@@ -1591,6 +1602,7 @@ void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
 	// 检查是否有有效的十六进制数据
 	if (cleanHex.IsEmpty())
 	{
+		WriteLog("UpdateSendCacheFromHex: 无有效十六进制数据");
 		m_sendCacheValid = false;
 		return;
 	}
@@ -1610,7 +1622,9 @@ void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
 		m_sendDataCache.push_back(byteValue);
 	}
 
+	WriteLog("UpdateSendCacheFromHex: 解析后缓存大小=" + std::to_string(m_sendDataCache.size()));
 	m_sendCacheValid = true;
+	WriteLog("UpdateSendCacheFromHex: 缓存状态设置为有效");
 }
 
 void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
@@ -1896,26 +1910,35 @@ void CPortMasterDlg::OnEnChangeEditSendData()
 	CString currentData;
 	m_editSendData.GetWindowText(currentData);
 
+	// 添加调试日志
+	WriteLog("OnEnChangeEditSendData: dataLength=" + std::to_string(currentData.GetLength()));
+
 	if (!currentData.IsEmpty())
 	{
 		// 根据当前模式更新缓存
 		if (m_checkHex.GetCheck() == BST_CHECKED)
 		{
 			// 十六进制模式：解析十六进制字符串为字节数据
+			WriteLog("OnEnChangeEditSendData: 十六进制模式，更新缓存");
 			UpdateSendCacheFromHex(currentData);
 		}
 		else
 		{
 			// 文本模式：直接缓存文本数据
+			WriteLog("OnEnChangeEditSendData: 文本模式，更新缓存");
 			UpdateSendCache(currentData);
 		}
 	}
 	else
 	{
 		// 如果编辑框为空，清空缓存
+		WriteLog("OnEnChangeEditSendData: 编辑框为空，清空缓存");
 		m_sendDataCache.clear();
 		m_sendCacheValid = false;
 	}
+	
+	// 更新发送按钮状态以反映缓存变化
+	UpdateSendButtonState();
 }
 
 void CPortMasterDlg::OnBnClickedButtonClearAll()
@@ -2767,17 +2790,24 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 	// 连接状态变化回调 - 只处理连接状态，不显示传输完成消息
 	if (connected)
 	{
-		// 连接成功 - 更新状态显示
+		// 连接成功 - 更新状态显示和内部连接状态
 		CString statusText = _T("已连接");
 		m_staticPortStatus.SetWindowText(statusText);
+		m_isConnected = true;
+		WriteLog("OnReliableStateChanged: 可靠传输连接成功，m_isConnected设置为true");
 	}
 	else
 	{
-		// 连接断开 - 更新状态显示
+		// 连接断开 - 更新状态显示和内部连接状态
 		CString statusText = _T("连接断开");
 		m_staticPortStatus.SetWindowText(statusText);
 		m_progress.SetPos(0);
+		m_isConnected = false;
+		WriteLog("OnReliableStateChanged: 可靠传输连接断开，m_isConnected设置为false");
 	}
+	
+	// 更新发送按钮状态以反映连接状态变化
+	UpdateSendButtonState();
 }
 
 // 传输控制方法实现
@@ -2802,12 +2832,23 @@ void CPortMasterDlg::UpdateSendButtonState()
 {
 	TransmissionState currentState = m_transmissionState.load();
 	
+	// 添加调试日志
+	bool connected = m_isConnected;
+	bool cacheValid = m_sendCacheValid;
+	size_t cacheSize = m_sendDataCache.size();
+	
+	std::string debugMsg = "UpdateSendButtonState: state=" + std::to_string(static_cast<int>(currentState)) + 
+		", connected=" + std::to_string(connected) + 
+		", cacheValid=" + std::to_string(cacheValid) + 
+		", cacheSize=" + std::to_string(cacheSize);
+	WriteLog(debugMsg);
+	
 	switch (currentState)
 	{
 	case TransmissionState::IDLE:
 	case TransmissionState::STOPPED:
 		m_btnSend.SetWindowText(_T("发送"));
-		m_btnSend.EnableWindow(m_isConnected && m_sendCacheValid && !m_sendDataCache.empty());
+		m_btnSend.EnableWindow(connected && cacheValid && (cacheSize > 0));
 		break;
 		
 	case TransmissionState::TRANSMITTING:
