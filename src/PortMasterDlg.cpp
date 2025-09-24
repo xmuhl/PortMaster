@@ -338,6 +338,12 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 		// 重置进度条
 		m_progress.SetPos(0);
 	}
+	else if (nIDEvent == 2)
+	{
+		// 定时器2：延迟显示100%进度，改善进度条与数据显示的同步
+		KillTimer(2);
+		m_progress.SetPos(100);
+	}
 
 	CDialogEx::OnTimer(nIDEvent);
 }
@@ -1465,7 +1471,8 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 			CA2T utf8Text(safeData.data(), CP_UTF8);
 			CString testResult = CString(utf8Text);
 			
-			if (!testResult.IsEmpty() && testResult.GetLength() > 10)
+			// 修复：移除不合理的长度限制，只要解码结果非空即可接受
+			if (!testResult.IsEmpty())
 			{
 				displayText = testResult;
 				decoded = true;
@@ -1485,7 +1492,8 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				CA2T gbkText(safeData.data(), CP_ACP);
 				CString testResult = CString(gbkText);
 				
-				if (!testResult.IsEmpty() && testResult.GetLength() > 10)
+				// 修复：移除不合理的长度限制，只要解码结果非空即可接受
+				if (!testResult.IsEmpty())
 				{
 					displayText = testResult;
 					decoded = true;
@@ -1943,11 +1951,18 @@ void CPortMasterDlg::OnEnChangeEditSendData()
 
 void CPortMasterDlg::OnBnClickedButtonClearAll()
 {
-	// 只清空发送数据编辑框（重命名为"清空发送框"后的新功能）
+	// 清空发送数据编辑框
 	m_editSendData.SetWindowText(_T(""));
+
+	// 清空发送数据缓存（关键修复）
+	m_sendDataCache.clear();
+	m_sendCacheValid = false;
 
 	// 重置数据源显示
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("来源: 手动输入"));
+
+	// 更新发送按钮状态以反映缓存清空
+	UpdateSendButtonState();
 
 	// 更新日志
 	CTime time = CTime::GetCurrentTime();
@@ -2768,7 +2783,11 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		CString completeStatus;
 		completeStatus.Format(_T("传输完成"));
 		m_staticPortStatus.SetWindowText(completeStatus);
-		m_progress.SetPos(100);
+		
+		// 修复：延迟进度条完成显示，给接收数据显示一些时间
+		// 先设置95%，1秒后再设置100%，改善用户体验
+		m_progress.SetPos(95);
+		SetTimer(2, 1000, NULL); // 使用定时器ID=2 延迟1秒显示100%
 
 		// 2秒后恢复连接状态显示并重置进度条
 		SetTimer(1, 2000, NULL);
