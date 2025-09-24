@@ -1722,15 +1722,84 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 	}
 	else
 	{
-		// 文本模式：按字符处理
-		for (size_t i = 0; i < data.size(); i++)
+		// 文本模式：智能编码处理（修复中文字符显示问题）
+		std::vector<char> safeData(data.begin(), data.end());
+		safeData.push_back('\0');
+		
+		CString decodedText;
+		bool decoded = false;
+		
+		// 方案1：尝试UTF-8解码
+		try
 		{
-			char ch = static_cast<char>(data[i]);
+			CA2T utf8Text(safeData.data(), CP_UTF8);
+			CString testResult = CString(utf8Text);
 			
-			if (ch == '\n')
+			if (!testResult.IsEmpty())
+			{
+				decodedText = testResult;
+				decoded = true;
+			}
+		}
+		catch (...)
+		{
+			// UTF-8解码失败，继续尝试其他编码
+		}
+		
+		// 方案2：如果UTF-8失败，尝试GBK解码
+		if (!decoded)
+		{
+			try
+			{
+				CA2T gbkText(safeData.data(), CP_ACP);
+				CString testResult = CString(gbkText);
+				
+				if (!testResult.IsEmpty())
+				{
+					decodedText = testResult;
+					decoded = true;
+				}
+			}
+			catch (...)
+			{
+				// GBK解码也失败
+			}
+		}
+		
+		// 方案3：如果所有编码都失败，使用原始字节显示
+		if (!decoded)
+		{
+			for (size_t i = 0; i < data.size(); i++)
+			{
+				uint8_t byte = data[i];
+				if (byte >= 32 && byte <= 126)
+				{
+					decodedText += (TCHAR)byte;
+				}
+				else if (byte == '\n' || byte == '\r')
+				{
+					decodedText += (TCHAR)byte;
+				}
+				else
+				{
+					decodedText += _T(".");
+				}
+			}
+		}
+		
+		// 将解码后的文本按行分割添加到显示缓冲区
+		CString currentLine;
+		int textLen = decodedText.GetLength();
+		
+		for (int i = 0; i < textLen; i++)
+		{
+			TCHAR ch = decodedText[i];
+			
+			if (ch == _T('\n'))
 			{
 				// 遇到换行符，添加当前行到缓冲区
-				m_receiveDisplayLines.push_back(displayLine);
+				std::string line = CT2A(currentLine, CP_UTF8);
+				m_receiveDisplayLines.push_back(line);
 				
 				// 如果超过最大行数，删除最旧的行
 				if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
@@ -1738,44 +1807,39 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 					m_receiveDisplayLines.pop_front();
 				}
 				
-				displayLine.clear();
+				currentLine.Empty();
 			}
-			else if (ch == '\r')
+			else if (ch == _T('\r'))
 			{
 				// 忽略回车符
 				continue;
 			}
-			else if (ch >= 32 && ch <= 126)
-			{
-				// 可打印字符
-				displayLine += ch;
-			}
 			else
 			{
-				// 不可打印字符用点表示
-				displayLine += '.';
-			}
-			
-			// 如果行太长，强制换行（避免界面卡顿）
-			if (displayLine.length() >= 80)
-			{
-				m_receiveDisplayLines.push_back(displayLine);
-				if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+				currentLine += ch;
+				
+				// 如果行太长，强制换行（避免界面卡顿）
+				if (currentLine.GetLength() >= 80)
 				{
-					m_receiveDisplayLines.pop_front();
+					std::string line = CT2A(currentLine, CP_UTF8);
+					m_receiveDisplayLines.push_back(line);
+					if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+					{
+						m_receiveDisplayLines.pop_front();
+					}
+					currentLine.Empty();
 				}
-				displayLine.clear();
 			}
 		}
 		
-		// 如果还有剩余数据且不是以换行符结束
-		if (!displayLine.empty())
+		// 如果还有剩余数据，添加到缓冲区
+		if (!currentLine.IsEmpty())
 		{
-			// 暂存到最后一行（不换行）
+			std::string line = CT2A(currentLine, CP_UTF8);
 			if (!m_receiveDisplayLines.empty())
 			{
 				// 追加到最后一行
-				m_receiveDisplayLines.back() += displayLine;
+				m_receiveDisplayLines.back() += line;
 				
 				// 检查最后一行是否过长
 				if (m_receiveDisplayLines.back().length() >= 80)
@@ -1790,7 +1854,7 @@ void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &d
 			else
 			{
 				// 第一行
-				m_receiveDisplayLines.push_back(displayLine);
+				m_receiveDisplayLines.push_back(line);
 			}
 		}
 	}
