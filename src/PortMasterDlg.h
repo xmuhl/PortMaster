@@ -8,6 +8,8 @@
 #include <thread>
 #include <atomic>
 #include <fstream>
+#include <deque>
+#include <string>
 
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
@@ -53,6 +55,10 @@ protected:
 	void LoadDataFromFile(const CString &filePath);
 	void SaveDataToFile(const CString &filePath, const CString &data);
 	void SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data);
+	
+	// 文件类型检测函数
+	bool IsBinaryFileByMagic(const BYTE* data, size_t length);
+	bool IsBinaryFileByExtension(const CString &fileExt);
 
 	// 十六进制转换函数
 	CString StringToHex(const CString &str);
@@ -67,6 +73,11 @@ protected:
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
 	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
 	void UpdateReceiveCache(const std::vector<uint8_t> &data); // 更新接收缓存
+
+	// 接收显示优化函数
+	void AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &data); // 添加接收数据到显示缓冲区
+	void UpdateReceiveDisplayFromBuffer();					   // 从显示缓冲区更新显示
+	void ScrollToBottomReceiveEdit();						   // 滚动接收编辑框到底部
 
 	DECLARE_MESSAGE_MAP()
 
@@ -138,6 +149,11 @@ private:
 	std::vector<uint8_t> m_receiveDataCache; // 接收数据的原始字节缓存
 	bool m_sendCacheValid;					 // 发送缓存是否有效
 	bool m_receiveCacheValid;				 // 接收缓存是否有效
+
+	// 接收显示优化相关
+	std::deque<std::string> m_receiveDisplayLines;	// 接收数据的显示行缓存（循环缓冲）
+	static const size_t MAX_DISPLAY_LINES = 100;		// 最大显示行数
+	std::atomic<bool> m_needUpdateReceiveDisplay;		// 是否需要更新接收显示
 
 	// 临时缓存文件管理
 	CString m_tempCacheFilePath;			 // 临时缓存文件路径

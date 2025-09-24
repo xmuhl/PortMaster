@@ -265,6 +265,12 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 初始化临时缓存文件
 	InitializeTempCacheFile();
 
+	// 初始化显示相关的成员变量
+	m_sendCacheValid = false;
+	m_receiveCacheValid = false;
+	m_needUpdateReceiveDisplay = false;
+	m_receiveDisplayLines.clear();
+
 	return TRUE; // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -785,11 +791,29 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			// 获取文件扩展名检测二进制文件
 			CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
 			CString fileExt = fileName.Mid(fileName.ReverseFind('.') + 1);
-			fileExt.MakeLower();
 			
-			bool isBinaryFile = (fileExt == _T("prn") || fileExt == _T("bin") || 
-								fileExt == _T("dat") || fileExt == _T("exe") || 
-								fileExt == _T("dll") || fileExt == _T("img"));
+			// 使用扩展名和魔数双重检测文件类型
+			bool isBinaryFileByExt = IsBinaryFileByExtension(fileExt);
+			bool isBinaryFileByMagic = IsBinaryFileByMagic(fileBuffer, (size_t)fileLength);
+			bool isBinaryFile = isBinaryFileByExt || isBinaryFileByMagic;
+			
+			// 检查是否为大文件（超过1MB）
+			bool isLargeFile = fileLength > 1048576; // 1MB = 1024 * 1024
+			size_t displayLength = static_cast<size_t>(fileLength);
+			bool isPreviewMode = false;
+			
+			if (isLargeFile && isBinaryFile)
+			{
+				// 大二进制文件：仅显示前1KB内容
+				displayLength = static_cast<size_t>((std::min)(fileLength, static_cast<ULONGLONG>(1024)));
+				isPreviewMode = true;
+			}
+			else if (isLargeFile && !isBinaryFile)
+			{
+				// 大文本文件：仅显示前1KB内容
+				displayLength = static_cast<size_t>((std::min)(fileLength, static_cast<ULONGLONG>(1024)));
+				isPreviewMode = true;
+			}
 
 			CString fileContent;
 			
@@ -800,34 +824,50 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			}
 			else
 			{
-				// 文本文件：使用GBK编码转换
-				int wideLen = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)fileLength, NULL, 0);
+				// 文本文件：使用GBK编码转换（仅转换显示部分）
+				int wideLen = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)displayLength, NULL, 0);
 				if (wideLen > 0)
 				{
 					wchar_t *wideStr = new wchar_t[wideLen + 1];
-					MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)fileLength, wideStr, wideLen);
+					MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)displayLength, wideStr, wideLen);
 					wideStr[wideLen] = 0;
 					fileContent = wideStr;
 					delete[] wideStr;
 				}
 				else
 				{
-					// 编码失败，使用原始字节
-					for (size_t i = 0; i < fileLength; i++)
+					// 编码失败，使用原始字节（仅显示部分）
+					for (size_t i = 0; i < displayLength; i++)
 					{
 						fileContent += (TCHAR)fileBuffer[i];
 					}
+				}
+				
+				// 如果是预览模式，添加截断提示
+				if (isPreviewMode)
+				{
+					fileContent += _T("\r\n\r\n[文件过大，仅显示前1KB内容作为预览]");
 				}
 			}
 
 			// 根据文件类型处理显示
 			if (isBinaryFile)
 			{
-				// 二进制文件：直接使用BytesToHex处理原始字节
-				CString hexContent = BytesToHex(fileBuffer, (size_t)fileLength);
+				// 二进制文件：仅显示部分内容（用于预览），但传输时使用完整文件
+				CString hexContent = BytesToHex(fileBuffer, displayLength);
+				
+				// 如果是预览模式，添加提示信息
+				if (isPreviewMode)
+				{
+					CString sizeInfo;
+					sizeInfo.Format(_T("\r\n\r\n[大数据文件预览（部分内容） - 文件大小: %I64u 字节, 显示前 %zu 字节]"), 
+						fileLength, displayLength);
+					hexContent += sizeInfo;
+				}
+				
 				m_editSendData.SetWindowText(hexContent);
 				
-				// 对于二进制文件，直接从字节数据更新缓存，避免编码转换
+				// 对于二进制文件，缓存完整文件数据用于传输，不管显示多少
 				UpdateSendCacheFromBytes(fileBuffer, (size_t)fileLength);
 			}
 			else
@@ -849,7 +889,19 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 
 			delete[] fileBuffer;
 
-			m_staticSendSource.SetWindowText(_T("来源: 文件"));
+			// 更新来源显示，包含文件大小和预览状态信息
+			CString sourceInfo;
+			if (isPreviewMode)
+			{
+				sourceInfo.Format(_T("来源: 文件 (%s, %I64u字节, 预览模式)"), 
+					fileName, fileLength);
+			}
+			else
+			{
+				sourceInfo.Format(_T("来源: 文件 (%s, %I64u字节)"), 
+					fileName, fileLength);
+			}
+			m_staticSendSource.SetWindowText(sourceInfo);
 		}
 		else
 		{
@@ -863,6 +915,121 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 	{
 		MessageBox(_T("无法打开文件"), _T("错误"), MB_OK | MB_ICONERROR);
 	}
+}
+
+bool CPortMasterDlg::IsBinaryFileByMagic(const BYTE* data, size_t length)
+{
+	if (data == nullptr || length < 4)
+		return false;
+		
+	// 常见文件格式的魔数（文件头）检测
+	// ZIP文件: PK (0x50 0x4B)
+	if (length >= 2 && data[0] == 0x50 && data[1] == 0x4B)
+		return true;
+		
+	// RAR文件: Rar! (0x52 0x61 0x72 0x21)
+	if (length >= 4 && data[0] == 0x52 && data[1] == 0x61 && data[2] == 0x72 && data[3] == 0x21)
+		return true;
+		
+	// 7Z文件: 7z (0x37 0x7A 0xBC 0xAF 0x27 0x1C)
+	if (length >= 6 && data[0] == 0x37 && data[1] == 0x7A && data[2] == 0xBC && 
+		data[3] == 0xAF && data[4] == 0x27 && data[5] == 0x1C)
+		return true;
+		
+	// PDF文件: %PDF (0x25 0x50 0x44 0x46)
+	if (length >= 4 && data[0] == 0x25 && data[1] == 0x50 && data[2] == 0x44 && data[3] == 0x46)
+		return true;
+		
+	// PNG文件: \x89PNG\r\n\x1a\n
+	if (length >= 8 && data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 &&
+		data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A)
+		return true;
+		
+	// JPEG文件: \xFF\xD8\xFF
+	if (length >= 3 && data[0] == 0xFF && data[1] == 0xD8 && data[2] == 0xFF)
+		return true;
+		
+	// GIF文件: GIF87a 或 GIF89a
+	if (length >= 6 && data[0] == 0x47 && data[1] == 0x49 && data[2] == 0x46 &&
+		((data[3] == 0x38 && data[4] == 0x37 && data[5] == 0x61) ||
+		 (data[3] == 0x38 && data[4] == 0x39 && data[5] == 0x61)))
+		return true;
+		
+	// BMP文件: BM (0x42 0x4D)
+	if (length >= 2 && data[0] == 0x42 && data[1] == 0x4D)
+		return true;
+		
+	// ICO文件: \x00\x00\x01\x00
+	if (length >= 4 && data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01 && data[3] == 0x00)
+		return true;
+		
+	// EXE/DLL文件: MZ (0x4D 0x5A)
+	if (length >= 2 && data[0] == 0x4D && data[1] == 0x5A)
+		return true;
+		
+	// MP3文件: ID3 (0x49 0x44 0x33) 或 \xFF\xFB
+	if (length >= 3 && ((data[0] == 0x49 && data[1] == 0x44 && data[2] == 0x33) ||
+		(data[0] == 0xFF && (data[1] & 0xE0) == 0xE0)))
+		return true;
+		
+	// WAV文件: RIFF...WAVE
+	if (length >= 12 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x57 && data[9] == 0x41 && data[10] == 0x56 && data[11] == 0x45)
+		return true;
+		
+	// AVI文件: RIFF...AVI
+	if (length >= 11 && data[0] == 0x52 && data[1] == 0x49 && data[2] == 0x46 && data[3] == 0x46 &&
+		data[8] == 0x41 && data[9] == 0x56 && data[10] == 0x49)
+		return true;
+		
+	// 检测是否包含大量不可打印字符（通用二进制文件检测）
+	size_t nullCount = 0;
+	size_t controlCount = 0;
+	size_t checkLength = (std::min)(length, (size_t)512); // 检查前512字节
+	
+	for (size_t i = 0; i < checkLength; i++)
+	{
+		if (data[i] == 0x00)
+			nullCount++;
+		else if (data[i] < 0x20 && data[i] != 0x09 && data[i] != 0x0A && data[i] != 0x0D)
+			controlCount++;
+	}
+	
+	// 如果空字符或控制字符超过10%，认为是二进制文件
+	return (nullCount + controlCount) > (checkLength / 10);
+}
+
+bool CPortMasterDlg::IsBinaryFileByExtension(const CString &fileExt)
+{
+	CString ext = fileExt;
+	ext.MakeLower();
+	
+	return (ext == _T("prn") || ext == _T("bin") || 
+			ext == _T("dat") || ext == _T("exe") || 
+			ext == _T("dll") || ext == _T("img") ||
+			// 压缩文件格式
+			ext == _T("zip") || ext == _T("rar") || ext == _T("7z") ||
+			ext == _T("tar") || ext == _T("gz") || ext == _T("bz2") ||
+			// 图像文件格式
+			ext == _T("jpg") || ext == _T("jpeg") || ext == _T("png") ||
+			ext == _T("gif") || ext == _T("bmp") || ext == _T("tiff") ||
+			ext == _T("webp") || ext == _T("ico") ||
+			// 音频文件格式
+			ext == _T("mp3") || ext == _T("wav") || ext == _T("flac") ||
+			ext == _T("aac") || ext == _T("ogg") || ext == _T("wma") ||
+			// 视频文件格式
+			ext == _T("mp4") || ext == _T("avi") || ext == _T("mkv") ||
+			ext == _T("mov") || ext == _T("wmv") || ext == _T("flv") ||
+			// 文档文件格式
+			ext == _T("pdf") || ext == _T("doc") || ext == _T("docx") ||
+			ext == _T("xls") || ext == _T("xlsx") || ext == _T("ppt") ||
+			ext == _T("pptx") ||
+			// 其他常见二进制格式
+			ext == _T("iso") || ext == _T("dmg") || ext == _T("deb") ||
+			ext == _T("rpm") || ext == _T("msi") || ext == _T("app") ||
+			ext == _T("apk") || ext == _T("ipa") || ext == _T("cab") ||
+			ext == _T("sys") || ext == _T("drv") || ext == _T("com") ||
+			ext == _T("scr") || ext == _T("ocx") || ext == _T("cpl"));
 }
 
 void CPortMasterDlg::OnCbnSelchangeComboPortType()
@@ -1037,10 +1204,17 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 	// 根据缓存更新显示（这会基于原始数据进行正确的格式转换）
 	UpdateSendDisplayFromCache();
 
-	// 只有在接收缓存有效时才更新接收显示，避免模式切换时错误填充接收框
+	// 接收数据显示模式切换：重新构建显示缓冲区
 	if (m_receiveCacheValid && !m_receiveDataCache.empty())
 	{
-		UpdateReceiveDisplayFromCache();
+		// 清空当前显示缓冲区
+		m_receiveDisplayLines.clear();
+		
+		// 重新使用原始数据构建显示缓冲区
+		AddReceiveDataToDisplayBuffer(m_receiveDataCache);
+		
+		// 更新显示
+		UpdateReceiveDisplayFromBuffer();
 	}
 }
 
@@ -1726,6 +1900,169 @@ void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
 	this->WriteLog("=== UpdateReceiveCache 结束 ===");
 }
 
+void CPortMasterDlg::AddReceiveDataToDisplayBuffer(const std::vector<uint8_t> &data)
+{
+	if (data.empty())
+		return;
+		
+	// 将接收的数据按行分割并添加到显示缓冲区
+	std::string displayLine;
+	
+	if (m_checkHex.GetCheck() == BST_CHECKED)
+	{
+		// 十六进制模式：将字节转换为十六进制字符串
+		for (size_t i = 0; i < data.size(); i++)
+		{
+			char hexByte[4];
+			sprintf_s(hexByte, "%02X ", data[i]);
+			displayLine += hexByte;
+			
+			// 每16个字节换行
+			if ((i + 1) % 16 == 0)
+			{
+				// 添加到显示缓冲区
+				m_receiveDisplayLines.push_back(displayLine);
+				
+				// 如果超过最大行数，删除最旧的行
+				if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+				{
+					m_receiveDisplayLines.pop_front();
+				}
+				
+				displayLine.clear();
+			}
+		}
+		
+		// 如果还有剩余数据（不足16字节的行）
+		if (!displayLine.empty())
+		{
+			m_receiveDisplayLines.push_back(displayLine);
+			if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+			{
+				m_receiveDisplayLines.pop_front();
+			}
+		}
+	}
+	else
+	{
+		// 文本模式：按字符处理
+		for (size_t i = 0; i < data.size(); i++)
+		{
+			char ch = static_cast<char>(data[i]);
+			
+			if (ch == '\n')
+			{
+				// 遇到换行符，添加当前行到缓冲区
+				m_receiveDisplayLines.push_back(displayLine);
+				
+				// 如果超过最大行数，删除最旧的行
+				if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+				{
+					m_receiveDisplayLines.pop_front();
+				}
+				
+				displayLine.clear();
+			}
+			else if (ch == '\r')
+			{
+				// 忽略回车符
+				continue;
+			}
+			else if (ch >= 32 && ch <= 126)
+			{
+				// 可打印字符
+				displayLine += ch;
+			}
+			else
+			{
+				// 不可打印字符用点表示
+				displayLine += '.';
+			}
+			
+			// 如果行太长，强制换行（避免界面卡顿）
+			if (displayLine.length() >= 80)
+			{
+				m_receiveDisplayLines.push_back(displayLine);
+				if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+				{
+					m_receiveDisplayLines.pop_front();
+				}
+				displayLine.clear();
+			}
+		}
+		
+		// 如果还有剩余数据且不是以换行符结束
+		if (!displayLine.empty())
+		{
+			// 暂存到最后一行（不换行）
+			if (!m_receiveDisplayLines.empty())
+			{
+				// 追加到最后一行
+				m_receiveDisplayLines.back() += displayLine;
+				
+				// 检查最后一行是否过长
+				if (m_receiveDisplayLines.back().length() >= 80)
+				{
+					m_receiveDisplayLines.push_back("");
+					if (m_receiveDisplayLines.size() > MAX_DISPLAY_LINES)
+					{
+						m_receiveDisplayLines.pop_front();
+					}
+				}
+			}
+			else
+			{
+				// 第一行
+				m_receiveDisplayLines.push_back(displayLine);
+			}
+		}
+	}
+	
+	// 标记需要更新显示
+	m_needUpdateReceiveDisplay = true;
+}
+
+void CPortMasterDlg::UpdateReceiveDisplayFromBuffer()
+{
+	if (!m_needUpdateReceiveDisplay)
+		return;
+		
+	// 将显示缓冲区的内容合并为一个字符串
+	std::string displayText;
+	
+	for (const auto& line : m_receiveDisplayLines)
+	{
+		displayText += line;
+		displayText += "\r\n";
+	}
+	
+	// 转换为CString并设置到编辑框
+	CString displayContent(displayText.c_str());
+	m_editReceiveData.SetWindowText(displayContent);
+	
+	// 滚动到底部
+	ScrollToBottomReceiveEdit();
+	
+	// 清除更新标记
+	m_needUpdateReceiveDisplay = false;
+}
+
+void CPortMasterDlg::ScrollToBottomReceiveEdit()
+{
+	// 获取编辑框的行数
+	int lineCount = m_editReceiveData.GetLineCount();
+	
+	// 滚动到最后一行
+	if (lineCount > 0)
+	{
+		m_editReceiveData.LineScroll(lineCount);
+		
+		// 设置光标到最后
+		int textLength = m_editReceiveData.GetWindowTextLength();
+		m_editReceiveData.SetSel(textLength, textLength);
+	}
+}
+
 void CPortMasterDlg::LogMessage(const CString &message)
 {
 	// 实现日志消息显示，支持自动换行且仅显示最新一条
@@ -1848,6 +2185,10 @@ void CPortMasterDlg::OnBnClickedButtonClearReceive()
 	// 清空内存中的接收缓存（关键修复）
 	m_receiveDataCache.clear();
 	m_receiveCacheValid = false;
+	
+	// 清空显示缓冲区
+	m_receiveDisplayLines.clear();
+	m_needUpdateReceiveDisplay = false;
 
 	// 清空临时缓存文件
 	ClearTempCacheFile();
@@ -2741,8 +3082,11 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			// 更新接收缓存 - 保存原始字节数据
 			UpdateReceiveCache(*data);
 
-			// 基于缓存更新显示
-			UpdateReceiveDisplayFromCache();
+			// 使用新的显示缓冲机制，实现实时数据块显示
+			AddReceiveDataToDisplayBuffer(*data);
+			
+			// 更新显示（带行数限制和自动滚动）
+			UpdateReceiveDisplayFromBuffer();
 
 			this->WriteLog("=== 接收数据调试信息结束 ===");
 		}
