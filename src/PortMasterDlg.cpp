@@ -95,7 +95,7 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 // CPortMasterDlg 对话框
 
 CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
-	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance())
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -168,6 +168,11 @@ ON_EN_CHANGE(IDC_EDIT_SEND_DATA, &CPortMasterDlg::OnEnChangeEditSendData)
 ON_WM_TIMER()
 ON_MESSAGE(WM_USER + 1, &CPortMasterDlg::OnTransportDataReceivedMessage)
 ON_MESSAGE(WM_USER + 2, &CPortMasterDlg::OnTransportErrorMessage)
+ON_MESSAGE(WM_USER + 10, &CPortMasterDlg::OnTransmissionProgressRange)
+ON_MESSAGE(WM_USER + 11, &CPortMasterDlg::OnTransmissionProgressUpdate)
+ON_MESSAGE(WM_USER + 12, &CPortMasterDlg::OnTransmissionStatusUpdate)
+ON_MESSAGE(WM_USER + 13, &CPortMasterDlg::OnTransmissionComplete)
+ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -328,8 +333,8 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 		KillTimer(1);
 		UpdateConnectionStatus();
 
-		// 重置进度条
-		m_progress.SetPos(0);
+		// 不再自动重置进度条，保持传输完成后的100%状态
+		// 进度条只在开始新传输时重置为0
 	}
 
 	CDialogEx::OnTimer(nIDEvent);
@@ -337,6 +342,13 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 
 void CPortMasterDlg::PostNcDestroy()
 {
+	// 确保传输线程正确结束
+	if (m_transmissionThread.joinable())
+	{
+		m_transmissionCancelled = true;
+		m_transmissionThread.join();
+	}
+
 	// 清理临时缓存文件
 	CloseTempCacheFile();
 
@@ -445,6 +457,26 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		return;
 	}
 
+	// 根据当前传输状态决定按钮行为
+	if (!m_isTransmitting)
+	{
+		// 初始状态：开始发送
+		StartTransmission();
+	}
+	else if (m_transmissionPaused)
+	{
+		// 暂停状态：继续传输
+		ResumeTransmission();
+	}
+	else
+	{
+		// 传输中状态：暂停传输
+		PauseTransmission();
+	}
+}
+
+void CPortMasterDlg::StartTransmission()
+{
 	// 基于缓存的架构：检查缓存有效性
 	if (!m_sendCacheValid || m_sendDataCache.empty())
 	{
@@ -452,6 +484,53 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		return;
 	}
 
+	// 重置传输状态
+	m_isTransmitting = true;
+	m_transmissionPaused = false;
+	m_transmissionCancelled = false;
+
+	// 重置进度条（仅在开始新传输时重置）
+	m_progress.SetPos(0);
+
+	// 更新按钮文本和状态栏
+	m_btnSend.SetWindowText(_T("中断"));
+	m_staticPortStatus.SetWindowText(_T("数据传输已开始"));
+
+	// 启动异步传输线程，避免UI阻塞
+	if (m_transmissionThread.joinable())
+	{
+		m_transmissionThread.join();
+	}
+	
+	m_transmissionThread = std::thread([this]() {
+		PerformDataTransmission();
+	});
+}
+
+void CPortMasterDlg::PauseTransmission()
+{
+	// 直接暂停传输，不弹出提示对话框
+	m_transmissionPaused = true;
+	
+	// 更新按钮文本和状态栏
+	m_btnSend.SetWindowText(_T("继续"));
+	m_staticPortStatus.SetWindowText(_T("传输已暂停"));
+	
+	// 记录日志
+	this->WriteLog("传输已暂停");
+}
+
+void CPortMasterDlg::ResumeTransmission()
+{
+	m_transmissionPaused = false;
+	
+	// 更新按钮文本和状态栏
+	m_btnSend.SetWindowText(_T("中断"));
+	m_staticPortStatus.SetWindowText(_T("传输已恢复"));
+}
+
+void CPortMasterDlg::PerformDataTransmission()
+{
 	try
 	{
 		// 直接使用缓存中的原始字节数据，无需任何解析转换
@@ -463,14 +542,9 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 		// 发送数据
 		TransportError error = TransportError::Success;
 
-		// 更新状态栏显示传输状态
-		CString statusText;
-		statusText.Format(_T("正在传输 %u 字节..."), data.size());
-		m_staticPortStatus.SetWindowText(statusText);
-
-		// 初始化进度条
-		m_progress.SetRange(0, 100);
-		m_progress.SetPos(0);
+		// 初始化进度条（使用PostMessage确保线程安全）
+		PostMessage(WM_USER + 10, 0, 100); // 设置进度条范围
+		PostMessage(WM_USER + 11, 0, 0);   // 设置进度条位置
 
 		// 添加调试输出：检查传输通道状态
 		if (m_reliableChannel && m_reliableChannel->IsConnected())
@@ -483,111 +557,115 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 			// 对于较大的数据（>1KB），模拟进度更新
 			if (data.size() > 1024)
 			{
-				this->WriteLog("OnBnClickedButtonSend: Large data detected, size=" + std::to_string(data.size()) + ", using chunked send");
+				this->WriteLog("PerformDataTransmission: Large data detected, size=" + std::to_string(data.size()) + ", using chunked send");
 
 				// 分块发送以显示进度
 				const size_t chunkSize = 1024;
 				size_t totalSent = 0;
-				bool transmissionCancelled = false;
 
-				while (totalSent < data.size() && !transmissionCancelled)
+				while (totalSent < data.size() && !m_transmissionCancelled)
 				{
+					// 检查是否暂停
+					while (m_transmissionPaused && !m_transmissionCancelled)
+					{
+						std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					}
+
+					if (m_transmissionCancelled)
+						break;
+
 					size_t currentChunkSize = min(chunkSize, data.size() - totalSent);
 					std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + currentChunkSize);
 
-					this->WriteLog("OnBnClickedButtonSend: Sending chunk " + std::to_string(totalSent / chunkSize + 1) +
+					this->WriteLog("PerformDataTransmission: Sending chunk " + std::to_string(totalSent / chunkSize + 1) +
 								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
 								   ", size=" + std::to_string(currentChunkSize));
 
 					success = m_reliableChannel->Send(chunk);
 					if (!success)
 					{
-						this->WriteLog("OnBnClickedButtonSend: Chunk send failed at " + std::to_string(totalSent) +
+						this->WriteLog("PerformDataTransmission: Chunk send failed at " + std::to_string(totalSent) +
 									   "/" + std::to_string(data.size()));
 						break;
 					}
 
 					totalSent += currentChunkSize;
 
-					// 更新进度条
+					// 更新进度条（使用PostMessage确保线程安全）
 					int progress = (int)((totalSent * 100) / data.size());
-					m_progress.SetPos(progress);
+					PostMessage(WM_USER + 11, 0, progress);
 
-					// 更新状态
-					CString progressStatus;
-					progressStatus.Format(_T("正在传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
-					m_staticPortStatus.SetWindowText(progressStatus);
-
-					// 处理UI消息，保持界面响应
-					MSG msg;
-					while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+					// 更新状态（使用PostMessage确保线程安全）
+					if (!m_transmissionPaused)
 					{
-						if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
-						{
-							transmissionCancelled = true;
-							break;
-						}
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
+						CString* progressStatus = new CString();
+						progressStatus->Format(_T("正在传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
+						PostMessage(WM_USER + 12, 0, (LPARAM)progressStatus);
 					}
 
-					if (transmissionCancelled)
-					{
-						this->WriteLog("OnBnClickedButtonSend: Transmission cancelled by user");
-						break;
-					}
+					// 添加小延迟，避免过快发送
+					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
 
-				// 检查是否因为取消而退出
-				if (transmissionCancelled && totalSent < data.size())
+				// 检查传输结果
+				if (m_transmissionCancelled)
 				{
-					this->WriteLog("OnBnClickedButtonSend: Transmission cancelled, " + std::to_string(totalSent) +
+					this->WriteLog("PerformDataTransmission: Transmission cancelled, " + std::to_string(totalSent) +
 								   "/" + std::to_string(data.size()) + " bytes sent");
 					error = TransportError::WriteFailed;
-					MessageBox(_T("传输已取消"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+				}
+				else if (totalSent == data.size())
+				{
+					this->WriteLog("PerformDataTransmission: Chunked transmission completed successfully");
+					error = success ? TransportError::Success : TransportError::WriteFailed;
 				}
 				else
 				{
-					this->WriteLog("OnBnClickedButtonSend: Chunked transmission completed, success=" + std::to_string(success));
-					error = success ? TransportError::Success : TransportError::WriteFailed;
+					error = TransportError::WriteFailed;
 				}
 			}
 			else
 			{
-				this->WriteLog("OnBnClickedButtonSend: Small data, size=" + std::to_string(data.size()) + ", sending directly");
+				this->WriteLog("PerformDataTransmission: Small data, size=" + std::to_string(data.size()) + ", sending directly");
 				// 小数据直接发送
 				success = m_reliableChannel->Send(data);
-				this->WriteLog("OnBnClickedButtonSend: Direct send result: " + std::to_string(success));
+				this->WriteLog("PerformDataTransmission: Direct send result: " + std::to_string(success));
 				error = success ? TransportError::Success : TransportError::WriteFailed;
 			}
-
-			m_isTransmitting = true;
 		}
 		else if (m_transport && m_transport->IsOpen())
 		{
-			this->WriteLog("OnBnClickedButtonSend: Using raw transport");
+			this->WriteLog("PerformDataTransmission: Using raw transport");
 			
 			// 使用原始传输 - 添加分块发送支持以确保大数据完整传输
 			if (data.size() > 4096)  // 对于大于4KB的数据进行分块发送
 			{
-				this->WriteLog("OnBnClickedButtonSend: Large data for raw transport, size=" + std::to_string(data.size()) + ", using chunked send");
+				this->WriteLog("PerformDataTransmission: Large data for raw transport, size=" + std::to_string(data.size()) + ", using chunked send");
 				
 				const size_t chunkSize = 4096;  // 原始传输使用较大的块大小
 				size_t totalSent = 0;
-				bool transmissionCancelled = false;
 				
-				while (totalSent < data.size() && !transmissionCancelled)
+				while (totalSent < data.size() && !m_transmissionCancelled)
 				{
+					// 检查是否暂停
+					while (m_transmissionPaused && !m_transmissionCancelled)
+					{
+						std::this_thread::sleep_for(std::chrono::milliseconds(100));
+					}
+
+					if (m_transmissionCancelled)
+						break;
+
 					size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
 					
-					this->WriteLog("OnBnClickedButtonSend: Sending raw chunk " + std::to_string(totalSent / chunkSize + 1) +
+					this->WriteLog("PerformDataTransmission: Sending raw chunk " + std::to_string(totalSent / chunkSize + 1) +
 								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
 								   ", size=" + std::to_string(currentChunkSize));
 					
 					TransportError chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
 					if (chunkError != TransportError::Success)
 					{
-						this->WriteLog("OnBnClickedButtonSend: Raw chunk send failed at " + std::to_string(totalSent) +
+						this->WriteLog("PerformDataTransmission: Raw chunk send failed at " + std::to_string(totalSent) +
 									   "/" + std::to_string(data.size()) + ", error=" + std::to_string(static_cast<int>(chunkError)));
 						error = chunkError;
 						break;
@@ -595,103 +673,111 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 					
 					totalSent += currentChunkSize;
 					
-					// 更新进度条
+					// 更新进度条（使用PostMessage确保线程安全）
 					int progress = (int)((totalSent * 100) / data.size());
-					m_progress.SetPos(progress);
+					PostMessage(WM_USER + 11, 0, progress);
 					
-					// 更新状态
-					CString progressStatus;
-					progressStatus.Format(_T("原始传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
-					m_staticPortStatus.SetWindowText(progressStatus);
-					
-					// 处理UI消息，保持界面响应
-					MSG msg;
-					while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+					// 更新状态（使用PostMessage确保线程安全）
+					if (!m_transmissionPaused)
 					{
-						if (msg.message == WM_KEYDOWN && msg.wParam == VK_ESCAPE)
-						{
-							transmissionCancelled = true;
-							break;
-						}
-						TranslateMessage(&msg);
-						DispatchMessage(&msg);
-					}
-					
-					if (transmissionCancelled)
-					{
-						this->WriteLog("OnBnClickedButtonSend: Raw transmission cancelled by user");
-						error = TransportError::WriteFailed;
-						break;
+						CString* progressStatus = new CString();
+						progressStatus->Format(_T("原始传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
+						PostMessage(WM_USER + 12, 0, (LPARAM)progressStatus);
 					}
 					
 					// 添加小延迟，避免过快发送导致接收端处理不及时
 					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
 				
-				if (totalSent == data.size() && error == TransportError::Success)
+				if (totalSent == data.size() && error == TransportError::Success && !m_transmissionCancelled)
 				{
-					this->WriteLog("OnBnClickedButtonSend: Raw chunked transmission completed successfully");
+					this->WriteLog("PerformDataTransmission: Raw chunked transmission completed successfully");
 				}
 			}
 			else
 			{
-				this->WriteLog("OnBnClickedButtonSend: Small data for raw transport, size=" + std::to_string(data.size()) + ", sending directly");
+				this->WriteLog("PerformDataTransmission: Small data for raw transport, size=" + std::to_string(data.size()) + ", sending directly");
 				error = m_transport->Write(data.data(), data.size());
-				this->WriteLog("OnBnClickedButtonSend: Raw direct send result: " + std::to_string(static_cast<int>(error)));
+				this->WriteLog("PerformDataTransmission: Raw direct send result: " + std::to_string(static_cast<int>(error)));
 			}
 		}
 
-		if (error != TransportError::Success)
-		{
-			CString errorMsg;
-			errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
-			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
-
-			// 重置进度条
-			m_progress.SetPos(0);
-
-			// 恢复连接状态显示
-			UpdateConnectionStatus();
-		}
-		else
-		{
-			// 更新发送统计
-		m_bytesSent += data.size();
-		CString sentText;
-		sentText.Format(_T("%u"), m_bytesSent);
-		SetDlgItemText(IDC_STATIC_SENT, sentText);
-
-		// 显示传输完成状态并设置进度条为100%
-		CString completeStatus;
-		completeStatus.Format(_T("传输完成: %u 字节"), data.size());
-		m_staticPortStatus.SetWindowText(completeStatus);
-		m_progress.SetPos(100);
-
-		// 修复：发送成功后不再自动清空发送框，保留用户输入的内容
-		// 只清空内部缓存，确保下次发送是全新数据
-		m_sendDataCache.clear();
-		m_sendCacheValid = false;
-		
-		this->WriteLog("发送完成，已清空内部缓存");
-
-		// 2秒后恢复连接状态显示并重置进度条
-		SetTimer(1, 2000, NULL);
-		}
+		// 通过PostMessage通知UI线程处理传输结果
+		PostMessage(WM_USER + 13, (WPARAM)error, 0);
 
 		this->WriteLog("=== 发送数据调试信息结束 ===");
 	}
 	catch (const std::exception &e)
 	{
-		CString errorMsg;
-		errorMsg.Format(_T("发送数据失败: %s"), CString(e.what()));
-		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		this->WriteLog("PerformDataTransmission异常: " + std::string(e.what()));
+		PostMessage(WM_USER + 14, 0, 0); // 通知UI线程处理异常
+	}
+}
+
+// 新增：清除所有缓存数据函数
+void CPortMasterDlg::ClearAllCacheData()
+{
+	try
+	{
+		// 仅清除接收数据缓存，不影响发送窗口数据
+		m_receiveDataCache.clear();
+		m_receiveCacheValid = false;
+		
+		// 重置二进制数据检测状态，允许重新检测
+		m_binaryDataDetected = false;
+		m_binaryDataPreview.Empty();
+		
+		// 仅清空接收数据显示框，保持发送窗口数据不变
+		m_editReceiveData.SetWindowText(_T(""));
+		
+		// 清除临时缓存文件
+		ClearTempCacheFile();
+		
+		// 重置接收统计信息
+		m_bytesReceived = 0;
+		SetDlgItemText(IDC_STATIC_RECEIVED, _T("0"));
+		
+		// 注意：发送窗口数据和发送统计信息保持不变
+		// 发送窗口数据仅能通过用户主动点击"清空发送框"按钮进行清除
+		
+		this->WriteLog("已清除接收缓存数据，发送窗口数据保持不变");
+	}
+	catch (const std::exception &e)
+	{
+		this->WriteLog("清除缓存数据时发生异常: " + std::string(e.what()));
 	}
 }
 
 void CPortMasterDlg::OnBnClickedButtonStop()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("停止功能"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	if (m_isTransmitting)
+	{
+		// 如果正在传输，弹出确认对话框
+		int result = MessageBox(_T("确认终止传输？"), _T("确认终止传输"), MB_YESNO | MB_ICONQUESTION);
+		if (result == IDYES)
+		{
+			// 用户确认终止传输
+			m_transmissionCancelled = true;
+			m_isTransmitting = false;
+			m_transmissionPaused = false;
+			
+			// 立即终止传输进程并清除所有已接收的缓存数据
+			ClearAllCacheData();
+			
+			// 更新界面状态
+			m_btnSend.SetWindowText(_T("发送"));
+			m_staticPortStatus.SetWindowText(_T("传输已终止"));
+			m_progress.SetPos(0);
+			
+			// 记录日志
+			this->WriteLog("用户手动终止传输，已清除所有缓存数据");
+		}
+	}
+	else
+	{
+		// 如果没有传输，显示提示信息
+		MessageBox(_T("当前没有进行中的传输"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	}
 }
 
 void CPortMasterDlg::OnBnClickedButtonFile()
@@ -1310,28 +1396,43 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 	// 如果发送缓存有效且不为空，直接使用缓存显示
 	if (m_sendCacheValid && !m_sendDataCache.empty())
 	{
+		// 实现100行显示限制（与接收窗口保持一致）
+		const int MAX_DISPLAY_LINES = 100;
+		
 		// 根据当前显示模式从缓存更新显示
 		if (m_checkHex.GetCheck() == BST_CHECKED)
 		{
-			// 十六进制模式：将字节缓存转换为十六进制显示
-			// 直接将字节数据转换为十六进制显示，避免字符串转换问题
+			// 十六进制模式：每16字节一行
 			CString hexDisplay;
 			CString asciiStr;
+			int lineCount = 0;
+			
+			// 计算需要显示的数据范围（最后100行）
+			size_t totalLines = (m_sendDataCache.size() + 15) / 16; // 向上取整
+			size_t startLine = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
+			size_t startByte = startLine * 16;
+			
+			// 如果数据被截断，添加提示
+			if (startLine > 0)
+			{
+				hexDisplay += _T("... (显示最后100行数据) ...\r\n");
+			}
 
-			for (size_t i = 0; i < m_sendDataCache.size(); i++)
+			for (size_t i = startByte; i < m_sendDataCache.size(); i++)
 			{
 				uint8_t byte = m_sendDataCache[i];
 
 				// 添加偏移地址（每16字节一行）
 				if (i % 16 == 0)
 				{
-					if (i > 0)
+					if (i > startByte)
 					{
 						// 添加ASCII显示部分
 						hexDisplay += _T("  |");
 						hexDisplay += asciiStr;
 						hexDisplay += _T("|\r\n");
 						asciiStr.Empty();
+						lineCount++;
 					}
 
 					CString offset;
@@ -1375,7 +1476,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 		}
 		else
 		{
-			// 文本模式：智能编码检测和显示（同步接收窗口的处理机制）
+			// 文本模式：智能编码检测和显示（与接收窗口完全一致）
 			std::vector<char> safeData(m_sendDataCache.begin(), m_sendDataCache.end());
 			safeData.push_back('\0');
 			
@@ -1539,24 +1640,57 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					for (size_t i = 0; i < m_sendDataCache.size(); i++)
 					{
 						uint8_t byte = m_sendDataCache[i];
-						if (byte >= 32 && byte <= 126)
-						{
-							displayText += (TCHAR)byte;
-						}
-						else if (byte == 0)
-						{
-							displayText += _T("[NUL]");
-						}
-						else
-						{
-							displayText += _T(".");
-						}
+						displayText += (TCHAR)byte;
 					}
 				}
 			}
 			
-			m_editSendData.SetWindowText(displayText);
+			// 实现100行限制（与接收窗口保持一致）
+			CString lines[MAX_DISPLAY_LINES];
+			int totalLines = 0;
+			int currentPos = 0;
+			
+			// 分割文本为行
+			while (currentPos < displayText.GetLength() && totalLines < MAX_DISPLAY_LINES * 2) // 预留缓冲
+			{
+				int nextPos = displayText.Find(_T('\n'), currentPos);
+				if (nextPos == -1)
+				{
+					if (currentPos < displayText.GetLength())
+					{
+						lines[totalLines % MAX_DISPLAY_LINES] = displayText.Mid(currentPos);
+						totalLines++;
+					}
+					break;
+				}
+				else
+				{
+					lines[totalLines % MAX_DISPLAY_LINES] = displayText.Mid(currentPos, nextPos - currentPos + 1);
+					totalLines++;
+					currentPos = nextPos + 1;
+				}
+			}
+			
+			// 构建最终显示文本（最后100行）
+			CString finalText;
+			int startLineIndex = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
+			
+			if (startLineIndex > 0)
+			{
+				finalText += _T("... (显示最后100行数据) ...\r\n");
+			}
+			
+			for (int i = startLineIndex; i < totalLines; i++)
+			{
+				finalText += lines[i % MAX_DISPLAY_LINES];
+			}
+			
+			m_editSendData.SetWindowText(finalText);
 		}
+
+		// 自动滚动到最新数据（与接收窗口保持一致）
+		m_editSendData.SetSel(-1, -1); // 移动光标到末尾
+		m_editSendData.LineScroll(m_editSendData.GetLineCount()); // 滚动到底部
 	}
 	else
 	{
@@ -1737,84 +1871,76 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 		
 		if (isBinaryData)
 		{
-			displayText = _T("=== 检测到二进制数据 ===\r\n");
-			displayText += _T("建议切换到十六进制模式查看完整内容\r\n");
-			
-			CString sizeInfo;
-			sizeInfo.Format(_T("数据大小: %u 字节\r\n"), (unsigned int)m_receiveDataCache.size());
-			displayText += sizeInfo;
-			
-			CString charInfo;
-			charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"), 
-				(unsigned int)nonPrintableCount, 
-				sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
-			displayText += charInfo;
-			
-			if (nullByteCount > 0)
+			// 如果是首次检测到二进制数据，生成静态预览内容
+			if (!m_binaryDataDetected)
 			{
-				CString nullInfo;
-				nullInfo.Format(_T("空字节数量: %u\r\n"), (unsigned int)nullByteCount);
-				displayText += nullInfo;
-			}
-			displayText += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
-			
-			// 显示前512字节的可打印字符作为预览，按行格式化
-			size_t previewSize = min(m_receiveDataCache.size(), (size_t)512);
-			CString previewLine;
-			int lineLength = 0;
-			
-			for (size_t i = 0; i < previewSize; i++)
-			{
-				uint8_t byte = m_receiveDataCache[i];
-				if (byte >= 32 && byte <= 126)
+				m_binaryDataDetected = true;
+				
+				// 生成简化的静态提示内容
+				m_binaryDataPreview = _T("=== 检测到二进制数据 ===\r\n");
+				m_binaryDataPreview += _T("建议切换到十六进制模式查看完整内容\r\n");
+				m_binaryDataPreview += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
+				
+				// 显示前512字节的可打印字符作为预览，按行格式化
+				size_t previewSize = min(m_receiveDataCache.size(), (size_t)512);
+				CString previewLine;
+				int lineLength = 0;
+				
+				for (size_t i = 0; i < previewSize; i++)
 				{
-					previewLine += (TCHAR)byte;
-					lineLength++;
-				}
-				else if (byte == '\r')
-				{
-					previewLine += _T("\\r");
-					lineLength += 2;
-				}
-				else if (byte == '\n')
-				{
-					previewLine += _T("\\n\r\n");
-					displayText += previewLine;
-					previewLine.Empty();
-					lineLength = 0;
-				}
-				else if (byte == '\t')
-				{
-					previewLine += _T("\\t");
-					lineLength += 2;
-				}
-				else
-				{
-					previewLine += _T(".");
-					lineLength++;
+					uint8_t byte = m_receiveDataCache[i];
+					if (byte >= 32 && byte <= 126)
+					{
+						previewLine += (TCHAR)byte;
+						lineLength++;
+					}
+					else if (byte == '\r')
+					{
+						previewLine += _T("\\r");
+						lineLength += 2;
+					}
+					else if (byte == '\n')
+					{
+						previewLine += _T("\\n\r\n");
+						m_binaryDataPreview += previewLine;
+						previewLine.Empty();
+						lineLength = 0;
+					}
+					else if (byte == '\t')
+					{
+						previewLine += _T("\\t");
+						lineLength += 2;
+					}
+					else
+					{
+						previewLine += _T(".");
+						lineLength++;
+					}
+					
+					// 每80个字符换行
+					if (lineLength >= 80)
+					{
+						previewLine += _T("\r\n");
+						m_binaryDataPreview += previewLine;
+						previewLine.Empty();
+						lineLength = 0;
+					}
 				}
 				
-				// 每80个字符换行
-				if (lineLength >= 80)
+				// 添加剩余的预览内容
+				if (!previewLine.IsEmpty())
 				{
-					previewLine += _T("\r\n");
-					displayText += previewLine;
-					previewLine.Empty();
-					lineLength = 0;
+					m_binaryDataPreview += previewLine;
+				}
+				
+				if (m_receiveDataCache.size() > 512)
+				{
+					m_binaryDataPreview += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
 				}
 			}
 			
-			// 添加剩余的预览内容
-			if (!previewLine.IsEmpty())
-			{
-				displayText += previewLine;
-			}
-			
-			if (m_receiveDataCache.size() > 512)
-			{
-				displayText += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
-			}
-			
+			// 使用静态预览内容，避免重复刷新
+			displayText = m_binaryDataPreview;
 			decoded = true;
 		}
 		else
@@ -2181,6 +2307,10 @@ void CPortMasterDlg::OnBnClickedButtonClearReceive()
 	// 清空内存中的接收缓存（关键修复）
 	m_receiveDataCache.clear();
 	m_receiveCacheValid = false;
+
+	// 重置二进制数据检测状态，允许重新检测
+	m_binaryDataDetected = false;
+	m_binaryDataPreview.Empty();
 
 	// 清空临时缓存文件
 	ClearTempCacheFile();
@@ -2984,7 +3114,7 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		m_staticPortStatus.SetWindowText(completeStatus);
 		m_progress.SetPos(100);
 
-		// 2秒后恢复连接状态显示并重置进度条
+		// 2秒后恢复连接状态显示，但保持进度条100%状态
 		SetTimer(1, 2000, NULL);
 	}
 	else
@@ -3104,6 +3234,108 @@ LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+// 新增：传输进度条范围设置消息处理
+LRESULT CPortMasterDlg::OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam)
+{
+	m_progress.SetRange(0, (int)lParam);
+	return 0;
+}
+
+// 新增：传输进度条更新消息处理
+LRESULT CPortMasterDlg::OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lParam)
+{
+	m_progress.SetPos((int)lParam);
+	return 0;
+}
+
+// 新增：传输状态更新消息处理
+LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
+{
+	CString* statusText = reinterpret_cast<CString*>(lParam);
+	if (statusText)
+	{
+		m_staticPortStatus.SetWindowText(*statusText);
+		delete statusText;
+	}
+	return 0;
+}
+
+// 新增：传输完成消息处理
+LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
+{
+	TransportError error = static_cast<TransportError>(wParam);
+	
+	if (m_transmissionCancelled)
+	{
+		// 传输被取消
+		m_isTransmitting = false;
+		m_transmissionPaused = false;
+		m_btnSend.SetWindowText(_T("发送"));
+		m_staticPortStatus.SetWindowText(_T("传输已终止"));
+		m_progress.SetPos(0);
+	}
+	else if (error != TransportError::Success)
+	{
+		// 传输失败
+		m_isTransmitting = false;
+		m_transmissionPaused = false;
+		m_btnSend.SetWindowText(_T("发送"));
+		
+		CString errorMsg;
+		errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
+		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+
+		// 重置进度条
+		m_progress.SetPos(0);
+
+		// 恢复连接状态显示
+		UpdateConnectionStatus();
+	}
+	else
+	{
+		// 传输成功
+		m_isTransmitting = false;
+		m_transmissionPaused = false;
+		m_btnSend.SetWindowText(_T("发送"));
+
+		// 更新发送统计
+		const std::vector<uint8_t> &data = m_sendDataCache;
+		m_bytesSent += data.size();
+		CString sentText;
+		sentText.Format(_T("%u"), m_bytesSent);
+		SetDlgItemText(IDC_STATIC_SENT, sentText);
+
+		// 显示传输完成状态并设置进度条为100%
+		CString completeStatus;
+		completeStatus.Format(_T("传输完成: %u 字节"), data.size());
+		m_staticPortStatus.SetWindowText(completeStatus);
+		m_progress.SetPos(100);
+
+		// 修复：发送成功后不再自动清空发送框，保留用户输入的内容
+		// 只清空内部缓存，确保下次发送是全新数据
+		m_sendDataCache.clear();
+		m_sendCacheValid = false;
+		
+		this->WriteLog("发送完成，已清空内部缓存");
+
+		// 2秒后恢复连接状态显示并重置进度条
+		SetTimer(1, 2000, NULL);
+	}
+	
+	return 0;
+}
+
+// 新增：传输异常消息处理
+LRESULT CPortMasterDlg::OnTransmissionError(WPARAM wParam, LPARAM lParam)
+{
+	m_isTransmitting = false;
+	m_transmissionPaused = false;
+	m_btnSend.SetWindowText(_T("发送"));
+	
+	MessageBox(_T("传输过程中发生异常"), _T("错误"), MB_OK | MB_ICONERROR);
+	return 0;
+}
+
 // 配置管理方法实现
 void CPortMasterDlg::LoadConfigurationFromStore()
 {
@@ -3180,17 +3412,12 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		timeoutText.Format(_T("%d"), serialConfig.readTimeout);
 		SetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
 
-		// 设置可靠模式（串口配置不再支持，使用协议配置）
-		if (config.protocol.windowSize > 1)
-		{
-			m_radioReliable.SetCheck(BST_CHECKED);
-			m_radioDirect.SetCheck(BST_UNCHECKED);
-		}
-		else
-		{
-			m_radioReliable.SetCheck(BST_UNCHECKED);
-			m_radioDirect.SetCheck(BST_CHECKED);
-		}
+		// 设置传输模式 - 始终默认选择直通模式，不受配置文件影响
+		m_radioReliable.SetCheck(BST_UNCHECKED);
+		m_radioDirect.SetCheck(BST_CHECKED);
+		
+		// 更新状态栏显示为直通模式
+		SetDlgItemText(IDC_STATIC_MODE, _T("直通"));
 
 		// 加载UI配置
 		const UIConfig &uiConfig = config.ui;

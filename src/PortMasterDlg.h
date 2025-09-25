@@ -54,6 +54,13 @@ protected:
 	void SaveDataToFile(const CString &filePath, const CString &data);
 	void SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data);
 
+	// 传输控制函数
+	void StartTransmission();
+	void PauseTransmission();
+	void ResumeTransmission();
+	void PerformDataTransmission();
+	void ClearAllCacheData();  // 新增：清除所有缓存数据
+
 	// 十六进制转换函数
 	CString StringToHex(const CString &str);
 	CString BytesToHex(const BYTE* data, size_t length); // 新增：处理原始字节数据
@@ -67,6 +74,11 @@ protected:
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
 	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
 	void UpdateReceiveCache(const std::vector<uint8_t> &data); // 更新接收缓存
+
+private:
+	// 二进制数据显示状态管理
+	bool m_binaryDataDetected;  // 是否检测到二进制数据
+	CString m_binaryDataPreview;  // 二进制数据预览内容（静态）
 
 	DECLARE_MESSAGE_MAP()
 
@@ -118,7 +130,10 @@ private:
 	std::unique_ptr<ReliableChannel> m_reliableChannel;
 	std::atomic<bool> m_isConnected;
 	std::atomic<bool> m_isTransmitting;
+	std::atomic<bool> m_transmissionPaused;  // 新增：传输暂停状态
+	std::atomic<bool> m_transmissionCancelled;  // 新增：传输取消状态
 	std::thread m_receiveThread;
+	std::thread m_transmissionThread;  // 新增：传输线程
 
 	// 配置管理
 	ConfigStore &m_configStore;
@@ -194,7 +209,12 @@ private:
 	// 文件拖拽处理
 	afx_msg void OnDropFiles(HDROP hDropInfo);
 
-	// 自定义消息处理
+	// 消息处理函数
 	afx_msg LRESULT OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransportErrorMessage(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnTransmissionComplete(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnTransmissionError(WPARAM wParam, LPARAM lParam);
 };

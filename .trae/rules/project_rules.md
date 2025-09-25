@@ -1,3 +1,4 @@
+
 # user_rules.md
 
 > 通用型个人工作规范，适用于新建项目的初始化配置与日常协作流程，可在此基础上添加项目专属细节。
@@ -140,13 +141,16 @@ fi
 git add -A
 git commit -m "fix: 精简构建脚本输出"
 if [[ "$CURRENT_ENV" == "WSL" ]]; then
+    # 推送到PortMaster远程（通过localbackup映射自动适配路径）
     git push PortMaster HEAD
-    git remote | grep -q origin && git push origin HEAD
+    # 推送到backup远程（工具脚本配置的备份仓库）
+    git remote | grep -q backup && git push backup HEAD
 else
     $remotes = git remote
     if ($remotes -contains "PortMaster") { git push PortMaster HEAD }
-    if ($remotes -contains "origin") { git push origin HEAD }
+    if ($remotes -contains "backup") { git push backup HEAD }
 fi
+# 注：如已安装GitBackup工具的post-commit钩子，上述推送可能自动执行
 ```
 
 ## 6. 目录与工具路径（示例，可按需修改）
