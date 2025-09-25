@@ -238,9 +238,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 初始化超时编辑框
 	SetDlgItemText(IDC_EDIT_TIMEOUT, _T("1000"));
 
-	// 初始化单选按钮
-	m_radioReliable.SetCheck(BST_CHECKED);
-	m_radioDirect.SetCheck(BST_UNCHECKED);
+	// 初始化单选按钮 - 默认选择直通模式
+	m_radioReliable.SetCheck(BST_UNCHECKED);
+	m_radioDirect.SetCheck(BST_CHECKED);
 
 	// 初始化进度条
 	m_progress.SetRange(0, 100);
@@ -249,7 +249,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 显示初始状态
 	LogMessage(_T("程序启动成功"));
 	SetDlgItemText(IDC_STATIC_PORT_STATUS, _T("未连接"));
-	SetDlgItemText(IDC_STATIC_MODE, _T("可靠"));
+	SetDlgItemText(IDC_STATIC_MODE, _T("直通")); // 与默认选择的直通模式保持一致
 	SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("手动输入"));
 
@@ -1555,45 +1555,112 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 		
 		// 检测是否为二进制数据（包含大量不可打印字符）
 		size_t nonPrintableCount = 0;
+		size_t nullByteCount = 0;
 		size_t sampleSize = min(m_receiveDataCache.size(), (size_t)1024); // 检查前1KB
+		
 		for (size_t i = 0; i < sampleSize; i++)
 		{
 			uint8_t byte = m_receiveDataCache[i];
-			if (byte < 32 && byte != '\r' && byte != '\n' && byte != '\t')
+			if (byte == 0)
+			{
+				nullByteCount++;
+			}
+			else if (byte < 32 && byte != '\r' && byte != '\n' && byte != '\t')
 			{
 				nonPrintableCount++;
 			}
 		}
 		
-		// 如果不可打印字符超过30%，认为是二进制数据，提示用户切换到十六进制模式
-		if (sampleSize > 0 && (nonPrintableCount * 100 / sampleSize) > 30)
+		// 改进的二进制检测逻辑：
+		// 1. 如果包含空字节，很可能是二进制文件
+		// 2. 如果不可打印字符超过20%，认为是二进制数据
+		bool isBinaryData = false;
+		if (sampleSize > 0)
 		{
-			displayText = _T("检测到二进制数据，建议切换到十六进制模式查看完整内容。\r\n");
-			displayText += _T("当前显示可能不完整或出现乱码。\r\n\r\n");
-			displayText += _T("数据预览（前256字节的可打印字符）：\r\n");
+			if (nullByteCount > 0 || (nonPrintableCount * 100 / sampleSize) > 20)
+			{
+				isBinaryData = true;
+			}
+		}
+		
+		if (isBinaryData)
+		{
+			displayText = _T("=== 检测到二进制数据 ===\r\n");
+			displayText += _T("建议切换到十六进制模式查看完整内容\r\n");
 			
-			// 显示前256字节的可打印字符作为预览
-			size_t previewSize = min(m_receiveDataCache.size(), (size_t)256);
+			CString sizeInfo;
+			sizeInfo.Format(_T("数据大小: %u 字节\r\n"), (unsigned int)m_receiveDataCache.size());
+			displayText += sizeInfo;
+			
+			CString charInfo;
+			charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"), 
+				(unsigned int)nonPrintableCount, 
+				sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
+			displayText += charInfo;
+			
+			if (nullByteCount > 0)
+			{
+				CString nullInfo;
+				nullInfo.Format(_T("空字节数量: %u\r\n"), (unsigned int)nullByteCount);
+				displayText += nullInfo;
+			}
+			displayText += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
+			
+			// 显示前512字节的可打印字符作为预览，按行格式化
+			size_t previewSize = min(m_receiveDataCache.size(), (size_t)512);
+			CString previewLine;
+			int lineLength = 0;
+			
 			for (size_t i = 0; i < previewSize; i++)
 			{
 				uint8_t byte = m_receiveDataCache[i];
 				if (byte >= 32 && byte <= 126)
 				{
-					displayText += (TCHAR)byte;
+					previewLine += (TCHAR)byte;
+					lineLength++;
 				}
-				else if (byte == '\r' || byte == '\n')
+				else if (byte == '\r')
 				{
-					displayText += (TCHAR)byte;
+					previewLine += _T("\\r");
+					lineLength += 2;
+				}
+				else if (byte == '\n')
+				{
+					previewLine += _T("\\n\r\n");
+					displayText += previewLine;
+					previewLine.Empty();
+					lineLength = 0;
+				}
+				else if (byte == '\t')
+				{
+					previewLine += _T("\\t");
+					lineLength += 2;
 				}
 				else
 				{
-					displayText += _T(".");
+					previewLine += _T(".");
+					lineLength++;
+				}
+				
+				// 每80个字符换行
+				if (lineLength >= 80)
+				{
+					previewLine += _T("\r\n");
+					displayText += previewLine;
+					previewLine.Empty();
+					lineLength = 0;
 				}
 			}
 			
-			if (m_receiveDataCache.size() > 256)
+			// 添加剩余的预览内容
+			if (!previewLine.IsEmpty())
 			{
-				displayText += _T("\r\n... (更多内容请切换到十六进制模式查看)");
+				displayText += previewLine;
+			}
+			
+			if (m_receiveDataCache.size() > 512)
+			{
+				displayText += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
 			}
 			
 			decoded = true;
