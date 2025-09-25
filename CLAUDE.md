@@ -268,7 +268,7 @@ fi
 - **编码验证**：使用 `#pragma execution_character_set("utf-8")` 确保编译时正确处理中文字符
 - **文件创建**：所有新创建的 .cpp、.h、.rc 文件都必须采用 UTF-8 with BOM 格式
 
-#### 5. 智能编译验证流程（跨环境自适应）
+#### 5. 智能编译验证流程（跨环境自适应 + 自动进程关闭）
 
 **编译检查前置步骤（重要）：**
 
@@ -288,53 +288,84 @@ echo "变更文件: $CHANGED_FILES"
 
 **编译执行规则：**
 
-- ✅ **源码文件变更时** - 执行编译验证
+- ✅ **源码文件变更时** - 执行智能编译验证
 - 🚫 **仅文档文件变更时** - 跳过编译验证
+- 🤖 **自动化处理** - 检测并自动关闭占用进程
 - ⚡ **效率优化** - 避免不必要的编译操作
 
-**编译命令（仅源码变更时执行，跨环境自适应）：**
+**智能编译命令（跨环境自适应 + 自动进程处理）：**
 
 ```bash
-# 跨环境编译命令选择
+# 跨环境智能编译系统
 if [[ "$CURRENT_ENV" == "WSL" ]]; then
-    # WSL环境：通过cmd.exe调用Windows编译脚本
-    echo "WSL环境：使用cmd.exe调用编译脚本"
-    cd "$WORK_DIR" && cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
-  
-    # 备用编译命令
-    if [[ $? -ne 0 ]]; then
-        echo "首选编译失败，尝试备用编译命令"
-        cd "$WORK_DIR" && cmd.exe /c "autobuild.bat" 2>&1 | tail -20
+    # WSL环境：使用智能编译脚本
+    echo "WSL环境：使用智能编译脚本（自动处理进程占用）"
+    cd "$WORK_DIR"
+    
+    # 优先使用智能编译脚本
+    if [[ -f "smart_build_wsl.sh" ]]; then
+        ./smart_build_wsl.sh
+        BUILD_RESULT=$?
+    else
+        # 备用：使用传统编译方式
+        echo "智能编译脚本不存在，使用传统编译方式"
+        cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
+        BUILD_RESULT=$?
+        
+        # 如果失败且可能是进程占用，手动处理
+        if [[ $BUILD_RESULT -ne 0 ]]; then
+            echo "编译失败，尝试关闭可能的进程占用..."
+            cmd.exe /c "taskkill /F /IM PortMaster.exe" 2>/dev/null
+            sleep 2
+            echo "重新编译..."
+            cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
+            BUILD_RESULT=$?
+        fi
     fi
 else
-    # PowerShell环境：直接调用编译脚本或使用Visual Studio工具
-    echo "PowerShell环境：直接调用编译脚本"
+    # PowerShell环境：使用Windows智能编译脚本
+    echo "PowerShell环境：使用智能编译脚本"
     cd "$WORK_DIR"
-  
-    # 首选：使用autobuild脚本
-    if (Test-Path "autobuild_x86_debug.bat") {
+    
+    if (Test-Path "smart_build.bat") {
+        .\smart_build.bat
+        $BUILD_RESULT = $LASTEXITCODE
+    } elseif (Test-Path "autobuild_x86_debug.bat") {
+        # 备用：使用传统编译方式
         .\autobuild_x86_debug.bat
-    } elseif (Test-Path "autobuild.bat") {
-        .\autobuild.bat
-    } else {
-        # 备用：直接使用Visual Studio devenv
-        $vsPath = "${env:ProgramFiles}\Microsoft Visual Studio\2022\Community\Common7\IDE\devenv.exe"
-        if (Test-Path $vsPath) {
-            & "$vsPath" PortMaster.sln /build Debug
-        } else {
-            Write-Error "未找到编译工具，请检查Visual Studio安装"
-            exit 1
+        $BUILD_RESULT = $LASTEXITCODE
+        
+        # 如果失败，尝试关闭进程并重编译
+        if ($BUILD_RESULT -ne 0) {
+            Write-Host "编译失败，尝试关闭可能的进程占用..."
+            taskkill /F /IM PortMaster.exe 2>$null
+            Start-Sleep -Seconds 2
+            Write-Host "重新编译..."
+            .\autobuild_x86_debug.bat
+            $BUILD_RESULT = $LASTEXITCODE
         }
+    } else {
+        Write-Error "未找到编译脚本"
+        $BUILD_RESULT = 1
     }
 fi
 ```
 
+**智能编译系统特性：**
+
+- 🎯 **自动检测进程占用**：识别LNK1104错误并自动关闭PortMaster.exe进程
+- 🔄 **自动重试机制**：进程关闭后自动重新编译
+- 📊 **详细状态报告**：显示编译过程和错误处理步骤
+- 🛡️ **故障保护**：如果自动处理失败，显示完整错误信息
+- 📝 **日志记录**：保存编译日志用于问题诊断
+
 **编译质量要求：**
 
 - 必须达到 **0 error 0 warning** 标准
-- 如出现任何 error 或 warning，必须逐一修复后重新编译
+- 智能编译脚本自动验证编译质量
+- 自动处理常见的编译阻塞问题（进程占用、文件锁定等）
 - 需在聊天中展示关键编译日志片段（包含 "0 error、0 warning" 确认信息）
-- 编译成功后立即更新进度文档中的编译验证历史表格
+- 编译成功后立即更新进度文档
 
 #### 6. 版本控制与推送（跨环境自适应，优化流程）
 
