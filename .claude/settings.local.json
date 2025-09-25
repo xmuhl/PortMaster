@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell:*)",
+      "Bash(cmd.exe /c \"GitBackup-Menu.cmd\")"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
