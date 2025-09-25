@@ -241,6 +241,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 初始化单选按钮 - 默认选择直通模式
 	m_radioReliable.SetCheck(BST_UNCHECKED);
 	m_radioDirect.SetCheck(BST_CHECKED);
+	
+	// 初始化占用检测复选框 - 默认勾选直通模式
+	m_checkOccupy.SetCheck(BST_CHECKED);
 
 	// 初始化进度条
 	m_progress.SetRange(0, 100);
@@ -1372,38 +1375,187 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 		}
 		else
 		{
-			// 文本模式：将字节缓存转换为文本显示
-			// 创建包含null终止符的副本，确保字符串安全
+			// 文本模式：智能编码检测和显示（同步接收窗口的处理机制）
 			std::vector<char> safeData(m_sendDataCache.begin(), m_sendDataCache.end());
 			safeData.push_back('\0');
-
-			// 尝试将数据作为UTF-8字符串解码
-			try
+			
+			CString displayText;
+			bool decoded = false;
+			
+			// 检测是否为二进制数据（包含大量不可打印字符）
+			size_t nonPrintableCount = 0;
+			size_t nullByteCount = 0;
+			size_t sampleSize = min(m_sendDataCache.size(), (size_t)1024); // 检查前1KB
+			
+			for (size_t i = 0; i < sampleSize; i++)
 			{
-				CA2T utf8Text(safeData.data(), CP_UTF8);
-				m_editSendData.SetWindowText(CString(utf8Text));
-			}
-			catch (...)
-			{
-				// 如果UTF-8解码失败，显示可打印字符
-				CString textDisplay;
-				for (uint8_t byte : m_sendDataCache)
+				uint8_t byte = m_sendDataCache[i];
+				if (byte == 0)
 				{
+					nullByteCount++;
+				}
+				else if (byte < 32 && byte != '\r' && byte != '\n' && byte != '\t')
+				{
+					nonPrintableCount++;
+				}
+			}
+			
+			// 改进的二进制检测逻辑：
+			// 1. 如果包含空字节，很可能是二进制文件
+			// 2. 如果不可打印字符超过20%，认为是二进制数据
+			bool isBinaryData = false;
+			if (sampleSize > 0)
+			{
+				if (nullByteCount > 0 || (nonPrintableCount * 100 / sampleSize) > 20)
+				{
+					isBinaryData = true;
+				}
+			}
+			
+			if (isBinaryData)
+			{
+				displayText = _T("=== 检测到二进制数据 ===\r\n");
+				displayText += _T("建议切换到十六进制模式查看完整内容\r\n");
+				
+				CString sizeInfo;
+				sizeInfo.Format(_T("数据大小: %u 字节\r\n"), (unsigned int)m_sendDataCache.size());
+				displayText += sizeInfo;
+				
+				CString charInfo;
+				charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"), 
+					(unsigned int)nonPrintableCount, 
+					sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
+				displayText += charInfo;
+				
+				if (nullByteCount > 0)
+				{
+					CString nullInfo;
+					nullInfo.Format(_T("空字节数量: %u\r\n"), (unsigned int)nullByteCount);
+					displayText += nullInfo;
+				}
+				displayText += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
+				
+				// 显示前512字节的可打印字符作为预览，按行格式化
+				size_t previewSize = min(m_sendDataCache.size(), (size_t)512);
+				CString previewLine;
+				int lineLength = 0;
+				
+				for (size_t i = 0; i < previewSize; i++)
+				{
+					uint8_t byte = m_sendDataCache[i];
 					if (byte >= 32 && byte <= 126)
 					{
-						textDisplay += (TCHAR)byte;
+						previewLine += (TCHAR)byte;
+						lineLength++;
 					}
-					else if (byte == 0)
+					else if (byte == '\r')
 					{
-						textDisplay += _T("[NUL]");
+						previewLine += _T("\\r");
+						lineLength += 2;
+					}
+					else if (byte == '\n')
+					{
+						previewLine += _T("\\n\r\n");
+						displayText += previewLine;
+						previewLine.Empty();
+						lineLength = 0;
+					}
+					else if (byte == '\t')
+					{
+						previewLine += _T("\\t");
+						lineLength += 2;
 					}
 					else
 					{
-						textDisplay += _T(".");
+						previewLine += _T(".");
+						lineLength++;
+					}
+					
+					// 每80个字符换行
+					if (lineLength >= 80)
+					{
+						previewLine += _T("\r\n");
+						displayText += previewLine;
+						previewLine.Empty();
+						lineLength = 0;
 					}
 				}
-				m_editSendData.SetWindowText(textDisplay);
+				
+				// 添加剩余的预览内容
+				if (!previewLine.IsEmpty())
+				{
+					displayText += previewLine;
+				}
+				
+				if (m_sendDataCache.size() > 512)
+				{
+					displayText += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
+				}
+				
+				decoded = true;
 			}
+			else
+			{
+				// 尝试UTF-8解码
+				try
+				{
+					CA2T utf8Text(safeData.data(), CP_UTF8);
+					CString testResult = CString(utf8Text);
+					
+					if (!testResult.IsEmpty())
+					{
+						displayText = testResult;
+						decoded = true;
+					}
+				}
+				catch (...)
+				{
+					// UTF-8解码失败，继续尝试其他编码
+				}
+				
+				// 如果UTF-8失败，尝试GBK解码
+				if (!decoded)
+				{
+					try
+					{
+						CA2T gbkText(safeData.data(), CP_ACP);
+						CString testResult = CString(gbkText);
+						
+						if (!testResult.IsEmpty())
+						{
+							displayText = testResult;
+							decoded = true;
+						}
+					}
+					catch (...)
+					{
+						// GBK解码失败
+					}
+				}
+				
+				// 如果所有编码都失败，显示原始字节
+				if (!decoded)
+				{
+					for (size_t i = 0; i < m_sendDataCache.size(); i++)
+					{
+						uint8_t byte = m_sendDataCache[i];
+						if (byte >= 32 && byte <= 126)
+						{
+							displayText += (TCHAR)byte;
+						}
+						else if (byte == 0)
+						{
+							displayText += _T("[NUL]");
+						}
+						else
+						{
+							displayText += _T(".");
+						}
+					}
+				}
+			}
+			
+			m_editSendData.SetWindowText(displayText);
 		}
 	}
 	else
