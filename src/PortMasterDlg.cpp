@@ -3681,15 +3681,20 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 	try
 	{
-		// 确保写入文件被刷新，以便读取到最新数据
+		// 关键修复：临时关闭写入流以确保数据完整性和避免文件句柄冲突
+		bool needReopenWrite = false;
 		if (m_tempCacheFile.is_open())
 		{
-			m_tempCacheFile.flush();
+			m_tempCacheFile.flush();  // 确保所有数据写入磁盘
+			m_tempCacheFile.close(); // 关闭写入流避免冲突
+			needReopenWrite = true;
+			WriteLog("ReadDataFromTempCache: 临时关闭写入流以确保数据完整性");
 		}
 
 		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
 		if (!file.is_open())
 		{
+			WriteLog("ReadDataFromTempCache: 无法打开临时缓存文件进行读取");
 			return result;
 		}
 
@@ -3697,16 +3702,25 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 		file.seekg(0, std::ios::end);
 		std::streamsize fileSize = file.tellg();
 		file.seekg(0, std::ios::beg);
+		WriteLog("ReadDataFromTempCache: 临时缓存文件大小 " + std::to_string(fileSize) + " 字节");
 
 		// 验证偏移量
 		if (offset >= static_cast<uint64_t>(fileSize))
 		{
+			WriteLog("ReadDataFromTempCache: 偏移量超出文件大小");
+			file.close();
+			// 重新打开写入流
+			if (needReopenWrite)
+			{
+				m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
+			}
 			return result;
 		}
 
 		// 计算实际可读取的长度
 		size_t availableLength = static_cast<size_t>(fileSize - offset);
 		size_t readLength = (length == 0 || length > availableLength) ? availableLength : length;
+		WriteLog("ReadDataFromTempCache: 计划读取 " + std::to_string(readLength) + " 字节，从偏移量 " + std::to_string(offset));
 
 		if (readLength > 0)
 		{
@@ -3716,11 +3730,31 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 			if (file.fail())
 			{
+				WriteLog("ReadDataFromTempCache: 文件读取失败");
 				result.clear();
+			}
+			else
+			{
+				WriteLog("ReadDataFromTempCache: 成功读取 " + std::to_string(result.size()) + " 字节");
 			}
 		}
 
 		file.close();
+		
+		// 重新打开写入流以继续接收数据
+		if (needReopenWrite)
+		{
+			m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
+			if (m_tempCacheFile.is_open())
+			{
+				WriteLog("ReadDataFromTempCache: 重新打开写入流成功");
+			}
+			else
+			{
+				WriteLog("ReadDataFromTempCache: 重新打开写入流失败");
+			}
+		}
+		
 		return result;
 	}
 	catch (const std::exception &e)
