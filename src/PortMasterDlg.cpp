@@ -95,7 +95,7 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 // CPortMasterDlg 对话框
 
 CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
-	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false)
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false), m_updateDisplayInProgress(false)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -1471,7 +1471,10 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 			hexDisplay += asciiStr;
 			hexDisplay += _T("|");
 
+			// 设置标志防止OnEnChangeEditSendData事件触发
+			m_updateDisplayInProgress = true;
 			m_editSendData.SetWindowText(hexDisplay);
+			m_updateDisplayInProgress = false;
 		}
 		else
 		{
@@ -1684,7 +1687,10 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 				finalText += lines[i % MAX_DISPLAY_LINES];
 			}
 			
+			// 设置标志防止OnEnChangeEditSendData事件触发
+			m_updateDisplayInProgress = true;
 			m_editSendData.SetWindowText(finalText);
+			m_updateDisplayInProgress = false;
 		}
 
 		// 自动滚动到最新数据（与接收窗口保持一致）
@@ -1737,7 +1743,9 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 		else
 		{
 			// 没有数据，清空显示
+			m_updateDisplayInProgress = true;
 			m_editSendData.SetWindowText(_T(""));
+			m_updateDisplayInProgress = false;
 		}
 	}
 }
@@ -2258,6 +2266,12 @@ void CPortMasterDlg::OnBnClickedRadioReliable()
 
 void CPortMasterDlg::OnEnChangeEditSendData()
 {
+	// 如果正在程序内部更新显示，忽略此事件，防止递归调用
+	if (m_updateDisplayInProgress)
+	{
+		return;
+	}
+	
 	// 当用户在发送数据编辑框中输入内容时，更新缓存
 	CString currentData;
 	m_editSendData.GetWindowText(currentData);

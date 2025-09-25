@@ -79,6 +79,7 @@ private:
 	// 二进制数据显示状态管理
 	bool m_binaryDataDetected;  // 是否检测到二进制数据
 	CString m_binaryDataPreview;  // 二进制数据预览内容（静态）
+	bool m_updateDisplayInProgress;  // 标志：正在更新显示，防止事件递归
 
 	DECLARE_MESSAGE_MAP()
 
