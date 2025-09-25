@@ -368,23 +368,25 @@ git add -A
 # 混合变更示例：fix: 修复传输状态判断逻辑并更新技术文档
 git commit -m "类型: <根据实际修改内容自动生成的简练中文描述>"
 
-# 推送到远程仓库（跨环境自适应）
+# 推送到远程仓库（跨环境自适应，利用localbackup映射）
 if [[ "$CURRENT_ENV" == "WSL" ]]; then
-    # WSL环境：推送到指定的备份仓库
+    # WSL环境：推送到PortMaster远程（通过localbackup映射自动适配路径）
     git push PortMaster HEAD
   
-    # 推送到主仓库（如果存在）
-    git remote | grep -q origin && git push origin HEAD
+    # 推送到backup远程（工具脚本配置的备份仓库）
+    git remote | grep -q backup && git push backup HEAD
 else
     # PowerShell环境：检查并推送到可用的远程仓库
     $remotes = git remote
     if ($remotes -contains "PortMaster") {
         git push PortMaster HEAD
     }
-    if ($remotes -contains "origin") {
-        git push origin HEAD
+    if ($remotes -contains "backup") {
+        git push backup HEAD
     }
 fi
+
+# 注：如已安装GitBackup工具的post-commit钩子，上述推送可能自动执行
 ```
 
 **提交信息规范：**
@@ -397,10 +399,10 @@ fi
 #### 7. 存档标签生成（推荐）
 
 ```bash
-# 生成时间戳标签
+# 生成时间戳标签（推送到主要远程）
 tag="save-$(date +%Y%m%d-%H%M%S)"
 git tag "$tag"
-git push --tags
+git push PortMaster --tags
 ```
 
 #### 8. 工作汇报
