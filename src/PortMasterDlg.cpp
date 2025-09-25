@@ -901,12 +901,11 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			// 根据文件类型处理显示
 			if (isBinaryFile)
 			{
-				// 二进制文件：显示预览内容
-				CString hexContent = BytesToHex(fileBuffer, displaySize);
-				m_editSendData.SetWindowText(hexContent);
-				
-				// 对于二进制文件，缓存完整文件内容，但显示仅为预览
+				// 二进制文件：缓存完整文件内容，使用统一显示逻辑
 				UpdateSendCacheFromBytes(fileBuffer, (size_t)fileLength);
+				
+				// 使用统一的显示逻辑，而不是直接设置十六进制内容
+				UpdateSendDisplayFromCache();
 			}
 			else
 			{
