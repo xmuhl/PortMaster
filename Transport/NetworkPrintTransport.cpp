@@ -985,10 +985,106 @@ std::string NetworkPrintTransport::BuildHTTPHeaders(const std::string& method, c
 std::vector<uint8_t> NetworkPrintTransport::BuildIPPRequest(const std::vector<uint8_t>& data, const std::string& jobName) const
 {
     std::vector<uint8_t> request;
-    
-    // IPP请求格式较复杂，这里提供基本框架
-    // 实际实现需要按照RFC 2910标准构建IPP消息
-    
+
+    // 【关键修复】实现基本的IPP Print-Job请求 (RFC 2910)
+
+    // IPP版本 (2字节): 主版本.次版本 = 1.1
+    request.push_back(0x01);  // 主版本
+    request.push_back(0x01);  // 次版本
+
+    // 操作ID (2字节): Print-Job = 0x0002
+    request.push_back(0x00);  // 操作ID高字节
+    request.push_back(0x02);  // 操作ID低字节 (Print-Job)
+
+    // 请求ID (4字节): 用于匹配响应
+    static uint32_t requestId = 1;
+    uint32_t currentRequestId = requestId++;
+    request.push_back((currentRequestId >> 24) & 0xFF);
+    request.push_back((currentRequestId >> 16) & 0xFF);
+    request.push_back((currentRequestId >> 8) & 0xFF);
+    request.push_back(currentRequestId & 0xFF);
+
+    // === 操作属性组 ===
+    request.push_back(0x01);  // operation-attributes-tag
+
+    // 属性1: attributes-charset (charset类型)
+    request.push_back(0x47);  // charset标签
+    request.push_back(0x00);  // 名称长度高字节
+    request.push_back(0x12);  // 名称长度低字节 (18)
+    std::string charsetName = "attributes-charset";
+    request.insert(request.end(), charsetName.begin(), charsetName.end());
+    request.push_back(0x00);  // 值长度高字节
+    request.push_back(0x05);  // 值长度低字节 (5)
+    std::string charsetValue = "utf-8";
+    request.insert(request.end(), charsetValue.begin(), charsetValue.end());
+
+    // 属性2: attributes-natural-language (自然语言)
+    request.push_back(0x48);  // naturalLanguage标签
+    request.push_back(0x00);  // 名称长度高字节
+    request.push_back(0x1B);  // 名称长度低字节 (27)
+    std::string langName = "attributes-natural-language";
+    request.insert(request.end(), langName.begin(), langName.end());
+    request.push_back(0x00);  // 值长度高字节
+    request.push_back(0x05);  // 值长度低字节 (5)
+    std::string langValue = "en-us";
+    request.insert(request.end(), langValue.begin(), langValue.end());
+
+    // 属性3: printer-uri (打印机URI)
+    request.push_back(0x45);  // uri标签
+    request.push_back(0x00);  // 名称长度高字节
+    request.push_back(0x0B);  // 名称长度低字节 (11)
+    std::string uriName = "printer-uri";
+    request.insert(request.end(), uriName.begin(), uriName.end());
+
+    // 构建打印机URI
+    std::string printerUri;
+    if (m_config.protocol == NetworkPrintProtocol::IPP)
+    {
+        printerUri = "ipp://" + m_config.hostname + ":" + std::to_string(m_config.port) + "/ipp/print";
+    }
+    else
+    {
+        // 对于其他协议，使用默认IPP URI
+        printerUri = "ipp://" + m_config.hostname + ":631/ipp/print";
+    }
+
+    request.push_back((printerUri.length() >> 8) & 0xFF);  // URI长度高字节
+    request.push_back(printerUri.length() & 0xFF);         // URI长度低字节
+    request.insert(request.end(), printerUri.begin(), printerUri.end());
+
+    // === 作业属性组 ===
+    request.push_back(0x02);  // job-attributes-tag
+
+    // 属性4: job-name (作业名称)
+    request.push_back(0x42);  // nameWithoutLanguage标签
+    request.push_back(0x00);  // 名称长度高字节
+    request.push_back(0x08);  // 名称长度低字节 (8)
+    std::string jobNameAttr = "job-name";
+    request.insert(request.end(), jobNameAttr.begin(), jobNameAttr.end());
+
+    std::string actualJobName = jobName.empty() ? "PortMaster Print Job" : jobName;
+    request.push_back((actualJobName.length() >> 8) & 0xFF);  // 作业名长度高字节
+    request.push_back(actualJobName.length() & 0xFF);         // 作业名长度低字节
+    request.insert(request.end(), actualJobName.begin(), actualJobName.end());
+
+    // 属性5: document-format (文档格式)
+    request.push_back(0x49);  // mimeMediaType标签
+    request.push_back(0x00);  // 名称长度高字节
+    request.push_back(0x0F);  // 名称长度低字节 (15)
+    std::string formatName = "document-format";
+    request.insert(request.end(), formatName.begin(), formatName.end());
+    request.push_back(0x00);  // 值长度高字节
+    request.push_back(0x18);  // 值长度低字节 (24)
+    std::string formatValue = "application/octet-stream";
+    request.insert(request.end(), formatValue.begin(), formatValue.end());
+
+    // === 数据结束标记 ===
+    request.push_back(0x03);  // end-of-attributes-tag
+
+    // === 文档数据 ===
+    // 将实际的打印数据附加到IPP请求末尾
+    request.insert(request.end(), data.begin(), data.end());
+
     return request;
 }
 
@@ -1011,7 +1107,25 @@ TransportError NetworkPrintTransport::Authenticate()
 // 基本认证
 TransportError NetworkPrintTransport::BasicAuthenticate()
 {
-    // 基本认证通常在HTTP头中完成
+    // 【关键修复】实现真正的基本认证逻辑
+    if (m_config.userName.empty())
+    {
+        // 无用户名时跳过认证
+        return TransportError::Success;
+    }
+
+    // 构建认证头
+    std::string authHeader = BuildBasicAuthHeader();
+    if (authHeader.empty())
+    {
+        return TransportError::AuthenticationFailed;
+    }
+
+    // 将认证头存储供后续HTTP请求使用
+    m_authenticationHeader = authHeader;
+
+    // 基本认证的验证通常在HTTP请求时进行
+    // 这里返回成功表示认证信息已准备就绪
     return TransportError::Success;
 }
 
@@ -1032,9 +1146,51 @@ TransportError NetworkPrintTransport::CertificateAuthenticate()
 // 构建基本认证头
 std::string NetworkPrintTransport::BuildBasicAuthHeader() const
 {
+    if (m_config.userName.empty())
+    {
+        return "";
+    }
+
     std::string credentials = m_config.userName + ":" + m_config.password;
-    // 这里需要Base64编码，简化处理
-    return "Basic " + credentials;
+
+    // 【关键修复】实现标准的Base64编码
+    std::string encoded = Base64Encode(credentials);
+
+    return "Basic " + encoded;
+}
+
+// Base64编码实现
+std::string NetworkPrintTransport::Base64Encode(const std::string& input) const
+{
+    static const char* chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string encoded;
+    int val = 0;
+    int valb = -6;
+
+    for (unsigned char c : input)
+    {
+        val = (val << 8) + c;
+        valb += 8;
+        while (valb >= 0)
+        {
+            encoded.push_back(chars[(val >> valb) & 0x3F]);
+            valb -= 6;
+        }
+    }
+
+    if (valb > -6)
+    {
+        encoded.push_back(chars[((val << 8) >> (valb + 8)) & 0x3F]);
+    }
+
+    // 添加填充字符
+    while (encoded.size() % 4)
+    {
+        encoded.push_back('=');
+    }
+
+    return encoded;
 }
 
 // 异步读取线程

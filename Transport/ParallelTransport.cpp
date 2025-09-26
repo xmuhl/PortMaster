@@ -628,10 +628,120 @@ ParallelPortStatus ParallelTransport::QueryPortStatus() const
     {
         return ParallelPortStatus::Unknown;
     }
-    
-    // 这里应该使用DeviceIoControl查询真实状态
-    // 但由于并口状态查询API比较复杂，先返回简单状态
-    return ParallelPortStatus::Ready;
+
+    // 【关键修复】使用DeviceIoControl查询真实硬件状态
+    DWORD bytesReturned = 0;
+    UCHAR statusByte = 0;
+
+    // 尝试使用并口特定的状态查询IOCTL
+    // 不同的并口驱动可能支持不同的IOCTL代码
+    // 定义并口设备相关常量
+    #define FILE_DEVICE_PARALLEL_PORT   0x00000016
+    #define METHOD_BUFFERED             0
+    #define FILE_ANY_ACCESS             0
+    #define CTL_CODE( DeviceType, Function, Method, Access ) (                 \
+        ((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method) \
+    )
+
+    const DWORD IOCTL_PAR_QUERY_INFORMATION = CTL_CODE(FILE_DEVICE_PARALLEL_PORT, 1, METHOD_BUFFERED, FILE_ANY_ACCESS);
+
+    BOOL success = DeviceIoControl(
+        m_hPort,                    // 设备句柄
+        IOCTL_PAR_QUERY_INFORMATION, // 控制代码
+        nullptr,                    // 输入缓冲区
+        0,                          // 输入缓冲区大小
+        &statusByte,                // 输出缓冲区
+        sizeof(statusByte),         // 输出缓冲区大小
+        &bytesReturned,             // 返回字节数
+        nullptr                     // 重叠结构
+    );
+
+    if (success && bytesReturned >= sizeof(statusByte))
+    {
+        // 解析并口状态字节（标准LPT状态位定义）
+        ParallelPortStatus status = ParallelPortStatus::Unknown;
+
+        // 状态位解析（基于标准并口状态寄存器）
+        if (statusByte & 0x08) status = static_cast<ParallelPortStatus>(static_cast<int>(status) | static_cast<int>(ParallelPortStatus::NotError));  // !Error
+        if (statusByte & 0x10) status = static_cast<ParallelPortStatus>(static_cast<int>(status) | static_cast<int>(ParallelPortStatus::Selected)); // Select
+        if (statusByte & 0x20) status = static_cast<ParallelPortStatus>(static_cast<int>(status) | static_cast<int>(ParallelPortStatus::OutOfPaper)); // PError (纸尽)
+        if (statusByte & 0x40) status = static_cast<ParallelPortStatus>(static_cast<int>(status) | static_cast<int>(ParallelPortStatus::Ready));     // Ack (就绪)
+        if (statusByte & 0x80) status = static_cast<ParallelPortStatus>(static_cast<int>(status) | static_cast<int>(ParallelPortStatus::Busy));      // Busy
+
+        // 推导设备整体状态
+        if (static_cast<int>(status) & static_cast<int>(ParallelPortStatus::Busy))
+        {
+            return ParallelPortStatus::Busy;
+        }
+        else if (static_cast<int>(status) & static_cast<int>(ParallelPortStatus::OutOfPaper))
+        {
+            return ParallelPortStatus::OutOfPaper;
+        }
+        else if ((static_cast<int>(status) & static_cast<int>(ParallelPortStatus::Selected)) &&
+                 (static_cast<int>(status) & static_cast<int>(ParallelPortStatus::NotError)))
+        {
+            return ParallelPortStatus::Ready;
+        }
+        else
+        {
+            return ParallelPortStatus::Offline;
+        }
+    }
+    else
+    {
+        // DeviceIoControl失败，尝试通过写入测试检测状态
+        DWORD error = ::GetLastError();
+
+        // 某些并口驱动不支持状态查询IOCTL，使用写入测试
+        if (error == ERROR_INVALID_FUNCTION || error == ERROR_NOT_SUPPORTED)
+        {
+            // 尝试零字节写入测试端口可用性
+            DWORD bytesWritten = 0;
+            OVERLAPPED overlapped = {0};
+            overlapped.hEvent = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+
+            if (overlapped.hEvent)
+            {
+                BOOL writeResult = WriteFile(m_hPort, "", 0, &bytesWritten, &overlapped);
+                if (!writeResult)
+                {
+                    DWORD writeError = ::GetLastError();
+                    if (writeError == ERROR_IO_PENDING)
+                    {
+                        // 等待操作完成（短超时）
+                        DWORD waitResult = WaitForSingleObject(overlapped.hEvent, 100);
+                        if (waitResult == WAIT_OBJECT_0)
+                        {
+                            GetOverlappedResult(m_hPort, &overlapped, &bytesWritten, FALSE);
+                            CloseHandle(overlapped.hEvent);
+                            return ParallelPortStatus::Ready;
+                        }
+                        else
+                        {
+                            CancelIo(m_hPort);
+                            CloseHandle(overlapped.hEvent);
+                            return ParallelPortStatus::Busy;
+                        }
+                    }
+                    else if (writeError == ERROR_GEN_FAILURE)
+                    {
+                        CloseHandle(overlapped.hEvent);
+                        return ParallelPortStatus::Offline;
+                    }
+                }
+                else
+                {
+                    CloseHandle(overlapped.hEvent);
+                    return ParallelPortStatus::Ready;
+                }
+
+                CloseHandle(overlapped.hEvent);
+            }
+        }
+
+        // 所有方法都失败，返回IOError
+        return ParallelPortStatus::IOError;
+    }
 }
 
 // 状态监控线程

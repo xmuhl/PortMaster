@@ -33,7 +33,9 @@ enum class TransportError
     AlreadyOpen,           // 已经打开
     ConnectionClosed,      // 连接关闭
     FlushFailed,           // 刷新失败
-    ConfigFailed           // 配置失败
+    ConfigFailed,          // 配置失败
+    AuthenticationFailed,  // 认证失败
+    AccessDenied          // 访问被拒绝
 };
 
 // 传输层配置基类

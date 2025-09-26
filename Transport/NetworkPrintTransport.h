@@ -158,6 +158,7 @@ private:
     std::string m_resolvedIP;
     struct sockaddr_in m_serverAddr;
     std::string m_currentJobId;
+    std::string m_authenticationHeader;
     
     // 回调函数
     DataReceivedCallback m_dataReceivedCallback;
@@ -221,6 +222,7 @@ private:
     TransportError NTLMAuthenticate();
     TransportError CertificateAuthenticate();
     std::string BuildBasicAuthHeader() const;
+    std::string Base64Encode(const std::string& input) const;
     
     // SSL/TLS支持
     TransportError InitializeSSL();
