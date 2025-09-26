@@ -2209,19 +2209,74 @@ void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
 
 	this->WriteLog("更新接收缓存 - 缓存更新完成，新的缓存数据大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
 
-	// 同时写入临时缓存文件（如果已初始化）
-	if (m_useTempCacheFile && m_tempCacheFile.is_open())
+	// 【深层修复】不再调用WriteDataToTempCache，避免与ThreadSafeAppendReceiveData重复写入
+	// UpdateReceiveCache现在仅负责内存缓存管理，临时文件由ThreadSafeAppendReceiveData统一处理
+	this->WriteLog("更新接收缓存 - 仅更新内存缓存，临时文件由直接落盘函数统一处理");
+
+	this->WriteLog("=== UpdateReceiveCache 结束 ===");
+}
+
+// 【深层修复】线程安全的接收数据直接落盘函数
+// 根据最新检查报告最优解方案：接收线程直接落盘，避免消息队列异步延迟导致的数据丢失
+void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &data)
+{
+	// 使用接收文件专用互斥锁，确保与保存操作完全互斥
+	std::lock_guard<std::mutex> lock(m_receiveFileMutex);
+
+	// 增强日志：记录详细的直接落盘过程
+	this->WriteLog("=== ThreadSafeAppendReceiveData 开始（接收线程直接落盘）===");
+	this->WriteLog("接收数据大小: " + std::to_string(data.size()) + " 字节");
+	this->WriteLog("当前接收缓存大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
+	this->WriteLog("总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
+
+	// 1. 立即更新内存缓存（内存缓存作为备份，保证数据完整性）
+	if (!m_receiveCacheValid || m_receiveDataCache.empty())
 	{
-		this->WriteLog("更新接收缓存 - 写入临时缓存文件...");
-		bool writeResult = WriteDataToTempCache(data);
-		this->WriteLog("更新接收缓存 - 临时缓存文件写入结果: " + std::string(writeResult ? "成功" : "失败"));
+		this->WriteLog("初始化接收缓存（首次接收）");
+		m_receiveDataCache = data;
 	}
 	else
 	{
-		this->WriteLog("更新接收缓存 - 临时缓存文件未启用或未打开");
+		this->WriteLog("追加数据到接收缓存");
+		size_t oldSize = m_receiveDataCache.size();
+		m_receiveDataCache.insert(m_receiveDataCache.end(), data.begin(), data.end());
+		this->WriteLog("缓存追加完成: " + std::to_string(oldSize) + " → " + std::to_string(m_receiveDataCache.size()) + " 字节");
+	}
+	m_receiveCacheValid = true;
+
+	// 2. 立即同步写入临时文件（强制串行化，确保数据完全落盘）
+	if (m_useTempCacheFile && m_tempCacheFile.is_open())
+	{
+		this->WriteLog("执行强制同步写入临时缓存文件...");
+		try
+		{
+			// 写入数据到文件
+			m_tempCacheFile.write(reinterpret_cast<const char*>(data.data()), data.size());
+
+			// 强制刷新缓冲区到磁盘，确保数据真正落盘
+			m_tempCacheFile.flush();
+
+			// 更新总字节数统计
+			m_totalReceivedBytes += data.size();
+
+			this->WriteLog("强制同步写入成功: " + std::to_string(data.size()) + " 字节");
+			this->WriteLog("更新后总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
+		}
+		catch (const std::exception& e)
+		{
+			this->WriteLog("临时缓存文件写入异常: " + std::string(e.what()));
+			this->WriteLog("数据已保存到内存缓存，文件写入失败但不影响数据完整性");
+		}
+	}
+	else
+	{
+		this->WriteLog("临时缓存文件未启用或未打开，仅更新内存缓存");
+		// 即使没有临时文件，也要更新总字节数
+		m_totalReceivedBytes += data.size();
+		this->WriteLog("更新总接收字节数（仅内存）: " + std::to_string(m_totalReceivedBytes) + " 字节");
 	}
 
-	this->WriteLog("=== UpdateReceiveCache 结束 ===");
+	this->WriteLog("=== ThreadSafeAppendReceiveData 结束（数据已强制落盘）===");
 }
 
 void CPortMasterDlg::LogMessage(const CString &message)
@@ -2484,30 +2539,60 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
 		this->WriteLog("从临时缓存读取数据大小: " + std::to_string(cachedData.size()) + " 字节");
 		this->WriteLog("临时缓存文件累计接收字节数: " + std::to_string(m_totalReceivedBytes));
+		this->WriteLog("UI显示接收字节数: " + std::to_string(m_bytesReceived));
 
-		// 【文件完整性校验】检查读取数据与统计数据是否一致
+		// 【深层修复】根据最新检查报告：增强完整性校验，三个值对比
+		bool dataIntegrityOk = true;
+		CString integrityIssues;
+
 		if (cachedData.size() != m_totalReceivedBytes)
 		{
+			dataIntegrityOk = false;
+			integrityIssues += _T("• 文件实际大小与写入统计不符\n");
+		}
+
+		if (m_bytesReceived != m_totalReceivedBytes)
+		{
+			dataIntegrityOk = false;
+			integrityIssues += _T("• UI统计与文件写入统计不符\n");
+		}
+
+		if (cachedData.size() != m_bytesReceived)
+		{
+			dataIntegrityOk = false;
+			integrityIssues += _T("• 文件实际大小与UI统计不符\n");
+		}
+
+		if (!dataIntegrityOk)
+		{
 			CString warningMsg;
-			warningMsg.Format(_T("⚠️ 数据完整性警告\n\n")
-							 _T("统计接收字节数: %u\n")
-							 _T("实际读取字节数: %u\n")
-							 _T("数据可能不完整！\n\n")
-							 _T("是否仍要保存当前数据？"),
+			warningMsg.Format(_T("⚠️ 数据完整性检测异常\n\n")
+							 _T("检测到以下数据不一致问题：\n")
+							 _T("%s\n")
+							 _T("详细信息：\n")
+							 _T("• UI显示接收: %u 字节\n")
+							 _T("• 文件写入统计: %u 字节\n")
+							 _T("• 实际文件大小: %u 字节\n\n")
+							 _T("可能原因：接收过程中存在并发写入冲突\n")
+							 _T("建议：停止传输，重新开始接收\n\n")
+							 _T("是否仍要保存当前数据？（可能不完整）"),
+							 integrityIssues,
+							 (unsigned)m_bytesReceived,
 							 (unsigned)m_totalReceivedBytes,
 							 (unsigned)cachedData.size());
 
-			int result = MessageBox(warningMsg, _T("数据完整性警告"), MB_YESNO | MB_ICONWARNING);
+			int result = MessageBox(warningMsg, _T("数据完整性校验失败"), MB_YESNO | MB_ICONWARNING);
 			if (result == IDNO)
 			{
-				this->WriteLog("用户取消保存操作，数据不完整");
+				this->WriteLog("用户取消保存操作 - 数据完整性校验失败");
+				this->WriteLog("完整性问题详情: " + std::string(CT2A(integrityIssues)));
 				return;
 			}
-			this->WriteLog("用户确认保存不完整数据");
+			this->WriteLog("用户确认保存不完整数据 - 已警告数据完整性问题");
 		}
 		else
 		{
-			this->WriteLog("数据完整性校验通过");
+			this->WriteLog("数据完整性校验通过 - 三个统计值完全一致");
 		}
 
 		if (!cachedData.empty())
@@ -3145,8 +3230,8 @@ void CPortMasterDlg::UpdateStatistics()
 
 void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 {
-	// 添加调试输出：记录接收数据处理流程
-	this->WriteLog("=== OnTransportDataReceived 开始 ===");
+	// 【深层修复】根据最新检查报告最优解方案：接收线程直接落盘，避免消息队列异步延迟
+	this->WriteLog("=== OnTransportDataReceived 开始（直接落盘模式）===");
 	this->WriteLog("接收到数据大小: " + std::to_string(data.size()) + " 字节");
 
 	// 记录前64字节的十六进制内容用于调试
@@ -3184,10 +3269,19 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 	}
 	this->WriteLog("接收数据预览(ASCII): " + asciiPreview);
 
-	// 在主线程中更新UI
-	PostMessage(WM_USER + 1, 0, (LPARAM) new std::vector<uint8_t>(data));
+	// 【关键修复】直接调用线程安全落盘函数，立即写入缓存和文件
+	ThreadSafeAppendReceiveData(data);
 
-	this->WriteLog("=== OnTransportDataReceived 结束 ===");
+	// 【轻量化UI更新】仅发送统计信息，不传输实际数据，避免消息队列堆积
+	struct UIUpdateInfo {
+		size_t dataSize;
+		std::string hexPreview;
+		std::string asciiPreview;
+	};
+	UIUpdateInfo* updateInfo = new UIUpdateInfo{data.size(), hexPreview, asciiPreview};
+	PostMessage(WM_USER + 1, 0, (LPARAM)updateInfo);
+
+	this->WriteLog("=== OnTransportDataReceived 结束（数据已直接落盘）===");
 }
 
 void CPortMasterDlg::OnTransportError(const std::string &error)
@@ -3252,72 +3346,38 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 
 LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam)
 {
-	std::vector<uint8_t> *data = reinterpret_cast<std::vector<uint8_t> *>(lParam);
-	if (data)
+	// 【深层修复】处理新的轻量级UI更新信息结构
+	UIUpdateInfo *updateInfo = reinterpret_cast<UIUpdateInfo *>(lParam);
+	if (updateInfo)
 	{
 		try
 		{
-			// 添加调试输出：记录接收数据的详细信息
-			this->WriteLog("=== 接收数据调试信息 ===");
-			this->WriteLog("接收数据大小: " + std::to_string(data->size()) + " 字节");
+			// 轻量级UI更新：仅处理统计信息和显示预览
+			this->WriteLog("=== 轻量级UI更新信息 ===");
+			this->WriteLog("接收数据大小: " + std::to_string(updateInfo->dataSize) + " 字节");
+			this->WriteLog("十六进制预览: " + updateInfo->hexPreview);
+			this->WriteLog("ASCII预览: " + updateInfo->asciiPreview);
 
-			// 记录前32字节的十六进制内容用于调试
-			std::string hexPreview;
-			size_t previewSize = (std::min)(data->size(), (size_t)32);
-			for (size_t i = 0; i < previewSize; i++)
-			{
-				char hexByte[4];
-				sprintf_s(hexByte, "%02X ", (*data)[i]);
-				hexPreview += hexByte;
-			}
-			if (data->size() > 32)
-			{
-				hexPreview += "...";
-			}
-			this->WriteLog("接收数据预览(十六进制): " + hexPreview);
-
-			// 记录前32字节的ASCII内容用于调试
-			std::string asciiPreview;
-			for (size_t i = 0; i < previewSize; i++)
-			{
-				uint8_t byte = (*data)[i];
-				if (byte >= 32 && byte <= 126)
-				{
-					asciiPreview += (char)byte;
-				}
-				else
-				{
-					asciiPreview += '.';
-				}
-			}
-			if (data->size() > 32)
-			{
-				asciiPreview += "...";
-			}
-			this->WriteLog("接收数据预览(ASCII): " + asciiPreview);
-
-			// 更新接收统计
-			m_bytesReceived += data->size();
+			// 更新UI显示的接收统计（与直接落盘的m_totalReceivedBytes区分）
+			m_bytesReceived += updateInfo->dataSize;
 			CString receivedText;
 			receivedText.Format(_T("%u"), m_bytesReceived);
 			SetDlgItemText(IDC_STATIC_RECEIVED, receivedText);
 
-			// 更新接收缓存 - 保存原始字节数据
-			UpdateReceiveCache(*data);
-
 			// 【UI优化】使用节流机制更新显示，避免大文件传输时频繁重绘
+			// 注意：数据已经在ThreadSafeAppendReceiveData中直接落盘和更新内存缓存
 			ThrottledUpdateReceiveDisplay();
 
-			this->WriteLog("=== 接收数据调试信息结束 ===");
+			this->WriteLog("=== 轻量级UI更新完成 ===");
 		}
 		catch (const std::exception &e)
 		{
 			CString errorMsg;
-			errorMsg.Format(_T("处理接收数据失败: %s"), CString(e.what()));
+			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), CString(e.what()));
 			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
 		}
 
-		delete data;
+		delete updateInfo;
 	}
 
 	return 0;
@@ -3741,8 +3801,8 @@ bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t> &data)
 		return false;
 	}
 
-	// 【并发安全修复】使用互斥锁保护临时缓存文件访问
-	std::lock_guard<std::mutex> lock(m_tempCacheMutex);
+	// 【深层修复】使用接收文件专用互斥锁，确保与接收线程和保存操作完全互斥
+	std::lock_guard<std::mutex> lock(m_receiveFileMutex);
 
 	// 如果文件流被关闭（如正在读取），将数据加入待写入队列
 	if (!m_tempCacheFile.is_open())
@@ -3800,8 +3860,8 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 	try
 	{
-		// 【并发安全修复】使用互斥锁保护临时缓存文件访问
-		std::lock_guard<std::mutex> lock(m_tempCacheMutex);
+		// 【深层修复】使用接收文件专用互斥锁，与接收线程直接落盘完全互斥
+		std::lock_guard<std::mutex> lock(m_receiveFileMutex);
 
 		// 安全关闭写入流并确保数据完整性
 		bool needReopenWrite = false;

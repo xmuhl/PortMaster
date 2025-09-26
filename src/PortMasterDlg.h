@@ -76,6 +76,16 @@ protected:
 	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
 	void UpdateReceiveCache(const std::vector<uint8_t> &data); // 更新接收缓存
 
+	// 【深层修复】线程安全的接收数据直接落盘函数
+	void ThreadSafeAppendReceiveData(const std::vector<uint8_t> &data); // 接收线程直接落盘，避免消息队列异步延迟
+
+	// 【深层修复】轻量级UI更新信息结构
+	struct UIUpdateInfo {
+		size_t dataSize;
+		std::string hexPreview;
+		std::string asciiPreview;
+	};
+
 private:
 	// 二进制数据显示状态管理
 	bool m_binaryDataDetected;  // 是否检测到二进制数据
@@ -171,6 +181,9 @@ private:
 	// 【并发安全修复】临时缓存文件访问同步
 	mutable std::mutex m_tempCacheMutex;	 // 临时缓存文件访问互斥锁
 	std::queue<std::vector<uint8_t>> m_pendingWrites; // 待写入数据队列（读取时暂存）
+
+	// 【深层修复】接收数据落盘与保存操作专用同步
+	mutable std::mutex m_receiveFileMutex;   // 接收文件访问专用互斥锁（与保存操作完全互斥）
 
 	// 内部方法
 	void InitializeTransportConfig();
