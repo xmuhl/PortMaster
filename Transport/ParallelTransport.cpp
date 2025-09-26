@@ -335,7 +335,7 @@ TransportError ParallelTransport::FlushBuffers()
     
     if (!FlushFileBuffers(m_hPort))
     {
-        return GetLastError();
+        return this->GetLastError();
     }
     
     return TransportError::Success;
@@ -559,7 +559,7 @@ TransportError ParallelTransport::OpenPortHandle()
         }
         else
         {
-            return GetLastError();
+            return this->GetLastError();
         }
     }
     
@@ -586,10 +586,10 @@ TransportError ParallelTransport::WriteToPort(const void* data, size_t size, siz
     {
         *written = bytesWritten;
     }
-    
+
     if (!success)
     {
-        return GetLastError();
+        return this->GetLastError();
     }
     
     UpdateStats(bytesWritten, 0);
@@ -611,10 +611,10 @@ TransportError ParallelTransport::ReadFromPort(void* buffer, size_t size, size_t
     {
         *read = bytesRead;
     }
-    
+
     if (!success)
     {
-        return GetLastError();
+        return this->GetLastError();
     }
     
     UpdateStats(0, bytesRead);
@@ -920,7 +920,7 @@ TransportError ParallelTransport::SetPortTimeouts()
     
     if (!SetCommTimeouts(m_hPort, &timeouts))
     {
-        return GetLastError();
+        return this->GetLastError();
     }
     
     return TransportError::Success;

@@ -741,7 +741,72 @@ std::string ConfigStore::SerializeToJson() const
     ss << "    \"writeTimeout\": " << DwordToString(m_config.serial.writeTimeout) << ",\n";
     ss << "    \"reliableMode\": " << BoolToString(false) << "\n"; // 串口配置不再支持可靠模式
     ss << "  },\n";
-    
+
+    // 并口配置
+    ss << "  \"parallel\": {\n";
+    ss << "    \"portName\": \"" << EscapeJsonString(m_config.parallel.portName) << "\",\n";
+    ss << "    \"deviceName\": \"" << EscapeJsonString(m_config.parallel.deviceName) << "\",\n";
+    ss << "    \"readTimeout\": " << DwordToString(m_config.parallel.readTimeout) << ",\n";
+    ss << "    \"writeTimeout\": " << DwordToString(m_config.parallel.writeTimeout) << ",\n";
+    ss << "    \"enableBidirectional\": " << BoolToString(m_config.parallel.enableBidirectional) << ",\n";
+    ss << "    \"checkStatus\": " << BoolToString(m_config.parallel.checkStatus) << ",\n";
+    ss << "    \"statusCheckInterval\": " << DwordToString(m_config.parallel.statusCheckInterval) << ",\n";
+    ss << "    \"bufferSize\": " << DwordToString(m_config.parallel.bufferSize) << "\n";
+    ss << "  },\n";
+
+    // USB配置
+    ss << "  \"usb\": {\n";
+    ss << "    \"portName\": \"" << EscapeJsonString(m_config.usb.portName) << "\",\n";
+    ss << "    \"deviceName\": \"" << EscapeJsonString(m_config.usb.deviceName) << "\",\n";
+    ss << "    \"deviceId\": \"" << EscapeJsonString(m_config.usb.deviceId) << "\",\n";
+    ss << "    \"printerName\": \"" << EscapeJsonString(m_config.usb.printerName) << "\",\n";
+    ss << "    \"readTimeout\": " << DwordToString(m_config.usb.readTimeout) << ",\n";
+    ss << "    \"writeTimeout\": " << DwordToString(m_config.usb.writeTimeout) << ",\n";
+    ss << "    \"bufferSize\": " << DwordToString(m_config.usb.bufferSize) << ",\n";
+    ss << "    \"checkStatus\": " << BoolToString(m_config.usb.checkStatus) << ",\n";
+    ss << "    \"statusCheckInterval\": " << DwordToString(m_config.usb.statusCheckInterval) << "\n";
+    ss << "  },\n";
+
+    // 网络配置
+    ss << "  \"network\": {\n";
+    ss << "    \"hostname\": \"" << EscapeJsonString(m_config.network.hostname) << "\",\n";
+    ss << "    \"port\": " << IntToString(m_config.network.port) << ",\n";
+    ss << "    \"protocol\": " << IntToString(static_cast<int>(m_config.network.protocol)) << ",\n";
+    ss << "    \"queueName\": \"" << EscapeJsonString(m_config.network.queueName) << "\",\n";
+    ss << "    \"userName\": \"" << EscapeJsonString(m_config.network.userName) << "\",\n";
+    ss << "    \"connectTimeout\": " << DwordToString(m_config.network.connectTimeout) << ",\n";
+    ss << "    \"sendTimeout\": " << DwordToString(m_config.network.sendTimeout) << ",\n";
+    ss << "    \"receiveTimeout\": " << DwordToString(m_config.network.receiveTimeout) << ",\n";
+    ss << "    \"enableReconnect\": " << BoolToString(m_config.network.enableReconnect) << ",\n";
+    ss << "    \"maxReconnectAttempts\": " << IntToString(m_config.network.maxReconnectAttempts) << "\n";
+    ss << "  },\n";
+
+    // 回路测试配置
+    ss << "  \"loopback\": {\n";
+    ss << "    \"delayMs\": " << DwordToString(m_config.loopback.delayMs) << ",\n";
+    ss << "    \"errorRate\": " << DwordToString(m_config.loopback.errorRate) << ",\n";
+    ss << "    \"packetLossRate\": " << DwordToString(m_config.loopback.packetLossRate) << ",\n";
+    ss << "    \"enableJitter\": " << BoolToString(m_config.loopback.enableJitter) << ",\n";
+    ss << "    \"jitterMaxMs\": " << DwordToString(m_config.loopback.jitterMaxMs) << ",\n";
+    ss << "    \"maxQueueSize\": " << DwordToString(m_config.loopback.maxQueueSize) << ",\n";
+    ss << "    \"autoTest\": " << BoolToString(m_config.loopback.autoTest) << ",\n";
+    ss << "    \"reliableMode\": " << BoolToString(m_config.loopback.reliableMode) << "\n";
+    ss << "  },\n";
+
+    // 可靠协议配置
+    ss << "  \"protocol\": {\n";
+    ss << "    \"version\": " << IntToString(m_config.protocol.version) << ",\n";
+    ss << "    \"windowSize\": " << IntToString(m_config.protocol.windowSize) << ",\n";
+    ss << "    \"maxRetries\": " << IntToString(m_config.protocol.maxRetries) << ",\n";
+    ss << "    \"timeoutBase\": " << DwordToString(m_config.protocol.timeoutBase) << ",\n";
+    ss << "    \"timeoutMax\": " << DwordToString(m_config.protocol.timeoutMax) << ",\n";
+    ss << "    \"heartbeatInterval\": " << DwordToString(m_config.protocol.heartbeatInterval) << ",\n";
+    ss << "    \"maxPayloadSize\": " << DwordToString(m_config.protocol.maxPayloadSize) << ",\n";
+    ss << "    \"enableCompression\": " << BoolToString(m_config.protocol.enableCompression) << ",\n";
+    ss << "    \"enableEncryption\": " << BoolToString(m_config.protocol.enableEncryption) << ",\n";
+    ss << "    \"encryptionKey\": \"" << EscapeJsonString(m_config.protocol.encryptionKey) << "\"\n";
+    ss << "  },\n";
+
     ss << "  \"ui\": {\n";
     ss << "    \"windowX\": " << IntToString(m_config.ui.windowX) << ",\n";
     ss << "    \"windowY\": " << IntToString(m_config.ui.windowY) << ",\n";
@@ -754,13 +819,13 @@ std::string ConfigStore::SerializeToJson() const
     ss << "    \"lastPortType\": \"" << EscapeJsonString(m_config.ui.lastPortType) << "\",\n";
     ss << "    \"lastPortName\": \"" << EscapeJsonString(m_config.ui.lastPortName) << "\",\n";
     ss << "    \"recentFiles\": [";
-    
+
     for (size_t i = 0; i < m_config.ui.recentFiles.size(); ++i)
     {
         if (i > 0) ss << ",";
         ss << "\"" << EscapeJsonString(m_config.ui.recentFiles[i]) << "\"";
     }
-    
+
     ss << "],\n";
     ss << "    \"maxRecentFiles\": " << IntToString(m_config.ui.maxRecentFiles) << "\n";
     ss << "  }\n";
@@ -819,7 +884,82 @@ bool ConfigStore::DeserializeFromJson(const std::string& jsonStr)
             m_config.ui.recentFiles = GetJsonArray(uiSection, "recentFiles");
             m_config.ui.maxRecentFiles = StringToInt(GetJsonValue(uiSection, "maxRecentFiles"));
         }
-        
+
+        // 解析并口配置
+        std::string parallelSection = GetJsonObject(jsonStr, "parallel");
+        if (!parallelSection.empty())
+        {
+            m_config.parallel.portName = GetJsonValue(parallelSection, "portName");
+            m_config.parallel.deviceName = GetJsonValue(parallelSection, "deviceName");
+            m_config.parallel.readTimeout = StringToDword(GetJsonValue(parallelSection, "readTimeout"));
+            m_config.parallel.writeTimeout = StringToDword(GetJsonValue(parallelSection, "writeTimeout"));
+            m_config.parallel.enableBidirectional = StringToBool(GetJsonValue(parallelSection, "enableBidirectional"));
+            m_config.parallel.checkStatus = StringToBool(GetJsonValue(parallelSection, "checkStatus"));
+            m_config.parallel.statusCheckInterval = StringToDword(GetJsonValue(parallelSection, "statusCheckInterval"));
+            m_config.parallel.bufferSize = StringToDword(GetJsonValue(parallelSection, "bufferSize"));
+        }
+
+        // 解析USB配置
+        std::string usbSection = GetJsonObject(jsonStr, "usb");
+        if (!usbSection.empty())
+        {
+            m_config.usb.portName = GetJsonValue(usbSection, "portName");
+            m_config.usb.deviceName = GetJsonValue(usbSection, "deviceName");
+            m_config.usb.deviceId = GetJsonValue(usbSection, "deviceId");
+            m_config.usb.printerName = GetJsonValue(usbSection, "printerName");
+            m_config.usb.readTimeout = StringToDword(GetJsonValue(usbSection, "readTimeout"));
+            m_config.usb.writeTimeout = StringToDword(GetJsonValue(usbSection, "writeTimeout"));
+            m_config.usb.bufferSize = StringToDword(GetJsonValue(usbSection, "bufferSize"));
+            m_config.usb.checkStatus = StringToBool(GetJsonValue(usbSection, "checkStatus"));
+            m_config.usb.statusCheckInterval = StringToDword(GetJsonValue(usbSection, "statusCheckInterval"));
+        }
+
+        // 解析网络配置
+        std::string networkSection = GetJsonObject(jsonStr, "network");
+        if (!networkSection.empty())
+        {
+            m_config.network.hostname = GetJsonValue(networkSection, "hostname");
+            m_config.network.port = static_cast<WORD>(StringToInt(GetJsonValue(networkSection, "port")));
+            m_config.network.protocol = static_cast<NetworkPrintProtocol>(StringToInt(GetJsonValue(networkSection, "protocol")));
+            m_config.network.queueName = GetJsonValue(networkSection, "queueName");
+            m_config.network.userName = GetJsonValue(networkSection, "userName");
+            m_config.network.connectTimeout = StringToDword(GetJsonValue(networkSection, "connectTimeout"));
+            m_config.network.sendTimeout = StringToDword(GetJsonValue(networkSection, "sendTimeout"));
+            m_config.network.receiveTimeout = StringToDword(GetJsonValue(networkSection, "receiveTimeout"));
+            m_config.network.enableReconnect = StringToBool(GetJsonValue(networkSection, "enableReconnect"));
+            m_config.network.maxReconnectAttempts = StringToInt(GetJsonValue(networkSection, "maxReconnectAttempts"));
+        }
+
+        // 解析回路测试配置
+        std::string loopbackSection = GetJsonObject(jsonStr, "loopback");
+        if (!loopbackSection.empty())
+        {
+            m_config.loopback.delayMs = StringToDword(GetJsonValue(loopbackSection, "delayMs"));
+            m_config.loopback.errorRate = StringToDword(GetJsonValue(loopbackSection, "errorRate"));
+            m_config.loopback.packetLossRate = StringToDword(GetJsonValue(loopbackSection, "packetLossRate"));
+            m_config.loopback.enableJitter = StringToBool(GetJsonValue(loopbackSection, "enableJitter"));
+            m_config.loopback.jitterMaxMs = StringToDword(GetJsonValue(loopbackSection, "jitterMaxMs"));
+            m_config.loopback.maxQueueSize = StringToDword(GetJsonValue(loopbackSection, "maxQueueSize"));
+            m_config.loopback.autoTest = StringToBool(GetJsonValue(loopbackSection, "autoTest"));
+            m_config.loopback.reliableMode = StringToBool(GetJsonValue(loopbackSection, "reliableMode"));
+        }
+
+        // 解析可靠协议配置
+        std::string protocolSection = GetJsonObject(jsonStr, "protocol");
+        if (!protocolSection.empty())
+        {
+            m_config.protocol.version = static_cast<BYTE>(StringToInt(GetJsonValue(protocolSection, "version")));
+            m_config.protocol.windowSize = static_cast<WORD>(StringToInt(GetJsonValue(protocolSection, "windowSize")));
+            m_config.protocol.maxRetries = static_cast<WORD>(StringToInt(GetJsonValue(protocolSection, "maxRetries")));
+            m_config.protocol.timeoutBase = StringToDword(GetJsonValue(protocolSection, "timeoutBase"));
+            m_config.protocol.timeoutMax = StringToDword(GetJsonValue(protocolSection, "timeoutMax"));
+            m_config.protocol.heartbeatInterval = StringToDword(GetJsonValue(protocolSection, "heartbeatInterval"));
+            m_config.protocol.maxPayloadSize = StringToDword(GetJsonValue(protocolSection, "maxPayloadSize"));
+            m_config.protocol.enableCompression = StringToBool(GetJsonValue(protocolSection, "enableCompression"));
+            m_config.protocol.enableEncryption = StringToBool(GetJsonValue(protocolSection, "enableEncryption"));
+            m_config.protocol.encryptionKey = GetJsonValue(protocolSection, "encryptionKey");
+        }
+
         return true;
     }
     catch (...)

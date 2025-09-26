@@ -2758,7 +2758,7 @@ bool CPortMasterDlg::CreateTransport()
 					// 设置回调函数
 					this->WriteLog("CreateTransport: Setting callbacks...");
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>((current * 100) / total)); });
+														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
@@ -2798,7 +2798,7 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>((current * 100) / total)); });
+														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
@@ -2837,7 +2837,7 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>((current * 100) / total)); });
+														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
@@ -2890,7 +2890,7 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>((current * 100) / total)); });
+														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
@@ -2928,7 +2928,7 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>((current * 100) / total)); });
+														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });

@@ -264,7 +264,7 @@ void UsbPrintTransport::SetErrorOccurredCallback(ErrorOccurredCallback callback)
 TransportError UsbPrintTransport::FlushBuffers()
 {
     if (!IsOpen()) return TransportError::NotOpen;
-    if (!FlushFileBuffers(m_hDevice)) return GetLastError();
+    if (!FlushFileBuffers(m_hDevice)) return this->GetLastError();
     return TransportError::Success;
 }
 
@@ -410,7 +410,7 @@ TransportError UsbPrintTransport::OpenDeviceHandle()
     
     if (m_hDevice == INVALID_HANDLE_VALUE)
     {
-        return GetLastError();
+        return this->GetLastError();
     }
     
     return TransportError::Success;
@@ -429,10 +429,10 @@ TransportError UsbPrintTransport::WriteToDevice(const void* data, size_t size, s
 {
     DWORD bytesWritten = 0;
     BOOL success = WriteFile(m_hDevice, data, static_cast<DWORD>(size), &bytesWritten, nullptr);
-    
+
     if (written) *written = bytesWritten;
-    
-    if (!success) return GetLastError();
+
+    if (!success) return this->GetLastError();
     
     UpdateStats(bytesWritten, 0);
     return TransportError::Success;
@@ -442,10 +442,10 @@ TransportError UsbPrintTransport::ReadFromDevice(void* buffer, size_t size, size
 {
     DWORD bytesRead = 0;
     BOOL success = ReadFile(m_hDevice, buffer, static_cast<DWORD>(size), &bytesRead, nullptr);
-    
+
     if (read) *read = bytesRead;
-    
-    if (!success) return GetLastError();
+
+    if (!success) return this->GetLastError();
     
     UpdateStats(0, bytesRead);
     return TransportError::Success;
@@ -719,7 +719,7 @@ TransportError UsbPrintTransport::ResetDevice()
     
     if (!success)
     {
-        return GetLastError();
+        return this->GetLastError();
     }
     
     return TransportError::Success;
