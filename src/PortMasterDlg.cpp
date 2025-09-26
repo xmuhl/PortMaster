@@ -2485,6 +2485,31 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		this->WriteLog("从临时缓存读取数据大小: " + std::to_string(cachedData.size()) + " 字节");
 		this->WriteLog("临时缓存文件累计接收字节数: " + std::to_string(m_totalReceivedBytes));
 
+		// 【文件完整性校验】检查读取数据与统计数据是否一致
+		if (cachedData.size() != m_totalReceivedBytes)
+		{
+			CString warningMsg;
+			warningMsg.Format(_T("⚠️ 数据完整性警告\n\n")
+							 _T("统计接收字节数: %u\n")
+							 _T("实际读取字节数: %u\n")
+							 _T("数据可能不完整！\n\n")
+							 _T("是否仍要保存当前数据？"),
+							 (unsigned)m_totalReceivedBytes,
+							 (unsigned)cachedData.size());
+
+			int result = MessageBox(warningMsg, _T("数据完整性警告"), MB_YESNO | MB_ICONWARNING);
+			if (result == IDNO)
+			{
+				this->WriteLog("用户取消保存操作，数据不完整");
+				return;
+			}
+			this->WriteLog("用户确认保存不完整数据");
+		}
+		else
+		{
+			this->WriteLog("数据完整性校验通过");
+		}
+
 		if (!cachedData.empty())
 		{
 			this->WriteLog("保存策略：直接保存原始字节数据，避免编码转换问题");
@@ -3711,22 +3736,50 @@ void CPortMasterDlg::CloseTempCacheFile()
 
 bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t> &data)
 {
-	if (!m_tempCacheFile.is_open() || data.empty())
+	if (data.empty())
 	{
 		return false;
 	}
 
+	// 【并发安全修复】使用互斥锁保护临时缓存文件访问
+	std::lock_guard<std::mutex> lock(m_tempCacheMutex);
+
+	// 如果文件流被关闭（如正在读取），将数据加入待写入队列
+	if (!m_tempCacheFile.is_open())
+	{
+		m_pendingWrites.push(data);
+		WriteLog("临时缓存文件流已关闭，数据加入待写入队列，大小: " + std::to_string(data.size()) + " 字节");
+		return true; // 返回成功，数据将在文件重新打开时写入
+	}
+
 	try
 	{
-		m_tempCacheFile.write(reinterpret_cast<const char *>(data.data()), data.size());
+		// 先处理队列中的待写入数据
+		while (!m_pendingWrites.empty())
+		{
+			const auto& pendingData = m_pendingWrites.front();
+			m_tempCacheFile.write(reinterpret_cast<const char*>(pendingData.data()), pendingData.size());
+			if (m_tempCacheFile.fail())
+			{
+				WriteLog("写入待处理数据失败，队列大小: " + std::to_string(m_pendingWrites.size()));
+				return false;
+			}
+			m_totalReceivedBytes += pendingData.size();
+			m_pendingWrites.pop();
+		}
+
+		// 写入当前数据
+		m_tempCacheFile.write(reinterpret_cast<const char*>(data.data()), data.size());
 		if (m_tempCacheFile.fail())
 		{
-			WriteLog("写入临时缓存文件失败");
+			WriteLog("写入当前数据到临时缓存文件失败，大小: " + std::to_string(data.size()) + " 字节");
 			return false;
 		}
 
 		m_tempCacheFile.flush(); // 确保数据立即写入磁盘
 		m_totalReceivedBytes += data.size();
+
+		WriteLog("成功写入临时缓存文件，大小: " + std::to_string(data.size()) + " 字节，总计: " + std::to_string(m_totalReceivedBytes) + " 字节");
 		return true;
 	}
 	catch (const std::exception &e)
@@ -3747,14 +3800,17 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 	try
 	{
-		// 关键修复：临时关闭写入流以确保数据完整性和避免文件句柄冲突
+		// 【并发安全修复】使用互斥锁保护临时缓存文件访问
+		std::lock_guard<std::mutex> lock(m_tempCacheMutex);
+
+		// 安全关闭写入流并确保数据完整性
 		bool needReopenWrite = false;
 		if (m_tempCacheFile.is_open())
 		{
 			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
 			m_tempCacheFile.close(); // 关闭写入流避免冲突
 			needReopenWrite = true;
-			WriteLog("ReadDataFromTempCache: 临时关闭写入流以确保数据完整性");
+			WriteLog("ReadDataFromTempCache: 安全关闭写入流，待写入队列大小: " + std::to_string(m_pendingWrites.size()));
 		}
 
 		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
@@ -3807,17 +3863,39 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 		file.close();
 
-		// 重新打开写入流以继续接收数据
+		// 【并发安全修复】重新打开写入流并处理待写入队列
 		if (needReopenWrite)
 		{
 			m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
 			if (m_tempCacheFile.is_open())
 			{
 				WriteLog("ReadDataFromTempCache: 重新打开写入流成功");
+
+				// 处理在读取期间积累的待写入数据
+				size_t processedCount = 0;
+				while (!m_pendingWrites.empty())
+				{
+					const auto& pendingData = m_pendingWrites.front();
+					m_tempCacheFile.write(reinterpret_cast<const char*>(pendingData.data()), pendingData.size());
+					if (m_tempCacheFile.fail())
+					{
+						WriteLog("处理待写入队列失败，剩余 " + std::to_string(m_pendingWrites.size()) + " 项");
+						break;
+					}
+					m_totalReceivedBytes += pendingData.size();
+					m_pendingWrites.pop();
+					processedCount++;
+				}
+
+				if (processedCount > 0)
+				{
+					m_tempCacheFile.flush();
+					WriteLog("已处理 " + std::to_string(processedCount) + " 个待写入数据项");
+				}
 			}
 			else
 			{
-				WriteLog("ReadDataFromTempCache: 重新打开写入流失败");
+				WriteLog("ReadDataFromTempCache: 重新打开写入流失败，待写入队列大小: " + std::to_string(m_pendingWrites.size()));
 			}
 		}
 

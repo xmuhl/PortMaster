@@ -168,6 +168,10 @@ private:
 	uint64_t m_totalReceivedBytes;			 // 总接收字节数
 	uint64_t m_totalSentBytes;				 // 总发送字节数
 
+	// 【并发安全修复】临时缓存文件访问同步
+	mutable std::mutex m_tempCacheMutex;	 // 临时缓存文件访问互斥锁
+	std::queue<std::vector<uint8_t>> m_pendingWrites; // 待写入数据队列（读取时暂存）
+
 	// 内部方法
 	void InitializeTransportConfig();
 	bool CreateTransport();
