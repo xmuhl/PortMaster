@@ -246,7 +246,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 初始化单选按钮 - 默认选择直通模式
 	m_radioReliable.SetCheck(BST_UNCHECKED);
 	m_radioDirect.SetCheck(BST_CHECKED);
-	
+
 	// 初始化占用检测复选框 - 默认勾选直通模式
 	m_checkOccupy.SetCheck(BST_CHECKED);
 
@@ -501,21 +501,20 @@ void CPortMasterDlg::StartTransmission()
 	{
 		m_transmissionThread.join();
 	}
-	
-	m_transmissionThread = std::thread([this]() {
-		PerformDataTransmission();
-	});
+
+	m_transmissionThread = std::thread([this]()
+									   { PerformDataTransmission(); });
 }
 
 void CPortMasterDlg::PauseTransmission()
 {
 	// 直接暂停传输，不弹出提示对话框
 	m_transmissionPaused = true;
-	
+
 	// 更新按钮文本和状态栏
 	m_btnSend.SetWindowText(_T("继续"));
 	m_staticPortStatus.SetWindowText(_T("传输已暂停"));
-	
+
 	// 记录日志
 	this->WriteLog("传输已暂停");
 }
@@ -523,7 +522,7 @@ void CPortMasterDlg::PauseTransmission()
 void CPortMasterDlg::ResumeTransmission()
 {
 	m_transmissionPaused = false;
-	
+
 	// 更新按钮文本和状态栏
 	m_btnSend.SetWindowText(_T("中断"));
 	m_staticPortStatus.SetWindowText(_T("传输已恢复"));
@@ -598,7 +597,7 @@ void CPortMasterDlg::PerformDataTransmission()
 					// 更新状态（使用PostMessage确保线程安全）
 					if (!m_transmissionPaused)
 					{
-						CString* progressStatus = new CString();
+						CString *progressStatus = new CString();
 						progressStatus->Format(_T("正在传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
 						PostMessage(WM_USER + 12, 0, (LPARAM)progressStatus);
 					}
@@ -636,15 +635,15 @@ void CPortMasterDlg::PerformDataTransmission()
 		else if (m_transport && m_transport->IsOpen())
 		{
 			this->WriteLog("PerformDataTransmission: Using raw transport");
-			
+
 			// 使用原始传输 - 添加分块发送支持以确保大数据完整传输
-			if (data.size() > 4096)  // 对于大于4KB的数据进行分块发送
+			if (data.size() > 4096) // 对于大于4KB的数据进行分块发送
 			{
 				this->WriteLog("PerformDataTransmission: Large data for raw transport, size=" + std::to_string(data.size()) + ", using chunked send");
-				
-				const size_t chunkSize = 4096;  // 原始传输使用较大的块大小
+
+				const size_t chunkSize = 4096; // 原始传输使用较大的块大小
 				size_t totalSent = 0;
-				
+
 				while (totalSent < data.size() && !m_transmissionCancelled)
 				{
 					// 检查是否暂停
@@ -657,11 +656,11 @@ void CPortMasterDlg::PerformDataTransmission()
 						break;
 
 					size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
-					
+
 					this->WriteLog("PerformDataTransmission: Sending raw chunk " + std::to_string(totalSent / chunkSize + 1) +
 								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
 								   ", size=" + std::to_string(currentChunkSize));
-					
+
 					TransportError chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
 					if (chunkError != TransportError::Success)
 					{
@@ -670,25 +669,25 @@ void CPortMasterDlg::PerformDataTransmission()
 						error = chunkError;
 						break;
 					}
-					
+
 					totalSent += currentChunkSize;
-					
+
 					// 更新进度条（使用PostMessage确保线程安全）
 					int progress = (int)((totalSent * 100) / data.size());
 					PostMessage(WM_USER + 11, 0, progress);
-					
+
 					// 更新状态（使用PostMessage确保线程安全）
 					if (!m_transmissionPaused)
 					{
-						CString* progressStatus = new CString();
+						CString *progressStatus = new CString();
 						progressStatus->Format(_T("原始传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
 						PostMessage(WM_USER + 12, 0, (LPARAM)progressStatus);
 					}
-					
+
 					// 添加小延迟，避免过快发送导致接收端处理不及时
 					std::this_thread::sleep_for(std::chrono::milliseconds(10));
 				}
-				
+
 				if (totalSent == data.size() && error == TransportError::Success && !m_transmissionCancelled)
 				{
 					this->WriteLog("PerformDataTransmission: Raw chunked transmission completed successfully");
@@ -722,24 +721,24 @@ void CPortMasterDlg::ClearAllCacheData()
 		// 仅清除接收数据缓存，不影响发送窗口数据
 		m_receiveDataCache.clear();
 		m_receiveCacheValid = false;
-		
+
 		// 重置二进制数据检测状态，允许重新检测
 		m_binaryDataDetected = false;
 		m_binaryDataPreview.Empty();
-		
+
 		// 仅清空接收数据显示框，保持发送窗口数据不变
 		m_editReceiveData.SetWindowText(_T(""));
-		
+
 		// 清除临时缓存文件
 		ClearTempCacheFile();
-		
+
 		// 重置接收统计信息
 		m_bytesReceived = 0;
 		SetDlgItemText(IDC_STATIC_RECEIVED, _T("0"));
-		
+
 		// 注意：发送窗口数据和发送统计信息保持不变
 		// 发送窗口数据仅能通过用户主动点击"清空发送框"按钮进行清除
-		
+
 		this->WriteLog("已清除接收缓存数据，发送窗口数据保持不变");
 	}
 	catch (const std::exception &e)
@@ -760,15 +759,15 @@ void CPortMasterDlg::OnBnClickedButtonStop()
 			m_transmissionCancelled = true;
 			m_isTransmitting = false;
 			m_transmissionPaused = false;
-			
+
 			// 立即终止传输进程并清除所有已接收的缓存数据
 			ClearAllCacheData();
-			
+
 			// 更新界面状态
 			m_btnSend.SetWindowText(_T("发送"));
 			m_staticPortStatus.SetWindowText(_T("传输已终止"));
 			m_progress.SetPos(0);
-			
+
 			// 记录日志
 			this->WriteLog("用户手动终止传输，已清除所有缓存数据");
 		}
@@ -782,34 +781,20 @@ void CPortMasterDlg::OnBnClickedButtonStop()
 
 void CPortMasterDlg::OnBnClickedButtonFile()
 {
-	// 根据当前十六进制模式状态选择合适的文件过滤器
+	// 统一的文件过滤器配置：默认显示所有文件，包含所有文件类型
 	CString filter;
 	CString defaultExt;
-	
-	if (m_checkHex.GetCheck() == BST_CHECKED)
-	{
-		// 十六进制模式：优先显示二进制文件类型
-		filter = _T("所有文件 (*.*)|*.*|")
-				 _T("二进制文件 (*.bin)|*.bin|")
-				 _T("数据文件 (*.dat)|*.dat|")
-				 _T("可执行文件 (*.exe)|*.exe|")
-				 _T("图像文件 (*.jpg;*.png;*.bmp)|*.jpg;*.png;*.bmp|")
-				 _T("压缩文件 (*.zip;*.rar;*.7z)|*.zip;*.rar;*.7z|")
-				 _T("文档文件 (*.pdf;*.doc;*.docx)|*.pdf;*.doc;*.docx|")
-				 _T("文本文件 (*.txt)|*.txt||");
-		defaultExt = _T("");
-	}
-	else
-	{
-		// 文本模式：优先显示所有文件类型，而不是txt格式
-		filter = _T("所有文件 (*.*)|*.*|")
-				 _T("文本文件 (*.txt)|*.txt|")
-				 _T("配置文件 (*.ini;*.cfg;*.conf)|*.ini;*.cfg;*.conf|")
-				 _T("日志文件 (*.log)|*.log|")
-				 _T("脚本文件 (*.bat;*.cmd;*.ps1)|*.bat;*.cmd;*.ps1|")
-				 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java)|*.cpp;*.h;*.c;*.cs;*.java||");
-		defaultExt = _T("");
-	}
+
+	// 无论是否勾选16进制模式，都使用相同的过滤器配置
+	filter = _T("所有文件 (*.*)|*.*|")
+			 _T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
+			 _T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
+			 _T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
+			 _T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
+			 _T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
+			 _T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
+			 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
+	defaultExt = _T("");
 
 	// 文件选择对话框
 	CFileDialog dlg(TRUE, defaultExt, NULL,
@@ -846,31 +831,31 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			CString fileName = filePath.Mid(filePath.ReverseFind('\\') + 1);
 			CString fileExt = fileName.Mid(fileName.ReverseFind('.') + 1);
 			fileExt.MakeLower();
-			
-			bool isBinaryFile = (fileExt == _T("prn") || fileExt == _T("bin") || 
-								fileExt == _T("dat") || fileExt == _T("exe") || 
-								fileExt == _T("dll") || fileExt == _T("img") ||
-								fileExt == _T("zip") || fileExt == _T("rar") ||
-								fileExt == _T("7z") || fileExt == _T("tar") ||
-								fileExt == _T("gz") || fileExt == _T("bz2") ||
-								fileExt == _T("xz") || fileExt == _T("iso") ||
-								fileExt == _T("pdf") || fileExt == _T("doc") ||
-								fileExt == _T("docx") || fileExt == _T("xls") ||
-								fileExt == _T("xlsx") || fileExt == _T("ppt") ||
-								fileExt == _T("pptx") || fileExt == _T("jpg") ||
-								fileExt == _T("jpeg") || fileExt == _T("png") ||
-								fileExt == _T("gif") || fileExt == _T("bmp") ||
-								fileExt == _T("tiff") || fileExt == _T("mp3") ||
-								fileExt == _T("mp4") || fileExt == _T("avi") ||
-								fileExt == _T("mkv") || fileExt == _T("wmv"));
+
+			bool isBinaryFile = (fileExt == _T("prn") || fileExt == _T("bin") ||
+								 fileExt == _T("dat") || fileExt == _T("exe") ||
+								 fileExt == _T("dll") || fileExt == _T("img") ||
+								 fileExt == _T("zip") || fileExt == _T("rar") ||
+								 fileExt == _T("7z") || fileExt == _T("tar") ||
+								 fileExt == _T("gz") || fileExt == _T("bz2") ||
+								 fileExt == _T("xz") || fileExt == _T("iso") ||
+								 fileExt == _T("pdf") || fileExt == _T("doc") ||
+								 fileExt == _T("docx") || fileExt == _T("xls") ||
+								 fileExt == _T("xlsx") || fileExt == _T("ppt") ||
+								 fileExt == _T("pptx") || fileExt == _T("jpg") ||
+								 fileExt == _T("jpeg") || fileExt == _T("png") ||
+								 fileExt == _T("gif") || fileExt == _T("bmp") ||
+								 fileExt == _T("tiff") || fileExt == _T("mp3") ||
+								 fileExt == _T("mp4") || fileExt == _T("avi") ||
+								 fileExt == _T("mkv") || fileExt == _T("wmv"));
 
 			CString fileContent;
-			
+
 			// 实现大文件预览功能 - 发送端仅显示前1KB内容
 			const size_t PREVIEW_SIZE = 1024; // 1KB预览
 			bool isLargeFile = (fileLength > PREVIEW_SIZE);
 			size_t displaySize = isLargeFile ? PREVIEW_SIZE : (size_t)fileLength;
-			
+
 			if (isBinaryFile)
 			{
 				// 二进制文件：保持原始字节数据用于16进制显示
@@ -903,7 +888,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			{
 				// 二进制文件：缓存完整文件内容，使用统一显示逻辑
 				UpdateSendCacheFromBytes(fileBuffer, (size_t)fileLength);
-				
+
 				// 使用统一的显示逻辑，而不是直接设置十六进制内容
 				UpdateSendDisplayFromCache();
 			}
@@ -922,7 +907,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 				{
 					m_editSendData.SetWindowText(fileContent);
 				}
-				
+
 				// 对于文本文件，如果是大文件，需要重新读取完整内容到缓存
 				if (isLargeFile)
 				{
@@ -1221,7 +1206,7 @@ CString CPortMasterDlg::StringToHex(const CString &str)
 	return hexStr;
 }
 
-CString CPortMasterDlg::BytesToHex(const BYTE* data, size_t length)
+CString CPortMasterDlg::BytesToHex(const BYTE *data, size_t length)
 {
 	CString hexStr;
 	CString asciiStr;
@@ -1397,7 +1382,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 	{
 		// 实现100行显示限制（与接收窗口保持一致）
 		const int MAX_DISPLAY_LINES = 100;
-		
+
 		// 根据当前显示模式从缓存更新显示
 		if (m_checkHex.GetCheck() == BST_CHECKED)
 		{
@@ -1405,12 +1390,12 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 			CString hexDisplay;
 			CString asciiStr;
 			int lineCount = 0;
-			
+
 			// 计算需要显示的数据范围（最后100行）
 			size_t totalLines = (m_sendDataCache.size() + 15) / 16; // 向上取整
 			size_t startLine = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
 			size_t startByte = startLine * 16;
-			
+
 			// 如果数据被截断，添加提示
 			if (startLine > 0)
 			{
@@ -1481,15 +1466,15 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 			// 文本模式：智能编码检测和显示（与接收窗口完全一致）
 			std::vector<char> safeData(m_sendDataCache.begin(), m_sendDataCache.end());
 			safeData.push_back('\0');
-			
+
 			CString displayText;
 			bool decoded = false;
-			
+
 			// 检测是否为二进制数据（包含大量不可打印字符）
 			size_t nonPrintableCount = 0;
 			size_t nullByteCount = 0;
 			size_t sampleSize = min(m_sendDataCache.size(), (size_t)1024); // 检查前1KB
-			
+
 			for (size_t i = 0; i < sampleSize; i++)
 			{
 				uint8_t byte = m_sendDataCache[i];
@@ -1502,7 +1487,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					nonPrintableCount++;
 				}
 			}
-			
+
 			// 改进的二进制检测逻辑：
 			// 1. 如果包含空字节，很可能是二进制文件
 			// 2. 如果不可打印字符超过20%，认为是二进制数据
@@ -1514,22 +1499,22 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					isBinaryData = true;
 				}
 			}
-			
+
 			if (isBinaryData)
 			{
 				displayText = _T("=== 检测到二进制数据 ===\r\n");
 				displayText += _T("建议切换到十六进制模式查看完整内容\r\n");
-				
+
 				CString sizeInfo;
 				sizeInfo.Format(_T("数据大小: %u 字节\r\n"), (unsigned int)m_sendDataCache.size());
 				displayText += sizeInfo;
-				
+
 				CString charInfo;
-				charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"), 
-					(unsigned int)nonPrintableCount, 
-					sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
+				charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"),
+								(unsigned int)nonPrintableCount,
+								sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
 				displayText += charInfo;
-				
+
 				if (nullByteCount > 0)
 				{
 					CString nullInfo;
@@ -1537,12 +1522,12 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					displayText += nullInfo;
 				}
 				displayText += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
-				
+
 				// 显示前512字节的可打印字符作为预览，按行格式化
 				size_t previewSize = min(m_sendDataCache.size(), (size_t)512);
 				CString previewLine;
 				int lineLength = 0;
-				
+
 				for (size_t i = 0; i < previewSize; i++)
 				{
 					uint8_t byte = m_sendDataCache[i];
@@ -1573,7 +1558,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 						previewLine += _T(".");
 						lineLength++;
 					}
-					
+
 					// 每80个字符换行
 					if (lineLength >= 80)
 					{
@@ -1583,18 +1568,18 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 						lineLength = 0;
 					}
 				}
-				
+
 				// 添加剩余的预览内容
 				if (!previewLine.IsEmpty())
 				{
 					displayText += previewLine;
 				}
-				
+
 				if (m_sendDataCache.size() > 512)
 				{
 					displayText += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
 				}
-				
+
 				decoded = true;
 			}
 			else
@@ -1604,7 +1589,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 				{
 					CA2T utf8Text(safeData.data(), CP_UTF8);
 					CString testResult = CString(utf8Text);
-					
+
 					if (!testResult.IsEmpty())
 					{
 						displayText = testResult;
@@ -1615,7 +1600,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 				{
 					// UTF-8解码失败，继续尝试其他编码
 				}
-				
+
 				// 如果UTF-8失败，尝试GBK解码
 				if (!decoded)
 				{
@@ -1623,7 +1608,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					{
 						CA2T gbkText(safeData.data(), CP_ACP);
 						CString testResult = CString(gbkText);
-						
+
 						if (!testResult.IsEmpty())
 						{
 							displayText = testResult;
@@ -1635,7 +1620,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 						// GBK解码失败
 					}
 				}
-				
+
 				// 如果所有编码都失败，显示原始字节
 				if (!decoded)
 				{
@@ -1646,12 +1631,12 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					}
 				}
 			}
-			
+
 			// 实现100行限制（与接收窗口保持一致）
 			CString lines[MAX_DISPLAY_LINES];
 			int totalLines = 0;
 			int currentPos = 0;
-			
+
 			// 分割文本为行
 			while (currentPos < displayText.GetLength() && totalLines < MAX_DISPLAY_LINES * 2) // 预留缓冲
 			{
@@ -1672,21 +1657,21 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 					currentPos = nextPos + 1;
 				}
 			}
-			
+
 			// 构建最终显示文本（最后100行）
 			CString finalText;
 			int startLineIndex = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
-			
+
 			if (startLineIndex > 0)
 			{
 				finalText += _T("... (显示最后100行数据) ...\r\n");
 			}
-			
+
 			for (int i = startLineIndex; i < totalLines; i++)
 			{
 				finalText += lines[i % MAX_DISPLAY_LINES];
 			}
-			
+
 			// 设置标志防止OnEnChangeEditSendData事件触发
 			m_updateDisplayInProgress = true;
 			m_editSendData.SetWindowText(finalText);
@@ -1694,7 +1679,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 		}
 
 		// 自动滚动到最新数据（与接收窗口保持一致）
-		m_editSendData.SetSel(-1, -1); // 移动光标到末尾
+		m_editSendData.SetSel(-1, -1);							  // 移动光标到末尾
 		m_editSendData.LineScroll(m_editSendData.GetLineCount()); // 滚动到底部
 	}
 	else
@@ -1761,7 +1746,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 
 	// 实现100行显示限制
 	const int MAX_DISPLAY_LINES = 100;
-	
+
 	// 根据当前显示模式从缓存更新显示
 	if (m_checkHex.GetCheck() == BST_CHECKED)
 	{
@@ -1769,12 +1754,12 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 		CString hexDisplay;
 		CString asciiStr;
 		int lineCount = 0;
-		
+
 		// 计算需要显示的数据范围（最后100行）
 		size_t totalLines = (m_receiveDataCache.size() + 15) / 16; // 向上取整
 		size_t startLine = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
 		size_t startByte = startLine * 16;
-		
+
 		// 如果数据被截断，添加提示
 		if (startLine > 0)
 		{
@@ -1842,15 +1827,15 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 		// 文本模式：智能编码检测和显示
 		std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
 		safeData.push_back('\0');
-		
+
 		CString displayText;
 		bool decoded = false;
-		
+
 		// 检测是否为二进制数据（包含大量不可打印字符）
 		size_t nonPrintableCount = 0;
 		size_t nullByteCount = 0;
 		size_t sampleSize = min(m_receiveDataCache.size(), (size_t)1024); // 检查前1KB
-		
+
 		for (size_t i = 0; i < sampleSize; i++)
 		{
 			uint8_t byte = m_receiveDataCache[i];
@@ -1863,7 +1848,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				nonPrintableCount++;
 			}
 		}
-		
+
 		// 改进的二进制检测逻辑：
 		// 1. 如果包含空字节，很可能是二进制文件
 		// 2. 如果不可打印字符超过20%，认为是二进制数据
@@ -1875,24 +1860,24 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				isBinaryData = true;
 			}
 		}
-		
+
 		if (isBinaryData)
 		{
 			// 如果是首次检测到二进制数据，生成静态预览内容
 			if (!m_binaryDataDetected)
 			{
 				m_binaryDataDetected = true;
-				
+
 				// 生成简化的静态提示内容
 				m_binaryDataPreview = _T("=== 检测到二进制数据 ===\r\n");
 				m_binaryDataPreview += _T("建议切换到十六进制模式查看完整内容\r\n");
 				m_binaryDataPreview += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
-				
+
 				// 显示前512字节的可打印字符作为预览，按行格式化
 				size_t previewSize = min(m_receiveDataCache.size(), (size_t)512);
 				CString previewLine;
 				int lineLength = 0;
-				
+
 				for (size_t i = 0; i < previewSize; i++)
 				{
 					uint8_t byte = m_receiveDataCache[i];
@@ -1923,7 +1908,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 						previewLine += _T(".");
 						lineLength++;
 					}
-					
+
 					// 每80个字符换行
 					if (lineLength >= 80)
 					{
@@ -1933,19 +1918,19 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 						lineLength = 0;
 					}
 				}
-				
+
 				// 添加剩余的预览内容
 				if (!previewLine.IsEmpty())
 				{
 					m_binaryDataPreview += previewLine;
 				}
-				
+
 				if (m_receiveDataCache.size() > 512)
 				{
 					m_binaryDataPreview += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
 				}
 			}
-			
+
 			// 使用静态预览内容，避免重复刷新
 			displayText = m_binaryDataPreview;
 			decoded = true;
@@ -1957,7 +1942,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 			{
 				CA2T utf8Text(safeData.data(), CP_UTF8);
 				CString testResult = CString(utf8Text);
-				
+
 				if (!testResult.IsEmpty())
 				{
 					displayText = testResult;
@@ -1968,7 +1953,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 			{
 				// UTF-8解码失败，继续尝试其他编码
 			}
-			
+
 			// 如果UTF-8失败，尝试GBK解码
 			if (!decoded)
 			{
@@ -1976,7 +1961,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				{
 					CA2T gbkText(safeData.data(), CP_ACP);
 					CString testResult = CString(gbkText);
-					
+
 					if (!testResult.IsEmpty())
 					{
 						displayText = testResult;
@@ -1988,7 +1973,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 					// GBK解码失败
 				}
 			}
-			
+
 			// 如果所有编码都失败，显示原始字节
 			if (!decoded)
 			{
@@ -1999,12 +1984,12 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				}
 			}
 		}
-		
+
 		// 实现100行限制
 		CString lines[MAX_DISPLAY_LINES];
 		int totalLines = 0;
 		int currentPos = 0;
-		
+
 		// 分割文本为行
 		while (currentPos < displayText.GetLength() && totalLines < MAX_DISPLAY_LINES * 2) // 预留缓冲
 		{
@@ -2025,26 +2010,26 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 				currentPos = nextPos + 1;
 			}
 		}
-		
+
 		// 构建最终显示文本（最后100行）
 		CString finalText;
 		int startLineIndex = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
-		
+
 		if (startLineIndex > 0)
 		{
 			finalText += _T("... (显示最后100行数据) ...\r\n");
 		}
-		
+
 		for (int i = startLineIndex; i < totalLines; i++)
 		{
 			finalText += lines[i % MAX_DISPLAY_LINES];
 		}
-		
+
 		m_editReceiveData.SetWindowText(finalText);
 	}
 
 	// 自动滚动到最新数据
-	m_editReceiveData.SetSel(-1, -1); // 移动光标到末尾
+	m_editReceiveData.SetSel(-1, -1);								// 移动光标到末尾
 	m_editReceiveData.LineScroll(m_editReceiveData.GetLineCount()); // 滚动到底部
 }
 
@@ -2087,18 +2072,18 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 	m_sendCacheValid = true;
 }
 
-void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
+void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE *data, size_t length)
 {
 	// 直接从字节数据更新缓存，避免任何编码转换
 	m_sendDataCache.clear();
 	m_sendDataCache.reserve(length);
-	
+
 	// 直接复制字节数据，保持原始值不变
 	for (size_t i = 0; i < length; i++)
 	{
 		m_sendDataCache.push_back(data[i]);
 	}
-	
+
 	this->WriteLog("=== UpdateSendCacheFromBytes 结束 ===");
 	m_sendCacheValid = true;
 }
@@ -2271,7 +2256,7 @@ void CPortMasterDlg::OnEnChangeEditSendData()
 	{
 		return;
 	}
-	
+
 	// 当用户在发送数据编辑框中输入内容时，更新缓存
 	CString currentData;
 	m_editSendData.GetWindowText(currentData);
@@ -2456,12 +2441,12 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		if (!cachedData.empty())
 		{
 			this->WriteLog("保存策略：直接保存原始字节数据，避免编码转换问题");
-			
+
 			// 无论是十六进制还是文本模式，都直接保存原始二进制数据
 			// 这样可以确保数据的100%完整性，避免所有编码转换问题
 			binaryData = cachedData;
 			isBinaryMode = true;
-			
+
 			if (m_checkHex.GetCheck() == BST_CHECKED)
 			{
 				this->WriteLog("十六进制模式：保存原始二进制数据");
@@ -2521,15 +2506,30 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		}
 	}
 
-	// 根据数据类型选择合适的文件对话框和保存方法
+	// 根据数据类型和十六进制模式状态选择合适的文件对话框和保存方法
 	if (isBinaryMode && !binaryData.empty())
 	{
 		this->WriteLog("准备保存原始字节数据，大小: " + std::to_string(binaryData.size()) + " 字节");
-		
+
+		// 统一的文件过滤器配置：默认显示所有文件，包含所有文件类型
+		CString filter;
+		CString defaultExt;
+
+		// 无论是否勾选16进制模式，都使用相同的过滤器配置
+		filter = _T("所有文件 (*.*)|*.*|")
+				 _T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
+				 _T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
+				 _T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
+				 _T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
+				 _T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
+				 _T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
+				 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
+		defaultExt = _T("");
+
 		// 提供多种文件格式选择，包括原始编码的文本文件
-		CFileDialog dlg(FALSE, _T("txt"), _T("ReceiveData"),
+		CFileDialog dlg(FALSE, defaultExt, _T("ReceiveData"),
 						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-						_T("原始文本文件 (*.txt)|*.txt|日志文件 (*.log)|*.log|数据文件 (*.dat)|*.dat|二进制文件 (*.bin)|*.bin|所有文件 (*.*)|*.*||"));
+						filter);
 
 		if (dlg.DoModal() == IDOK)
 		{
@@ -2539,10 +2539,26 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	else if (!saveData.IsEmpty())
 	{
 		this->WriteLog("准备保存文本数据，长度: " + std::to_string(saveData.GetLength()) + " 字符");
+
+		// 统一的文件过滤器配置：默认显示所有文件，包含所有文件类型
+		CString filter;
+		CString defaultExt;
+
+		// 无论是否勾选16进制模式，都使用相同的过滤器配置
+		filter = _T("所有文件 (*.*)|*.*|")
+				 _T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
+				 _T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
+				 _T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
+				 _T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
+				 _T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
+				 _T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
+				 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
+		defaultExt = _T("");
+
 		// 文本模式：保存为文本文件
-		CFileDialog dlg(FALSE, _T("txt"), _T("ReceiveData"),
+		CFileDialog dlg(FALSE, defaultExt, _T("ReceiveData"),
 						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-						_T("文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*||"));
+						filter);
 
 		if (dlg.DoModal() == IDOK)
 		{
@@ -2565,10 +2581,10 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 	this->WriteLog("输入数据长度: " + std::to_string(data.GetLength()) + " 字符");
 
 	// 添加数据内容预览用于调试
-	CString preview = data.Left(100);  // 前100个字符
+	CString preview = data.Left(100); // 前100个字符
 	this->WriteLog("数据预览: " + std::string(CT2A(preview)));
 
-	try 
+	try
 	{
 		// 改用更可靠的文件写入方式
 		// 方法1：使用CFile二进制模式 + UTF-8编码
@@ -2578,9 +2594,9 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 			// 将CString转换为UTF-8字节序列
 			CT2A utf8Data(data, CP_UTF8);
 			int utf8Length = strlen(utf8Data);
-			
+
 			this->WriteLog("UTF-8转换后字节长度: " + std::to_string(utf8Length));
-			
+
 			// 写入UTF-8字节序列
 			file.Write(utf8Data, utf8Length);
 			file.Close();
@@ -2601,7 +2617,7 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 			MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 		}
 	}
-	catch (const std::exception& e)
+	catch (const std::exception &e)
 	{
 		this->WriteLog("保存过程异常: " + std::string(e.what()));
 		MessageBox(_T("保存文件异常"), _T("错误"), MB_OK | MB_ICONERROR);
@@ -2664,7 +2680,7 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::ve
 			MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 		}
 	}
-	catch (const std::exception& e)
+	catch (const std::exception &e)
 	{
 		this->WriteLog("保存过程异常: " + std::string(e.what()));
 		MessageBox(_T("保存文件异常"), _T("错误"), MB_OK | MB_ICONERROR);
@@ -3264,7 +3280,7 @@ LRESULT CPortMasterDlg::OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lPara
 // 新增：传输状态更新消息处理
 LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 {
-	CString* statusText = reinterpret_cast<CString*>(lParam);
+	CString *statusText = reinterpret_cast<CString *>(lParam);
 	if (statusText)
 	{
 		m_staticPortStatus.SetWindowText(*statusText);
@@ -3277,7 +3293,7 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 {
 	TransportError error = static_cast<TransportError>(wParam);
-	
+
 	if (m_transmissionCancelled)
 	{
 		// 传输被取消
@@ -3293,7 +3309,7 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_isTransmitting = false;
 		m_transmissionPaused = false;
 		m_btnSend.SetWindowText(_T("发送"));
-		
+
 		CString errorMsg;
 		errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
 		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
@@ -3324,17 +3340,22 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_staticPortStatus.SetWindowText(completeStatus);
 		m_progress.SetPos(100);
 
+		// 添加传输完成提示对话框
+		CString successMsg;
+		successMsg.Format(_T("文件传输完成！\n\n已成功发送 %u 字节数据"), data.size());
+		MessageBox(successMsg, _T("传输完成"), MB_OK | MB_ICONINFORMATION);
+
 		// 修复：发送成功后不再自动清空发送框，保留用户输入的内容
 		// 只清空内部缓存，确保下次发送是全新数据
 		m_sendDataCache.clear();
 		m_sendCacheValid = false;
-		
+
 		this->WriteLog("发送完成，已清空内部缓存");
 
 		// 2秒后恢复连接状态显示并重置进度条
 		SetTimer(1, 2000, NULL);
 	}
-	
+
 	return 0;
 }
 
@@ -3344,7 +3365,7 @@ LRESULT CPortMasterDlg::OnTransmissionError(WPARAM wParam, LPARAM lParam)
 	m_isTransmitting = false;
 	m_transmissionPaused = false;
 	m_btnSend.SetWindowText(_T("发送"));
-	
+
 	MessageBox(_T("传输过程中发生异常"), _T("错误"), MB_OK | MB_ICONERROR);
 	return 0;
 }
@@ -3428,7 +3449,7 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		// 设置传输模式 - 始终默认选择直通模式，不受配置文件影响
 		m_radioReliable.SetCheck(BST_UNCHECKED);
 		m_radioDirect.SetCheck(BST_CHECKED);
-		
+
 		// 更新状态栏显示为直通模式
 		SetDlgItemText(IDC_STATIC_MODE, _T("直通"));
 
@@ -3685,7 +3706,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 		bool needReopenWrite = false;
 		if (m_tempCacheFile.is_open())
 		{
-			m_tempCacheFile.flush();  // 确保所有数据写入磁盘
+			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
 			m_tempCacheFile.close(); // 关闭写入流避免冲突
 			needReopenWrite = true;
 			WriteLog("ReadDataFromTempCache: 临时关闭写入流以确保数据完整性");
@@ -3740,7 +3761,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 		}
 
 		file.close();
-		
+
 		// 重新打开写入流以继续接收数据
 		if (needReopenWrite)
 		{
@@ -3754,7 +3775,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 				WriteLog("ReadDataFromTempCache: 重新打开写入流失败");
 			}
 		}
-		
+
 		return result;
 	}
 	catch (const std::exception &e)
