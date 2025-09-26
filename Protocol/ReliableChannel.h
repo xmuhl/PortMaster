@@ -89,6 +89,9 @@ public:
     size_t GetSendQueueSize() const;
     size_t GetReceiveQueueSize() const;
 
+    // 【可靠模式按钮管控】文件传输活跃状态检查接口
+    bool IsFileTransferActive() const;
+
 private:
     // 内部类型定义
     struct Packet

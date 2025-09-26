@@ -8,6 +8,7 @@
 #include <thread>
 #include <atomic>
 #include <fstream>
+#include <chrono>
 
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
@@ -84,6 +85,21 @@ protected:
 		size_t dataSize;
 		std::string hexPreview;
 		std::string asciiPreview;
+	};
+
+	// 【数据稳定性检测】保存数据稳定性跟踪器
+	struct StabilityTracker {
+		std::vector<uint8_t> lastReadData;
+		uint64_t lastTotalReceived;
+		uint64_t lastBytesReceived;
+		int consecutiveMatches;
+		std::chrono::steady_clock::time_point lastChangeTime;
+
+		StabilityTracker() : lastTotalReceived(0), lastBytesReceived(0),
+		                    consecutiveMatches(0), lastChangeTime(std::chrono::steady_clock::now()) {}
+
+		bool IsDataStable(const std::vector<uint8_t>& currentData,
+		                 uint64_t currentTotal, uint64_t currentBytes);
 	};
 
 private:
@@ -193,6 +209,9 @@ private:
 	void StopReceiveThread();
 	void UpdateConnectionStatus();
 	void UpdateStatistics();
+
+	// 【可靠模式按钮管控】保存按钮状态控制
+	void UpdateSaveButtonStatus();
 	void OnTransportDataReceived(const std::vector<uint8_t> &data);
 	void OnTransportError(const std::string &error);
 	void OnReliableProgress(uint32_t progress);
@@ -206,6 +225,13 @@ private:
 	std::vector<uint8_t> ReadDataFromTempCache(uint64_t offset, size_t length);
 	std::vector<uint8_t> ReadAllDataFromTempCache();
 	void ClearTempCacheFile();
+
+	// 【保存完整性误报修复】不加锁的读取版本，用于已持锁的保存流程
+	std::vector<uint8_t> ReadDataFromTempCacheUnlocked(uint64_t offset, size_t length);
+	std::vector<uint8_t> ReadAllDataFromTempCacheUnlocked();
+
+	// 【数据稳定性检测】保存后验证机制
+	bool VerifySavedFileSize(const CString& filePath, size_t expectedSize);
 
 	// 重写虚函数用于资源清理
 	virtual void PostNcDestroy();

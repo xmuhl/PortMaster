@@ -580,6 +580,14 @@ size_t ReliableChannel::GetReceiveQueueSize() const
     return m_receiveQueue.size();
 }
 
+// 【可靠模式按钮管控】检查文件传输是否活跃
+bool ReliableChannel::IsFileTransferActive() const
+{
+    // m_fileTransferActive 是简单bool类型，不需要加锁
+    // 返回当前文件传输的活跃状态，用于UI层判断保存按钮启用时机
+    return m_fileTransferActive;
+}
+
 // 处理线程
 void ReliableChannel::ProcessThread()
 {

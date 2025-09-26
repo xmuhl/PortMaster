@@ -2529,88 +2529,181 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	this->WriteLog("使用临时缓存文件: " + std::to_string(m_useTempCacheFile));
 	this->WriteLog("临时缓存文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
 
-	// 优先从临时缓存文件读取原始数据（如果可用）
+	// 【可靠模式缺陷修复】根据分析报告实施完整性自愈循环和重新读取机制
 	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
 	{
-		this->WriteLog("尝试从临时缓存文件读取数据...");
+		this->WriteLog("=== 可靠模式保存流程开始 ===");
 		this->WriteLog("临时缓存文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
 		this->WriteLog("临时缓存文件是否存在: " + std::string(PathFileExists(m_tempCacheFilePath) ? "是" : "否"));
 
-		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
-		this->WriteLog("从临时缓存读取数据大小: " + std::to_string(cachedData.size()) + " 字节");
-		this->WriteLog("临时缓存文件累计接收字节数: " + std::to_string(m_totalReceivedBytes));
-		this->WriteLog("UI显示接收字节数: " + std::to_string(m_bytesReceived));
+		std::vector<uint8_t> finalCachedData;
+		bool dataStabilized = false;
 
-		// 【深层修复】根据最新检查报告：增强完整性校验，三个值对比
-		bool dataIntegrityOk = true;
-		CString integrityIssues;
+		// 【数据稳定性检测机制】替代原有的完整性自愈循环
+		const int MAX_STABILITY_CHECKS = 10;
+		const int STABILITY_CHECK_INTERVAL_MS = 300;
 
-		if (cachedData.size() != m_totalReceivedBytes)
+		// 可靠模式额外延迟，给握手和重传更多时间
+		bool isReliableMode = m_radioReliable.GetCheck() == BST_CHECKED;
+		if (isReliableMode)
 		{
-			dataIntegrityOk = false;
-			integrityIssues += _T("• 文件实际大小与写入统计不符\n");
+			this->WriteLog("可靠模式检测，添加额外500ms延迟等待握手完成...");
+			Sleep(500);
 		}
 
-		if (m_bytesReceived != m_totalReceivedBytes)
-		{
-			dataIntegrityOk = false;
-			integrityIssues += _T("• UI统计与文件写入统计不符\n");
-		}
+		StabilityTracker stabilityTracker;
+		this->WriteLog("=== 开始数据稳定性检测 ===");
 
-		if (cachedData.size() != m_bytesReceived)
+		for (int checkCount = 0; checkCount < MAX_STABILITY_CHECKS; checkCount++)
 		{
-			dataIntegrityOk = false;
-			integrityIssues += _T("• 文件实际大小与UI统计不符\n");
-		}
+			this->WriteLog("稳定性检测第" + std::to_string(checkCount + 1) + "次，等待数据稳定...");
 
-		if (!dataIntegrityOk)
-		{
-			CString warningMsg;
-			warningMsg.Format(_T("⚠️ 数据完整性检测异常\n\n")
-							 _T("检测到以下数据不一致问题：\n")
-							 _T("%s\n")
-							 _T("详细信息：\n")
-							 _T("• UI显示接收: %u 字节\n")
-							 _T("• 文件写入统计: %u 字节\n")
-							 _T("• 实际文件大小: %u 字节\n\n")
-							 _T("可能原因：接收过程中存在并发写入冲突\n")
-							 _T("建议：停止传输，重新开始接收\n\n")
-							 _T("是否仍要保存当前数据？（可能不完整）"),
-							 integrityIssues,
-							 (unsigned)m_bytesReceived,
-							 (unsigned)m_totalReceivedBytes,
-							 (unsigned)cachedData.size());
+			bool readSuccess = false;
+			bool lockError = false;
+			std::vector<uint8_t> currentData;
 
-			int result = MessageBox(warningMsg, _T("数据完整性校验失败"), MB_YESNO | MB_ICONWARNING);
-			if (result == IDNO)
+			// 【保存完整性误报修复】使用不加锁版本避免死锁
+			try
 			{
-				this->WriteLog("用户取消保存操作 - 数据完整性校验失败");
-				this->WriteLog("完整性问题详情: " + std::string(CT2A(integrityIssues)));
+				std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
+
+				// 使用不加锁版本，因为外层已持锁
+				currentData = ReadAllDataFromTempCacheUnlocked();
+				readSuccess = true;
+
+				this->WriteLog("当前读取数据大小: " + std::to_string(currentData.size()) + " 字节");
+				this->WriteLog("文件写入统计: " + std::to_string(m_totalReceivedBytes) + " 字节");
+				this->WriteLog("UI显示统计: " + std::to_string(m_bytesReceived) + " 字节");
+
+			}
+			catch (const std::system_error& e)
+			{
+				// 【区分异常类型处理】捕获锁相关异常
+				this->WriteLog("❌ 锁操作异常: " + std::string(e.what()));
+				lockError = true;
+			}
+			catch (const std::exception& e)
+			{
+				// 【区分异常类型处理】捕获其他异常
+				this->WriteLog("❌ 文件读取异常: " + std::string(e.what()));
+				readSuccess = false;
+			}
+
+			// 【完善错误提示逻辑】区分不同类型的错误
+			if (lockError)
+			{
+				this->WriteLog("❌ 检测到锁冲突，终止保存操作");
+				MessageBox(_T("⚠️ 临时缓存读取冲突\n\n")
+						  _T("当前有其他操作正在访问接收缓存，请稍后再试。\n")
+						  _T("这通常发生在数据仍在传输或处理中。"),
+						  _T("保存暂时不可用"), MB_OK | MB_ICONWARNING);
 				return;
 			}
-			this->WriteLog("用户确认保存不完整数据 - 已警告数据完整性问题");
-		}
-		else
-		{
-			this->WriteLog("数据完整性校验通过 - 三个统计值完全一致");
+
+			if (!readSuccess)
+			{
+				this->WriteLog("❌ 文件读取失败，终止保存操作");
+				MessageBox(_T("⚠️ 临时缓存文件读取失败\n\n")
+						  _T("无法读取接收数据缓存文件，请检查：\n")
+						  _T("1. 磁盘空间是否充足\n")
+						  _T("2. 临时文件是否被其他程序占用\n")
+						  _T("3. 稍后重新尝试保存"),
+						  _T("文件读取错误"), MB_OK | MB_ICONERROR);
+				return;
+			}
+
+			// 【核心稳定性检测】检查数据是否已稳定
+			if (readSuccess && !currentData.empty())
+			{
+				if (stabilityTracker.IsDataStable(currentData, m_totalReceivedBytes, m_bytesReceived))
+				{
+					this->WriteLog("✅ 数据稳定性检测成功 - 数据已停止变化且满足稳定条件");
+					finalCachedData = currentData;
+					dataStabilized = true;
+					break;
+				}
+				else
+				{
+					this->WriteLog("数据仍在变化，连续匹配次数: " + std::to_string(stabilityTracker.consecutiveMatches) + "/2");
+				}
+			}
+			else if (readSuccess && currentData.empty())
+			{
+				this->WriteLog("⚠️ 读取到空数据，可能传输尚未开始或已清空");
+			}
+
+			// 等待间隔时间，让数据有机会稳定
+			if (checkCount < MAX_STABILITY_CHECKS - 1)
+			{
+				Sleep(STABILITY_CHECK_INTERVAL_MS);
+			}
 		}
 
-		if (!cachedData.empty())
+		// 处理稳定性检测结果
+		if (!dataStabilized)
 		{
-			this->WriteLog("保存策略：直接保存原始字节数据，避免编码转换问题");
+			// 数据未稳定，但仍可选择保存当前状态
+			CString warningMsg;
+			warningMsg.Format(_T("⚠️ 数据稳定性检测超时\n\n")
+							 _T("经过%d次检测（共%.1f秒），数据仍在变化：\n")
+							 _T("• UI显示接收: %u 字节\n")
+							 _T("• 文件写入统计: %u 字节\n")
+							 _T("• 当前读取大小: %u 字节\n\n")
+							 _T("可能原因：\n")
+							 _T("• 传输仍在进行中\n")
+							 _T("• 可靠模式握手/重传延迟\n")
+							 _T("• 系统负载过高\n\n")
+							 _T("建议操作：\n")
+							 _T("1. 点击'否'，等待传输彻底完成后重试\n")
+							 _T("2. 或点击'是'保存当前快照（可能不完整）\n\n")
+							 _T("是否仍要保存当前数据快照？"),
+							 MAX_STABILITY_CHECKS,
+							 (MAX_STABILITY_CHECKS * STABILITY_CHECK_INTERVAL_MS) / 1000.0,
+							 (unsigned)m_bytesReceived,
+							 (unsigned)m_totalReceivedBytes,
+							 (unsigned)finalCachedData.size());
 
-			// 无论是十六进制还是文本模式，都直接保存原始二进制数据
-			// 这样可以确保数据的100%完整性，避免所有编码转换问题
-			binaryData = cachedData;
+			int result = MessageBox(warningMsg, _T("数据稳定性检测超时"), MB_YESNO | MB_ICONWARNING);
+			if (result == IDNO)
+			{
+				this->WriteLog("用户选择等待数据稳定，取消当前保存操作");
+				this->WriteLog("建议用户等待传输彻底结束后再次点击保存");
+				return;
+			}
+
+			this->WriteLog("⚠️ 用户确认保存未稳定的数据快照");
+
+			// 【最后读取】用户确认后最后一次读取最新数据
+			this->WriteLog("执行最后一次数据读取以获取最新状态...");
+			try
+			{
+				std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
+				finalCachedData = ReadAllDataFromTempCacheUnlocked();
+				this->WriteLog("最终快照数据大小: " + std::to_string(finalCachedData.size()) + " 字节");
+			}
+			catch (const std::exception& e)
+			{
+				this->WriteLog("❌ 最后读取失败: " + std::string(e.what()));
+				MessageBox(_T("最终数据读取失败，无法保存"), _T("保存失败"), MB_OK | MB_ICONERROR);
+				return;
+			}
+		}
+
+		if (!finalCachedData.empty())
+		{
+			this->WriteLog("保存策略：使用最新读取的原始字节数据");
+
+			// 使用最新读取的数据，而不是早期缓存
+			binaryData = finalCachedData;
 			isBinaryMode = true;
 
 			if (m_checkHex.GetCheck() == BST_CHECKED)
 			{
-				this->WriteLog("十六进制模式：保存原始二进制数据");
+				this->WriteLog("十六进制模式：保存最新原始二进制数据");
 			}
 			else
 			{
-				this->WriteLog("文本模式：保存原始二进制数据（用户可用任何编辑器以正确编码打开）");
+				this->WriteLog("文本模式：保存最新原始二进制数据");
 			}
 		}
 	}
@@ -2819,9 +2912,31 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::ve
 
 			this->WriteLog("原始字节数据写入成功");
 
-			CString message;
-			message.Format(_T("原始数据保存成功 (%zu 字节)"), data.size());
-			MessageBox(message, _T("提示"), MB_OK | MB_ICONINFORMATION);
+			// 【保存后验证机制】验证保存文件的完整性
+			bool verificationPassed = VerifySavedFileSize(filePath, data.size());
+			if (verificationPassed)
+			{
+				this->WriteLog("✅ 保存后验证通过 - 文件大小与预期一致");
+
+				CString message;
+				message.Format(_T("原始数据保存成功 (%zu 字节)\n✅ 文件完整性验证通过"), data.size());
+				MessageBox(message, _T("保存成功"), MB_OK | MB_ICONINFORMATION);
+			}
+			else
+			{
+				this->WriteLog("❌ 保存后验证失败 - 文件大小与预期不符");
+
+				CString message;
+				message.Format(_T("⚠️ 保存完成但验证失败\n\n")
+							  _T("预期大小: %zu 字节\n")
+							  _T("文件路径: %s\n\n")
+							  _T("建议检查：\n")
+							  _T("1. 磁盘空间是否充足\n")
+							  _T("2. 文件是否被其他程序占用\n")
+							  _T("3. 重新保存验证"),
+							  data.size(), filePath.GetString());
+				MessageBox(message, _T("保存验证异常"), MB_OK | MB_ICONWARNING);
+			}
 
 			// 更新日志
 			CTime time = CTime::GetCurrentTime();
@@ -3218,6 +3333,42 @@ void CPortMasterDlg::UpdateConnectionStatus()
 	}
 
 	m_staticPortStatus.SetWindowText(statusText);
+
+	// 【可靠模式按钮管控】根据缺陷分析报告实施按钮状态控制
+	UpdateSaveButtonStatus();
+}
+
+// 【可靠模式按钮管控】更新保存按钮状态的专用函数
+void CPortMasterDlg::UpdateSaveButtonStatus()
+{
+	bool enableSaveButton = true; // 默认启用保存按钮
+
+	// 检查是否处于可靠模式
+	bool isReliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+
+	if (isReliableMode && m_reliableChannel && m_isConnected)
+	{
+		// 在可靠模式下，只有文件传输彻底完成才允许保存
+		bool fileTransferActive = m_reliableChannel->IsFileTransferActive();
+
+		if (fileTransferActive)
+		{
+			enableSaveButton = false;
+			this->WriteLog("可靠模式：文件传输进行中，禁用保存按钮");
+		}
+		else
+		{
+			this->WriteLog("可靠模式：文件传输已完成，启用保存按钮");
+		}
+	}
+	else if (!isReliableMode)
+	{
+		// 直通模式：保持原有逻辑，正常启用保存按钮
+		this->WriteLog("直通模式：正常启用保存按钮");
+	}
+
+	// 更新保存按钮状态
+	m_btnSaveAll.EnableWindow(enableSaveButton ? TRUE : FALSE);
 }
 
 void CPortMasterDlg::UpdateStatistics()
@@ -3322,6 +3473,10 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 
 		MessageBox(_T("传输失败"), _T("错误"), MB_OK | MB_ICONERROR);
 	}
+
+	// 【可靠模式按钮管控】传输完成后立即更新保存按钮状态
+	// 确保在文件传输结束后及时启用保存按钮
+	UpdateSaveButtonStatus();
 }
 
 void CPortMasterDlg::OnReliableStateChanged(bool connected)
@@ -3971,6 +4126,194 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCache()
 {
 	return ReadDataFromTempCache(0, 0); // 0长度表示读取全部数据
+}
+
+// 【保存完整性误报修复】不加锁的读取版本，避免与外层锁冲突
+std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offset, size_t length)
+{
+	std::vector<uint8_t> result;
+
+	if (m_tempCacheFilePath.IsEmpty() || !PathFileExists(m_tempCacheFilePath))
+	{
+		return result;
+	}
+
+	try
+	{
+		// 【关键修复】不加锁版本，假设调用方已持锁
+
+		// 安全关闭写入流并确保数据完整性
+		bool needReopenWrite = false;
+		if (m_tempCacheFile.is_open())
+		{
+			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
+			m_tempCacheFile.close(); // 关闭写入流避免冲突
+			needReopenWrite = true;
+			WriteLog("ReadDataFromTempCacheUnlocked: 安全关闭写入流，待写入队列大小: " + std::to_string(m_pendingWrites.size()));
+		}
+
+		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
+		if (!file.is_open())
+		{
+			WriteLog("ReadDataFromTempCacheUnlocked: 无法打开临时缓存文件进行读取");
+			return result;
+		}
+
+		// 检查文件大小
+		file.seekg(0, std::ios::end);
+		std::streamsize fileSize = file.tellg();
+		file.seekg(0, std::ios::beg);
+		WriteLog("ReadDataFromTempCacheUnlocked: 临时缓存文件大小 " + std::to_string(fileSize) + " 字节");
+
+		// 验证偏移量
+		if (offset >= static_cast<uint64_t>(fileSize))
+		{
+			WriteLog("ReadDataFromTempCacheUnlocked: 偏移量超出文件大小");
+			file.close();
+			// 重新打开写入流
+			if (needReopenWrite)
+			{
+				m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
+			}
+			return result;
+		}
+
+		// 计算实际可读取的长度
+		size_t availableLength = static_cast<size_t>(fileSize - offset);
+		size_t readLength = (length == 0 || length > availableLength) ? availableLength : length;
+		WriteLog("ReadDataFromTempCacheUnlocked: 计划读取 " + std::to_string(readLength) + " 字节，从偏移量 " + std::to_string(offset));
+
+		if (readLength > 0)
+		{
+			result.resize(readLength);
+			file.seekg(offset);
+			file.read(reinterpret_cast<char *>(result.data()), readLength);
+
+			if (file.fail())
+			{
+				WriteLog("ReadDataFromTempCacheUnlocked: 文件读取失败");
+				result.clear();
+			}
+			else
+			{
+				WriteLog("ReadDataFromTempCacheUnlocked: 成功读取 " + std::to_string(result.size()) + " 字节");
+			}
+		}
+
+		file.close();
+
+		// 【并发安全修复】重新打开写入流并处理待写入队列
+		if (needReopenWrite)
+		{
+			m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
+			if (m_tempCacheFile.is_open())
+			{
+				WriteLog("ReadDataFromTempCacheUnlocked: 重新打开写入流成功");
+
+				// 处理在读取期间积累的待写入数据
+				size_t processedCount = 0;
+				while (!m_pendingWrites.empty())
+				{
+					const auto& pendingData = m_pendingWrites.front();
+					m_tempCacheFile.write(reinterpret_cast<const char*>(pendingData.data()), pendingData.size());
+					if (m_tempCacheFile.fail())
+					{
+						WriteLog("处理待写入队列失败，剩余 " + std::to_string(m_pendingWrites.size()) + " 项");
+						break;
+					}
+					m_totalReceivedBytes += pendingData.size();
+					m_pendingWrites.pop();
+					processedCount++;
+				}
+
+				if (processedCount > 0)
+				{
+					m_tempCacheFile.flush();
+					WriteLog("已处理 " + std::to_string(processedCount) + " 个待写入数据项");
+				}
+			}
+			else
+			{
+				WriteLog("ReadDataFromTempCacheUnlocked: 重新打开写入流失败，待写入队列大小: " + std::to_string(m_pendingWrites.size()));
+			}
+		}
+
+		return result;
+	}
+	catch (const std::exception &e)
+	{
+		WriteLog("从临时缓存文件读取数据异常(Unlocked): " + std::string(e.what()));
+		return result;
+	}
+}
+
+std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCacheUnlocked()
+{
+	return ReadDataFromTempCacheUnlocked(0, 0); // 0长度表示读取全部数据
+}
+
+// 【数据稳定性检测】检查数据是否稳定
+bool CPortMasterDlg::StabilityTracker::IsDataStable(const std::vector<uint8_t>& currentData,
+                                                   uint64_t currentTotal, uint64_t currentBytes)
+{
+	// 检查是否有数据变化
+	bool dataChanged = (currentData.size() != lastReadData.size()) ||
+	                  (currentTotal != lastTotalReceived) ||
+	                  (currentBytes != lastBytesReceived);
+
+	if (dataChanged) {
+		// 数据发生变化，重置计数器和时间
+		lastReadData = currentData;
+		lastTotalReceived = currentTotal;
+		lastBytesReceived = currentBytes;
+		lastChangeTime = std::chrono::steady_clock::now();
+		consecutiveMatches = 0;
+		return false;
+	} else {
+		// 数据未变化，增加连续匹配计数
+		consecutiveMatches++;
+	}
+
+	// 检查稳定性条件：
+	// 1. 连续至少2次相同读取
+	// 2. 距离最后变化超过500ms
+	auto quietDuration = std::chrono::steady_clock::now() - lastChangeTime;
+	bool timeStable = (quietDuration > std::chrono::milliseconds(500));
+	bool countStable = (consecutiveMatches >= 2);
+
+	return timeStable && countStable;
+}
+
+// 【数据稳定性检测】保存后验证文件大小
+bool CPortMasterDlg::VerifySavedFileSize(const CString& filePath, size_t expectedSize)
+{
+	HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ,
+	                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+	if (hFile == INVALID_HANDLE_VALUE) {
+		this->WriteLog("❌ 保存验证失败：无法打开文件 " + std::string(CT2A(filePath)));
+		return false;
+	}
+
+	LARGE_INTEGER fileSize;
+	bool success = false;
+	if (GetFileSizeEx(hFile, &fileSize)) {
+		size_t actualSize = static_cast<size_t>(fileSize.QuadPart);
+
+		if (actualSize == expectedSize) {
+			this->WriteLog("✅ 保存验证成功：" + std::to_string(actualSize) + " 字节");
+			success = true;
+		} else {
+			this->WriteLog("❌ 保存验证失败：期望 " + std::to_string(expectedSize) +
+			              " 字节，实际 " + std::to_string(actualSize) + " 字节");
+			success = false;
+		}
+	} else {
+		this->WriteLog("❌ 保存验证失败：无法获取文件大小");
+		success = false;
+	}
+
+	CloseHandle(hFile);
+	return success;
 }
 
 void CPortMasterDlg::ClearTempCacheFile()
