@@ -153,6 +153,7 @@
     <ClCompile Include="Transport\ParallelTransport.cpp" />
     <ClCompile Include="Transport\NetworkPrintTransport.cpp" />
     <ClCompile Include="Transport\UsbPrintTransport.cpp" />
+    <ClCompile Include="Transport\TransportFactory.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="resources\PortMaster.rc" />

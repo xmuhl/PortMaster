@@ -21,6 +21,10 @@
 #include <fstream>
 #include <algorithm>
 
+// 【UI优化】定时器ID常量定义
+#define TIMER_ID_CONNECTION_STATUS  1  // 连接状态恢复定时器
+#define TIMER_ID_THROTTLED_DISPLAY   2  // 接收显示节流定时器
+
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
@@ -95,7 +99,7 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 // CPortMasterDlg 对话框
 
 CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
-	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false), m_updateDisplayInProgress(false)
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false), m_updateDisplayInProgress(false), m_receiveDisplayPending(false), m_lastReceiveDisplayUpdate(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -327,14 +331,27 @@ HCURSOR CPortMasterDlg::OnQueryDragIcon()
 
 void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 {
-	if (nIDEvent == 1)
+	if (nIDEvent == TIMER_ID_CONNECTION_STATUS)
 	{
 		// 定时器1：恢复连接状态显示
-		KillTimer(1);
+		KillTimer(TIMER_ID_CONNECTION_STATUS);
 		UpdateConnectionStatus();
 
 		// 不再自动重置进度条，保持传输完成后的100%状态
 		// 进度条只在开始新传输时重置为0
+	}
+	else if (nIDEvent == TIMER_ID_THROTTLED_DISPLAY)
+	{
+		// 【UI优化】定时器2：节流的接收显示更新
+		KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+
+		if (m_receiveDisplayPending)
+		{
+			// 执行延迟的显示更新
+			UpdateReceiveDisplayFromCache();
+			m_lastReceiveDisplayUpdate = ::GetTickCount();
+			m_receiveDisplayPending = false;
+		}
 	}
 
 	CDialogEx::OnTimer(nIDEvent);
@@ -2033,6 +2050,36 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 	m_editReceiveData.LineScroll(m_editReceiveData.GetLineCount()); // 滚动到底部
 }
 
+// 【UI优化】节流的接收显示更新 - 避免大文件传输时频繁UI刷新导致的窗口闪烁
+void CPortMasterDlg::ThrottledUpdateReceiveDisplay()
+{
+	DWORD currentTime = ::GetTickCount();
+
+	// 检查是否在节流间隔内
+	if (currentTime - m_lastReceiveDisplayUpdate < RECEIVE_DISPLAY_THROTTLE_MS)
+	{
+		// 如果在节流间隔内，设置待处理标志并启动定时器
+		if (!m_receiveDisplayPending)
+		{
+			m_receiveDisplayPending = true;
+			// 启动延时定时器，延时时间为剩余的节流间隔
+			DWORD remainingTime = RECEIVE_DISPLAY_THROTTLE_MS - (currentTime - m_lastReceiveDisplayUpdate);
+			SetTimer(TIMER_ID_THROTTLED_DISPLAY, remainingTime, nullptr);
+		}
+		// 如果已经有待处理的更新，不需要重复设置定时器
+	}
+	else
+	{
+		// 超过节流间隔，立即更新显示
+		UpdateReceiveDisplayFromCache();
+		m_lastReceiveDisplayUpdate = currentTime;
+		m_receiveDisplayPending = false;
+
+		// 确保定时器被取消（以防万一）
+		KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+	}
+}
+
 void CPortMasterDlg::UpdateSendCache(const CString &data)
 {
 	// 将CString转换为字节序列并缓存
@@ -3144,7 +3191,7 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		m_progress.SetPos(100);
 
 		// 2秒后恢复连接状态显示，但保持进度条100%状态
-		SetTimer(1, 2000, NULL);
+		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
 	}
 	else
 	{
@@ -3233,8 +3280,8 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			// 更新接收缓存 - 保存原始字节数据
 			UpdateReceiveCache(*data);
 
-			// 基于缓存更新显示
-			UpdateReceiveDisplayFromCache();
+			// 【UI优化】使用节流机制更新显示，避免大文件传输时频繁重绘
+			ThrottledUpdateReceiveDisplay();
 
 			this->WriteLog("=== 接收数据调试信息结束 ===");
 		}
@@ -3345,15 +3392,13 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		successMsg.Format(_T("文件传输完成！\n\n已成功发送 %u 字节数据"), data.size());
 		MessageBox(successMsg, _T("传输完成"), MB_OK | MB_ICONINFORMATION);
 
-		// 修复：发送成功后不再自动清空发送框，保留用户输入的内容
-		// 只清空内部缓存，确保下次发送是全新数据
-		m_sendDataCache.clear();
-		m_sendCacheValid = false;
+		// 【UI体验修复】发送成功后保持缓存有效，允许用户重新发送相同内容
+		// 不清空缓存，保持与当前发送窗口内容的一致性，支持重复发送
 
-		this->WriteLog("发送完成，已清空内部缓存");
+		this->WriteLog("发送完成，缓存保持有效以支持重复发送");
 
 		// 2秒后恢复连接状态显示并重置进度条
-		SetTimer(1, 2000, NULL);
+		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
 	}
 
 	return 0;

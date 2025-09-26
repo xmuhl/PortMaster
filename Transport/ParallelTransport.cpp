@@ -6,6 +6,25 @@
 #include <sstream>
 #include <chrono>
 
+// 【修复宏重复定义风险】将系统宏定义移到文件头部并添加条件编译保护
+#ifndef FILE_DEVICE_PARALLEL_PORT
+#define FILE_DEVICE_PARALLEL_PORT   0x00000016
+#endif
+
+#ifndef METHOD_BUFFERED
+#define METHOD_BUFFERED             0
+#endif
+
+#ifndef FILE_ANY_ACCESS
+#define FILE_ANY_ACCESS             0
+#endif
+
+#ifndef CTL_CODE
+#define CTL_CODE( DeviceType, Function, Method, Access ) (                 \
+    ((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method) \
+)
+#endif
+
 // 构造函数
 ParallelTransport::ParallelTransport()
     : m_state(TransportState::Closed)
@@ -635,14 +654,6 @@ ParallelPortStatus ParallelTransport::QueryPortStatus() const
 
     // 尝试使用并口特定的状态查询IOCTL
     // 不同的并口驱动可能支持不同的IOCTL代码
-    // 定义并口设备相关常量
-    #define FILE_DEVICE_PARALLEL_PORT   0x00000016
-    #define METHOD_BUFFERED             0
-    #define FILE_ANY_ACCESS             0
-    #define CTL_CODE( DeviceType, Function, Method, Access ) (                 \
-        ((DeviceType) << 16) | ((Access) << 14) | ((Function) << 2) | (Method) \
-    )
-
     const DWORD IOCTL_PAR_QUERY_INFORMATION = CTL_CODE(FILE_DEVICE_PARALLEL_PORT, 1, METHOD_BUFFERED, FILE_ANY_ACCESS);
 
     BOOL success = DeviceIoControl(

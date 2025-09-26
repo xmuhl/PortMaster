@@ -148,6 +148,10 @@ private:
     bool IsSequenceInWindow(uint16_t sequence, uint16_t base, uint16_t windowSize) const;
     uint16_t GetWindowDistance(uint16_t from, uint16_t to) const;
 
+    // 握手管理
+    uint16_t GenerateSessionId();
+    bool WaitForHandshakeCompletion(uint32_t timeoutMs);
+
     uint32_t CalculateTimeout() const;
     void UpdateRTT(uint32_t rttMs);
 
@@ -204,6 +208,13 @@ private:
     int64_t m_currentFileSize;     // 当前文件大小
     int64_t m_currentFileProgress; // 当前文件进度
     bool m_fileTransferActive;     // 文件传输活动状态
+
+    // 握手状态管理
+    std::atomic<bool> m_handshakeCompleted;    // 握手完成标志
+    std::atomic<uint16_t> m_handshakeSequence; // 当前握手帧的序列号
+    std::atomic<uint16_t> m_sessionId;         // 当前会话ID
+    mutable std::mutex m_handshakeMutex;       // 握手状态锁
+    std::condition_variable m_handshakeCondition; // 握手完成条件变量
 
     // 性能相关
     uint32_t m_rttMs;                                     // 往返时延

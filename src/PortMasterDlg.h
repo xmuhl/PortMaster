@@ -70,6 +70,7 @@ protected:
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
+	void ThrottledUpdateReceiveDisplay();					   // 【UI优化】节流的接收显示更新
 	void UpdateSendCache(const CString &data);				   // 更新发送缓存
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
 	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
@@ -80,6 +81,11 @@ private:
 	bool m_binaryDataDetected;  // 是否检测到二进制数据
 	CString m_binaryDataPreview;  // 二进制数据预览内容（静态）
 	bool m_updateDisplayInProgress;  // 标志：正在更新显示，防止事件递归
+
+	// 【UI优化】接收窗口更新节流机制
+	bool m_receiveDisplayPending;    // 标志：是否有待处理的接收显示更新
+	DWORD m_lastReceiveDisplayUpdate; // 最后一次更新接收显示的时间戳
+	const DWORD RECEIVE_DISPLAY_THROTTLE_MS = 200; // 接收显示更新节流间隔(ms)
 
 	DECLARE_MESSAGE_MAP()
 

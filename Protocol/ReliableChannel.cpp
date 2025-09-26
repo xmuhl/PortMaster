@@ -29,7 +29,7 @@ void ReliableChannel::WriteLog(const std::string &message)
 
 // 构造函数
 ReliableChannel::ReliableChannel()
-    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
+    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
 {
     m_lastActivity = std::chrono::steady_clock::now();
     WriteLog("ReliableChannel constructor called");
@@ -360,37 +360,21 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         return false;
     }
 
-    // 【关键修复】等待握手完成 - 等待接收端 ACK 响应
+    // 【关键修复】等待握手真正完成 - 等待接收端 ACK 响应
     WriteLog("SendFile: waiting for handshake ACK response");
-    bool handshakeCompleted = false;
-    auto handshakeStart = std::chrono::steady_clock::now();
-    const auto handshakeTimeout = std::chrono::milliseconds(m_config.timeoutMax * 2); // 握手超时时间
+    uint32_t handshakeTimeoutMs = m_config.timeoutMax * 2; // 握手超时时间(ms)
+    WriteLog("SendFile: handshake timeout set to " + std::to_string(handshakeTimeoutMs) + "ms");
 
-    while (!handshakeCompleted && m_connected)
+    // 使用条件变量和超时等待握手完成
+    bool handshakeCompleted = WaitForHandshakeCompletion(handshakeTimeoutMs);
+
+    if (!handshakeCompleted)
     {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - handshakeStart);
-
-        if (elapsed > handshakeTimeout)
-        {
-            WriteLog("SendFile: ERROR - handshake timeout, elapsed=" + std::to_string(elapsed.count()) + "ms");
-            ReportError("握手超时，接收端未响应");
-            file.close();
-            m_fileTransferActive = false;
-            return false;
-        }
-
-        // 检查是否收到接收端的响应（通过检查发送窗口中START帧的ACK状态）
-        // 简化实现：等待一个RTT时间让握手完成
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-
-        // 检查握手是否完成的标志
-        // 在实际实现中，这里应该有更精确的握手状态检查
-        if (elapsed > std::chrono::milliseconds(m_config.timeoutBase))
-        {
-            handshakeCompleted = true; // 假设握手已完成
-            WriteLog("SendFile: handshake assumed completed after base timeout");
-        }
+        WriteLog("SendFile: ERROR - handshake timeout after " + std::to_string(handshakeTimeoutMs) + "ms");
+        ReportError("握手超时，接收端未响应START帧");
+        file.close();
+        m_fileTransferActive = false;
+        return false;
     }
 
     if (!m_connected)
@@ -1149,6 +1133,24 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
         WriteLog("ProcessAckFrame: calculated RTT=" + std::to_string(rtt) + "ms");
         UpdateRTT(static_cast<uint32_t>(rtt));
 
+        // 【关键修复4】检查是否为握手帧的ACK
+        uint16_t handshakeSeq = m_handshakeSequence.load();
+        if (sequence == handshakeSeq && !m_handshakeCompleted.load())
+        {
+            WriteLog("ProcessAckFrame: received ACK for handshake START frame (sequence=" + std::to_string(sequence) + ")");
+
+            // 设置握手完成标志
+            m_handshakeCompleted.store(true);
+
+            // 通知等待握手完成的线程
+            {
+                std::lock_guard<std::mutex> handshakeLock(m_handshakeMutex);
+                m_handshakeCondition.notify_all();
+            }
+
+            WriteLog("ProcessAckFrame: handshake completed, sessionId=" + std::to_string(m_sessionId.load()));
+        }
+
         // 推进发送窗口
         WriteLog("ProcessAckFrame: calling AdvanceSendWindow");
         AdvanceSendWindow();
@@ -1455,22 +1457,55 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
              ", fileSize=" + std::to_string(fileSize) +
              ", modifyTime=" + std::to_string(modifyTime));
 
+    // 【关键修复1】动态生成会话ID，不再写死为0
+    uint16_t sessionId = GenerateSessionId();
+    WriteLog("SendStart: generated sessionId=" + std::to_string(sessionId));
+
+    // 【关键修复2】重置握手状态，准备新的握手过程
+    m_handshakeCompleted.store(false);
+    WriteLog("SendStart: handshake state reset");
+
     StartMetadata metadata;
     metadata.version = m_config.version;
     metadata.flags = 0;
     metadata.fileName = fileName;
     metadata.fileSize = fileSize;
     metadata.modifyTime = modifyTime;
-    metadata.sessionId = 0; // TODO: 生成会话ID
+    metadata.sessionId = sessionId;
 
-    // 【关键修复】为控制帧使用独立的序列号，不占用数据传输序列号
+    // 分配序列号用于START控制帧
     uint16_t sequence = AllocateSequence();
+    m_handshakeSequence.store(sequence); // 保存握手序列号
     WriteLog("SendStart: allocated sequence=" + std::to_string(sequence) + " for START frame");
 
     // 编码开始帧
     WriteLog("SendStart: encoding START frame...");
     std::vector<uint8_t> frameData = m_frameCodec->EncodeStartFrame(sequence, metadata);
     WriteLog("SendStart: frame encoded, size=" + std::to_string(frameData.size()));
+
+    // 【关键修复3】将START帧也存储到发送窗口中以支持ACK匹配
+    {
+        std::lock_guard<std::mutex> lock(m_windowMutex);
+        uint16_t index = sequence % m_config.windowSize;
+
+        if (index < m_sendWindow.size())
+        {
+            // 创建START控制帧的数据包
+            auto packet = std::make_shared<Packet>(sequence, frameData);
+            packet->acknowledged = false;
+
+            m_sendWindow[index].packet = packet;
+            m_sendWindow[index].inUse = true;
+
+            WriteLog("SendStart: START frame stored in send window at index=" + std::to_string(index));
+        }
+        else
+        {
+            WriteLog("SendStart: ERROR - window index out of bounds: " + std::to_string(index));
+            ReportError("发送窗口索引越界");
+            return false;
+        }
+    }
 
     // 发送帧数据
     WriteLog("SendStart: sending START frame to transport...");
@@ -1489,14 +1524,24 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
             m_stats.bytesSent += frameData.size();
         }
 
-        // 注意：START 帧作为控制帧，不保存到发送窗口中
-        // 握手的可靠性通过应用层的超时和重试机制保证
-        WriteLog("SendStart: START frame is a control frame, not stored in send window");
+        WriteLog("SendStart: START control frame stored in send window for ACK tracking");
     }
     else
     {
         WriteLog("SendStart: ERROR - failed to send START frame, error=" +
                  std::to_string(static_cast<int>(error)) + ", written=" + std::to_string(written));
+
+        // 发送失败时清理发送窗口
+        {
+            std::lock_guard<std::mutex> lock(m_windowMutex);
+            uint16_t index = sequence % m_config.windowSize;
+            if (index < m_sendWindow.size())
+            {
+                m_sendWindow[index].inUse = false;
+                m_sendWindow[index].packet.reset();
+            }
+        }
+
         ReportError("START帧发送失败");
     }
 
@@ -1812,4 +1857,49 @@ void ReliableChannel::UpdateProgress(int64_t current, int64_t total)
     {
         m_progressCallback(current, total);
     }
+}
+
+// 生成会话ID
+uint16_t ReliableChannel::GenerateSessionId()
+{
+    // 使用当前时间戳的低16位作为会话ID，确保每次握手都有不同的ID
+    auto now = std::chrono::steady_clock::now();
+    auto timestamp = now.time_since_epoch().count();
+    uint16_t sessionId = static_cast<uint16_t>(timestamp & 0xFFFF);
+
+    // 确保会话ID不为0（0表示无效会话）
+    if (sessionId == 0)
+    {
+        sessionId = 1;
+    }
+
+    m_sessionId.store(sessionId);
+    WriteLog("GenerateSessionId: generated sessionId=" + std::to_string(sessionId));
+    return sessionId;
+}
+
+// 等待握手完成
+bool ReliableChannel::WaitForHandshakeCompletion(uint32_t timeoutMs)
+{
+    WriteLog("WaitForHandshakeCompletion: waiting for handshake, timeout=" + std::to_string(timeoutMs) + "ms");
+
+    std::unique_lock<std::mutex> lock(m_handshakeMutex);
+
+    // 使用条件变量等待握手完成，带超时
+    bool completed = m_handshakeCondition.wait_for(
+        lock,
+        std::chrono::milliseconds(timeoutMs),
+        [this]() { return m_handshakeCompleted.load(); }
+    );
+
+    if (completed)
+    {
+        WriteLog("WaitForHandshakeCompletion: handshake completed successfully");
+    }
+    else
+    {
+        WriteLog("WaitForHandshakeCompletion: handshake timeout after " + std::to_string(timeoutMs) + "ms");
+    }
+
+    return completed;
 }
