@@ -4222,22 +4222,94 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 
 		// 计算读取长度（0表示读取全部）
 		size_t availableLength = static_cast<size_t>(fileSize - offset);
-		size_t readLength = (length == 0) ? static_cast<size_t>(fileSize) : (length < availableLength ? length : availableLength);
+		size_t targetReadLength = (length == 0) ? static_cast<size_t>(fileSize) : (length < availableLength ? length : availableLength);
 
-		if (readLength > 0 && offset < static_cast<uint64_t>(fileSize))
+		if (targetReadLength > 0 && offset < static_cast<uint64_t>(fileSize))
 		{
-			result.resize(readLength);
-			file.seekg(offset);
-			file.read(reinterpret_cast<char*>(result.data()), readLength);
+			WriteLog("ReadDataFromTempCacheUnlocked: 开始分块循环读取，目标长度 " + std::to_string(targetReadLength) + " 字节");
 
-			if (file.fail())
+			// 【关键修复】实施分块循环读取机制，彻底解决大文件部分读取问题
+			try
 			{
-				WriteLog("ReadDataFromTempCacheUnlocked: 文件读取失败");
-				result.clear();
+				// 预分配内存，提高性能
+				result.reserve(targetReadLength);
+
+				// 设置64KB块大小进行循环读取
+				const size_t CHUNK_SIZE = 65536; // 64KB
+				std::vector<char> chunk(CHUNK_SIZE);
+
+				file.seekg(offset);
+				size_t totalBytesRead = 0;
+				size_t remainingBytes = targetReadLength;
+
+				WriteLog("ReadDataFromTempCacheUnlocked: 使用64KB分块循环读取策略");
+
+				while (remainingBytes > 0 && !file.eof())
+				{
+					// 计算本次读取大小（不超过剩余字节数和块大小）
+					size_t currentChunkSize = (CHUNK_SIZE < remainingBytes) ? CHUNK_SIZE : remainingBytes;
+
+					// 读取数据块
+					file.read(chunk.data(), static_cast<std::streamsize>(currentChunkSize));
+					std::streamsize actualRead = file.gcount(); // 获取实际读取的字节数
+
+					if (actualRead > 0)
+					{
+						// 将读取的数据追加到结果向量
+						size_t actualReadSize = static_cast<size_t>(actualRead);
+						result.insert(result.end(), chunk.begin(), chunk.begin() + actualReadSize);
+						totalBytesRead += actualReadSize;
+						remainingBytes -= actualReadSize;
+
+						// 【调试日志】记录读取进度（每10MB输出一次进度）
+						if (totalBytesRead % (10 * 1024 * 1024) == 0 || remainingBytes == 0)
+						{
+							WriteLog("ReadDataFromTempCacheUnlocked: 读取进度 " +
+									std::to_string(totalBytesRead) + "/" +
+									std::to_string(targetReadLength) + " 字节 (" +
+									std::to_string((totalBytesRead * 100) / targetReadLength) + "%)");
+						}
+					}
+					else
+					{
+						// 如果无法再读取数据，检查是否是文件结束
+						if (file.eof())
+						{
+							WriteLog("ReadDataFromTempCacheUnlocked: 到达文件末尾，读取完成");
+							break;
+						}
+						else if (file.fail())
+						{
+							WriteLog("ReadDataFromTempCacheUnlocked: 读取过程中发生错误");
+							break;
+						}
+					}
+				}
+
+				// 【数据完整性验证】检查实际读取量与预期读取量
+				if (totalBytesRead == targetReadLength)
+				{
+					WriteLog("ReadDataFromTempCacheUnlocked: ✅ 数据读取完整，成功读取 " +
+							std::to_string(totalBytesRead) + " 字节");
+				}
+				else
+				{
+					WriteLog("ReadDataFromTempCacheUnlocked: ⚠️ 数据读取不完整 - 预期: " +
+							std::to_string(targetReadLength) + " 字节，实际: " +
+							std::to_string(totalBytesRead) + " 字节");
+
+					// 对于不完整读取，仍然返回已读取的数据，但记录警告
+					if (totalBytesRead == 0)
+					{
+						WriteLog("ReadDataFromTempCacheUnlocked: ❌ 未读取到任何数据，清空结果");
+						result.clear();
+					}
+				}
 			}
-			else
+			catch (const std::exception& e)
 			{
-				WriteLog("ReadDataFromTempCacheUnlocked: 成功读取 " + std::to_string(result.size()) + " 字节");
+				WriteLog("ReadDataFromTempCacheUnlocked: ❌ 分块读取过程中发生异常: " + std::string(e.what()));
+				result.clear();
 			}
 		}
 
