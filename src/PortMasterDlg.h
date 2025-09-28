@@ -87,20 +87,7 @@ protected:
 		std::string asciiPreview;
 	};
 
-	// 【数据稳定性检测】保存数据稳定性跟踪器
-	struct StabilityTracker {
-		std::vector<uint8_t> lastReadData;
-		uint64_t lastTotalReceived;
-		uint64_t lastBytesReceived;
-		int consecutiveMatches;
-		std::chrono::steady_clock::time_point lastChangeTime;
-
-		StabilityTracker() : lastTotalReceived(0), lastBytesReceived(0),
-		                    consecutiveMatches(0), lastChangeTime(std::chrono::steady_clock::now()) {}
-
-		bool IsDataStable(const std::vector<uint8_t>& currentData,
-		                 uint64_t currentTotal, uint64_t currentBytes);
-	};
+	// 【简化保存流程】移除复杂的数据稳定性检测，采用直接保存+后验证模式
 
 private:
 	// 二进制数据显示状态管理
