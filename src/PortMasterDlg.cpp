@@ -2582,9 +2582,40 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		StabilityTracker stabilityTracker;
 		this->WriteLog("=== 开始数据稳定性检测 ===");
 
-		for (int checkCount = 0; checkCount < MAX_STABILITY_CHECKS; checkCount++)
+		// 【增强传输状态感知】在稳定性检测前检查传输状态
+		if (m_isTransmitting || m_transmissionPaused)
 		{
-			this->WriteLog("稳定性检测第" + std::to_string(checkCount + 1) + "次，等待数据稳定...");
+			this->WriteLog("⚠️ 检测到传输仍在进行中 (isTransmitting=" + std::string(m_isTransmitting ? "true" : "false") +
+			               ", isPaused=" + std::string(m_transmissionPaused ? "true" : "false") + ")");
+			this->WriteLog("建议等待传输完全结束后再保存数据");
+		}
+
+		// 【优化】检查可靠传输协议状态
+		bool reliableTransferActive = false;
+		if (m_reliableChannel && m_reliableChannel->IsConnected())
+		{
+			reliableTransferActive = m_reliableChannel->IsFileTransferActive();
+			if (reliableTransferActive)
+			{
+				this->WriteLog("⚠️ 检测到可靠传输协议仍处于活跃状态");
+			}
+		}
+
+		// 【智能检测策略】如果传输明确已完成，缩短检测次数
+		int maxChecks = MAX_STABILITY_CHECKS;
+		if (!m_isTransmitting && !m_transmissionPaused && !reliableTransferActive)
+		{
+			maxChecks = 3; // 传输已完成，仅需快速验证3次
+			this->WriteLog("传输已完成状态，使用快速检测模式（" + std::to_string(maxChecks) + "次）");
+		}
+		else
+		{
+			this->WriteLog("传输活跃状态，使用标准检测模式（" + std::to_string(maxChecks) + "次）");
+		}
+
+		for (int checkCount = 0; checkCount < maxChecks; checkCount++)
+		{
+			this->WriteLog("稳定性检测第" + std::to_string(checkCount + 1) + "/" + std::to_string(maxChecks) + "次，等待数据稳定...");
 
 			bool readSuccess = false;
 			bool lockError = false;
@@ -2670,26 +2701,47 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		// 处理稳定性检测结果
 		if (!dataStabilized)
 		{
-			// 数据未稳定，但仍可选择保存当前状态
+			// 【优化超时处理】根据传输状态提供更准确的诊断信息
 			CString warningMsg;
+			CString transferStatusInfo;
+
+			// 分析传输状态提供具体建议
+			if (m_isTransmitting || m_transmissionPaused)
+			{
+				transferStatusInfo = _T("检测到传输仍在进行中，这是正常现象");
+			}
+			else if (reliableTransferActive)
+			{
+				transferStatusInfo = _T("可靠传输协议握手/重传仍在进行");
+			}
+			else if (m_totalReceivedBytes != finalCachedData.size())
+			{
+				transferStatusInfo = _T("文件数据与统计不一致，可能存在延迟写入");
+			}
+			else
+			{
+				transferStatusInfo = _T("传输已完成，数据检测可能过于敏感");
+			}
+
 			warningMsg.Format(_T("⚠️ 数据稳定性检测超时\n\n")
-							 _T("经过%d次检测（共%.1f秒），数据仍在变化：\n")
-							 _T("• UI显示接收: %u 字节\n")
+							 _T("经过%d次检测（共%.1f秒），检测状态：\n")
+							 _T("• 文件实际大小: %u 字节\n")
 							 _T("• 文件写入统计: %u 字节\n")
-							 _T("• 当前读取大小: %u 字节\n\n")
+							 _T("• 传输状态: %s\n\n")
 							 _T("可能原因：\n")
-							 _T("• 传输仍在进行中\n")
-							 _T("• 可靠模式握手/重传延迟\n")
-							 _T("• 系统负载过高\n\n")
+							 _T("• %s\n")
+							 _T("• 系统I/O延迟或负载过高\n")
+							 _T("• 检测参数过于严格\n\n")
 							 _T("建议操作：\n")
-							 _T("1. 点击'否'，等待传输彻底完成后重试\n")
-							 _T("2. 或点击'是'保存当前快照（可能不完整）\n\n")
-							 _T("是否仍要保存当前数据快照？"),
-							 MAX_STABILITY_CHECKS,
-							 (MAX_STABILITY_CHECKS * STABILITY_CHECK_INTERVAL_MS) / 1000.0,
-							 (unsigned)m_bytesReceived,
+							 _T("1. 点击'否'，等待片刻后重试\n")
+							 _T("2. 点击'是'保存当前数据（通常是完整的）\n\n")
+							 _T("是否要保存当前数据？"),
+							 maxChecks,
+							 (maxChecks * STABILITY_CHECK_INTERVAL_MS) / 1000.0,
+							 (unsigned)finalCachedData.size(),
 							 (unsigned)m_totalReceivedBytes,
-							 (unsigned)finalCachedData.size());
+							 transferStatusInfo,
+							 transferStatusInfo);
 
 			int result = MessageBox(warningMsg, _T("数据稳定性检测超时"), MB_YESNO | MB_ICONWARNING);
 			if (result == IDNO)
@@ -4310,29 +4362,43 @@ std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCacheUnlocked()
 bool CPortMasterDlg::StabilityTracker::IsDataStable(const std::vector<uint8_t>& currentData,
                                                    uint64_t currentTotal, uint64_t currentBytes)
 {
-	// 检查是否有数据变化
-	bool dataChanged = (currentData.size() != lastReadData.size()) ||
-	                  (currentTotal != lastTotalReceived) ||
-	                  (currentBytes != lastBytesReceived);
+	// 【修复误报】统一数据源检测策略：
+	// 仅基于实际文件大小(currentData.size())和文件统计(currentTotal)进行检测
+	// 移除对UI统计(currentBytes)的依赖，避免异步更新导致的误报
 
-	if (dataChanged) {
-		// 数据发生变化，重置计数器和时间
+	// 检查文件数据是否发生变化
+	bool fileDataChanged = (currentData.size() != lastReadData.size()) ||
+	                       (currentTotal != lastTotalReceived);
+
+	// 【调试日志】记录检测状态，便于问题排查
+	// 注意：仅在Debug版本中启用详细日志，避免Release版本的性能影响
+	#ifdef _DEBUG
+	static int debugCheckCount = 0;
+	debugCheckCount++;
+	if (debugCheckCount <= 10) { // 仅记录前10次检测，避免日志过多
+		// 这里可以添加调试输出（在实际项目中可以通过WriteLog）
+		// 但为了保持函数的轻量性，暂时注释掉详细日志
+	}
+	#endif
+
+	if (fileDataChanged) {
+		// 文件数据发生变化，重置计数器和时间
 		lastReadData = currentData;
 		lastTotalReceived = currentTotal;
-		lastBytesReceived = currentBytes;
+		lastBytesReceived = currentBytes; // 保留用于记录，但不用于检测
 		lastChangeTime = std::chrono::steady_clock::now();
 		consecutiveMatches = 0;
 		return false;
 	} else {
-		// 数据未变化，增加连续匹配计数
+		// 文件数据未变化，增加连续匹配计数
 		consecutiveMatches++;
 	}
 
-	// 检查稳定性条件：
-	// 1. 连续至少2次相同读取
-	// 2. 距离最后变化超过500ms
+	// 【优化】检查稳定性条件：
+	// 1. 连续至少2次相同读取（确保数据确实稳定）
+	// 2. 距离最后变化超过300ms（从500ms缩短，提高响应速度）
 	auto quietDuration = std::chrono::steady_clock::now() - lastChangeTime;
-	bool timeStable = (quietDuration > std::chrono::milliseconds(500));
+	bool timeStable = (quietDuration > std::chrono::milliseconds(300));
 	bool countStable = (consecutiveMatches >= 2);
 
 	return timeStable && countStable;
