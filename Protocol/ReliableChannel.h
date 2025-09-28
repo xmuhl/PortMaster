@@ -168,6 +168,9 @@ private:
     void UpdateState(bool connected);
     void UpdateProgress(int64_t current, int64_t total);
 
+    // 传输超时保护
+    bool CheckTransferTimeout();
+
 private:
     // 成员变量
     std::shared_ptr<ITransport> m_transport; // 底层传输
@@ -211,6 +214,7 @@ private:
     int64_t m_currentFileSize;     // 当前文件大小
     int64_t m_currentFileProgress; // 当前文件进度
     bool m_fileTransferActive;     // 文件传输活动状态
+    std::chrono::steady_clock::time_point m_transferStartTime; // 传输开始时间
 
     // 握手状态管理
     std::atomic<bool> m_handshakeCompleted;    // 握手完成标志

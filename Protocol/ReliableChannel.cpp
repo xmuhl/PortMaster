@@ -344,6 +344,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         m_currentFileSize = fileSize;
         m_currentFileProgress = 0;
         m_fileTransferActive = true;
+        m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
     }
 
     // 发送开始帧
@@ -446,6 +447,7 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
         m_currentFileSize = 0;
         m_currentFileProgress = 0;
         m_fileTransferActive = true;
+        m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
     }
 
     std::ofstream file(filePath, std::ios::binary);
@@ -583,7 +585,13 @@ size_t ReliableChannel::GetReceiveQueueSize() const
 // 【可靠模式按钮管控】检查文件传输是否活跃
 bool ReliableChannel::IsFileTransferActive() const
 {
-    // m_fileTransferActive 是简单bool类型，不需要加锁
+    if (!m_fileTransferActive) return false;
+
+    // 检查传输超时（需要非const访问来修改状态）
+    if (const_cast<ReliableChannel*>(this)->CheckTransferTimeout()) {
+        return false;
+    }
+
     // 返回当前文件传输的活跃状态，用于UI层判断保存按钮启用时机
     return m_fileTransferActive;
 }
@@ -1249,6 +1257,7 @@ void ReliableChannel::ProcessStartFrame(const Frame &frame)
             m_currentFileSize = metadata.fileSize;
             m_currentFileProgress = 0;
             m_fileTransferActive = true; // 激活文件传输状态
+            m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
         }
 
         // 更新进度显示
@@ -1282,9 +1291,41 @@ void ReliableChannel::ProcessStartFrame(const Frame &frame)
 // 处理结束帧
 void ReliableChannel::ProcessEndFrame(const Frame &frame)
 {
-    // 文件传输结束
-    m_fileTransferActive = false;
-    UpdateProgress(m_currentFileSize, m_currentFileSize);
+    WriteLog("ProcessEndFrame: 收到END帧，验证传输完整性...");
+
+    // 检查是否有预期的文件大小信息
+    if (m_currentFileSize > 0)
+    {
+        // 验证实际接收字节数与预期文件大小是否匹配
+        if (m_currentFileProgress >= m_currentFileSize)
+        {
+            WriteLog("ProcessEndFrame: 传输完整性验证通过 - " +
+                     std::to_string(m_currentFileProgress) + "/" +
+                     std::to_string(m_currentFileSize) + " 字节");
+            m_fileTransferActive = false;
+            UpdateProgress(m_currentFileSize, m_currentFileSize);
+            WriteLog("ProcessEndFrame: 文件传输正常完成");
+        }
+        else
+        {
+            WriteLog("ProcessEndFrame: 传输不完整 - 收到 " +
+                     std::to_string(m_currentFileProgress) + "/" +
+                     std::to_string(m_currentFileSize) + " 字节，拒绝结束传输");
+            ReportError("文件传输不完整，预期 " + std::to_string(m_currentFileSize) +
+                       " 字节，实际接收 " + std::to_string(m_currentFileProgress) + " 字节");
+            // 不设置 m_fileTransferActive = false，继续等待数据
+            WriteLog("ProcessEndFrame: 保持传输活跃状态，等待更多数据");
+        }
+    }
+    else
+    {
+        WriteLog("ProcessEndFrame: 无文件大小信息，使用传统逻辑结束传输");
+        m_fileTransferActive = false;
+        UpdateProgress(m_currentFileProgress, m_currentFileProgress);
+        WriteLog("ProcessEndFrame: 传统模式传输结束");
+    }
+
+    WriteLog("ProcessEndFrame: 处理完成，当前传输状态 = " + std::string(m_fileTransferActive ? "活跃" : "已结束"));
 }
 
 // 处理心跳帧
@@ -1865,6 +1906,50 @@ void ReliableChannel::UpdateProgress(int64_t current, int64_t total)
     {
         m_progressCallback(current, total);
     }
+}
+
+// 检查传输超时
+bool ReliableChannel::CheckTransferTimeout()
+{
+    if (!m_fileTransferActive) return false;
+
+    auto now = std::chrono::steady_clock::now();
+    auto transferDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_transferStartTime);
+
+    // 计算合理的传输超时时间
+    // 基本策略：大文件给更多时间，但设置合理上限
+    int64_t maxExpectedSeconds;
+    if (m_currentFileSize > 0)
+    {
+        // 按1KB/s的最低速度计算，但至少60秒，最多30分钟
+        int64_t minSeconds = 60LL;
+        int64_t maxSeconds = 1800LL;
+        int64_t calculatedSeconds = m_currentFileSize / 1024;
+        maxExpectedSeconds = (calculatedSeconds > minSeconds) ?
+                            ((calculatedSeconds < maxSeconds) ? calculatedSeconds : maxSeconds) :
+                            minSeconds;
+    }
+    else
+    {
+        // 无文件大小信息时，默认5分钟超时
+        maxExpectedSeconds = 300;
+    }
+
+    if (transferDuration.count() > maxExpectedSeconds)
+    {
+        WriteLog("CheckTransferTimeout: 传输超时，强制结束");
+        WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
+                " 秒，实际用时 " + std::to_string(transferDuration.count()) + " 秒");
+        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_currentFileSize) +
+                " 字节，当前进度 " + std::to_string(m_currentFileProgress) + " 字节");
+
+        m_fileTransferActive = false;
+        ReportError("文件传输超时：传输时间 " + std::to_string(transferDuration.count()) +
+                   " 秒超过预期 " + std::to_string(maxExpectedSeconds) + " 秒");
+        return true;
+    }
+
+    return false;
 }
 
 // 生成会话ID

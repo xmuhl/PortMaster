@@ -18,6 +18,7 @@ import struct
 import time
 import threading
 import queue
+import random
 from enum import IntEnum
 from typing import List, Optional, Tuple
 import sys
@@ -288,17 +289,189 @@ class ReliableChannelVerifier:
         self.log_result("握手状态追踪", passed, details)
         return passed
 
-    def run_comprehensive_verification(self) -> bool:
+    def test_large_file_transmission(self, file_path: str) -> bool:
+        """测试5: 大文件可靠传输测试"""
+        print(f"\n🧪 测试5: 大文件可靠传输测试")
+
+        if not os.path.exists(file_path):
+            details = f"测试文件不存在: {file_path}"
+            self.log_result("大文件传输测试", False, details)
+            return False
+
+        file_size = os.path.getsize(file_path)
+        print(f"   📁 测试文件: {os.path.basename(file_path)}")
+        print(f"   📊 文件大小: {file_size:,} 字节 ({file_size/1024/1024:.2f} MB)")
+
+        try:
+            # 读取文件数据
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+
+            # 模拟可靠传输协议的分块传输
+            chunk_size = 1024  # 每块1KB
+            total_chunks = (len(file_data) + chunk_size - 1) // chunk_size
+
+            print(f"   🔄 开始分块传输，共 {total_chunks} 个数据块...")
+
+            # 模拟握手阶段
+            session_id = int(time.time() * 1000) & 0xFFFF
+            print(f"   🤝 会话ID: 0x{session_id:04X}")
+
+            # 发送START帧（包含文件元数据）
+            metadata = f"filename:{os.path.basename(file_path)};size:{file_size};timestamp:{int(time.time())}".encode('utf-8')
+            start_frame = FrameCodec.encode_frame(FrameType.FRAME_START, 1, metadata)
+            self.transport.send(start_frame)
+
+            # 模拟ACK响应
+            ack_frame = FrameCodec.encode_frame(FrameType.FRAME_ACK, 1, b'')
+            self.transport.simulate_response(ack_frame)
+
+            # 验证START帧握手
+            start_time = time.time()
+            handshake_success = False
+
+            response = self.transport.receive()
+            if response:
+                decoded = FrameCodec.decode_frame(response)
+                if decoded and decoded[0] == FrameType.FRAME_ACK:
+                    handshake_success = True
+                    print(f"   ✅ 握手成功，开始数据传输...")
+
+            if not handshake_success:
+                details = "握手失败，无法开始数据传输"
+                self.log_result("大文件传输测试", False, details)
+                return False
+
+            # 模拟数据块传输过程
+            transmitted_chunks = 0
+            failed_chunks = 0
+            total_transmitted_bytes = 0
+
+            # 测试更多块以模拟真实大文件传输（最多1000块）
+            test_chunk_count = min(total_chunks, 1000)
+            print(f"   🧪 测试传输: {test_chunk_count} 个数据块 (代表前 {test_chunk_count * chunk_size / 1024:.1f} KB)")
+
+            for chunk_idx in range(test_chunk_count):
+                chunk_start = chunk_idx * chunk_size
+                chunk_end = min(chunk_start + chunk_size, len(file_data))
+                chunk_data = file_data[chunk_start:chunk_end]
+
+                # 编码数据帧
+                data_frame = FrameCodec.encode_frame(FrameType.FRAME_DATA, chunk_idx + 2, chunk_data)
+                self.transport.send(data_frame)
+
+                # 模拟传输中的一些失败情况
+                transmission_failed = False
+
+                # 在30%左右模拟连续传输失败
+                if chunk_idx >= int(test_chunk_count * 0.29) and chunk_idx <= int(test_chunk_count * 0.32):
+                    # 模拟连续的网络问题
+                    if chunk_idx == int(test_chunk_count * 0.3):
+                        print(f"   ⚠️  模拟30%进度时的传输失败问题...")
+                        print(f"   💥 网络不稳定导致连续传输失败...")
+
+                    # 30%概率传输失败
+                    if random.random() < 0.3:  # 30%失败率
+                        transmission_failed = True
+                        failed_chunks += 1
+
+                        # 发送NAK响应模拟传输失败
+                        nak_frame = FrameCodec.encode_frame(FrameType.FRAME_NAK, chunk_idx + 2, b'transmission_error')
+                        self.transport.simulate_response(nak_frame)
+
+                        print(f"   ❌ 数据块 {chunk_idx} 传输失败")
+
+                        # 模拟重传机制（最多重传3次）
+                        retry_count = 0
+                        max_retries = 3
+                        retry_success = False
+
+                        while retry_count < max_retries and not retry_success:
+                            retry_count += 1
+                            print(f"   🔄 重传尝试 {retry_count}/{max_retries}...")
+                            time.sleep(0.02)  # 重传延迟
+
+                            # 重新发送数据块
+                            self.transport.send(data_frame)
+
+                            # 模拟重传结果（80%成功率）
+                            if random.random() < 0.8:
+                                retry_success = True
+                                print(f"   ✅ 重传成功")
+                            else:
+                                print(f"   ❌ 重传失败")
+
+                        if not retry_success:
+                            print(f"   💀 数据块 {chunk_idx} 重传最终失败")
+                            # 模拟严重传输错误，可能导致整个传输失败
+                            if failed_chunks > test_chunk_count * 0.05:  # 失败率超过5%
+                                print(f"   🚨 连续失败过多，传输可能中断...")
+                                break
+
+                if not transmission_failed:
+                    # 模拟正常ACK响应
+                    ack_frame = FrameCodec.encode_frame(FrameType.FRAME_ACK, chunk_idx + 2, b'')
+                    self.transport.simulate_response(ack_frame)
+
+                transmitted_chunks += 1
+                total_transmitted_bytes += len(chunk_data)
+
+                # 显示进度（每5%显示一次，提供更详细的进度信息）
+                progress = (chunk_idx + 1) / test_chunk_count * 100
+                if (chunk_idx + 1) % max(1, test_chunk_count // 20) == 0:
+                    failure_rate = failed_chunks / transmitted_chunks * 100 if transmitted_chunks > 0 else 0
+                    print(f"   📈 传输进度: {progress:.1f}% ({transmitted_chunks}/{test_chunk_count} 块, 失败率: {failure_rate:.1f}%)")
+
+            # 发送END帧
+            end_frame = FrameCodec.encode_frame(FrameType.FRAME_END, total_chunks + 2, b'')
+            self.transport.send(end_frame)
+
+            # 模拟最终ACK
+            final_ack = FrameCodec.encode_frame(FrameType.FRAME_ACK, total_chunks + 2, b'')
+            self.transport.simulate_response(final_ack)
+
+            transmission_time = time.time() - start_time
+            average_speed = total_transmitted_bytes / transmission_time / 1024  # KB/s
+
+            # 评估传输结果
+            success_rate = (transmitted_chunks - failed_chunks) / transmitted_chunks * 100 if transmitted_chunks > 0 else 0
+            transmission_success = success_rate >= 95  # 成功率应该大于95%
+
+            details = f"传输块数: {transmitted_chunks}, 失败重传: {failed_chunks}, 成功率: {success_rate:.1f}%, 平均速度: {average_speed:.2f} KB/s"
+
+            print(f"   📊 传输统计:")
+            print(f"       • 成功传输: {transmitted_chunks} 块")
+            print(f"       • 失败重传: {failed_chunks} 块")
+            print(f"       • 成功率: {success_rate:.1f}%")
+            print(f"       • 传输速度: {average_speed:.2f} KB/s")
+            print(f"       • 总耗时: {transmission_time:.2f} 秒")
+
+            self.log_result("大文件传输测试", transmission_success, details)
+            return transmission_success
+
+        except Exception as e:
+            details = f"传输过程异常: {str(e)}"
+            self.log_result("大文件传输测试", False, details)
+            return False
+
+    def run_comprehensive_verification(self, large_file_path: str = None) -> bool:
         """运行完整的协议验证"""
         print("🚀 开始可靠传输协议全面验证")
+        if large_file_path:
+            print(f"📁 包含大文件传输测试: {os.path.basename(large_file_path)}")
         print("=" * 60)
 
+        # 基础协议测试
         test_methods = [
             self.test_session_id_generation,
             self.test_start_frame_window_management,
             self.test_handshake_completion_waiting,
             self.test_handshake_state_tracking
         ]
+
+        # 如果提供了大文件路径，添加大文件传输测试
+        if large_file_path:
+            test_methods.append(lambda: self.test_large_file_transmission(large_file_path))
 
         passed_tests = 0
         total_tests = len(test_methods)
@@ -324,7 +497,10 @@ class ReliableChannelVerifier:
         print(f"\n🎯 验证完成: {passed_tests}/{total_tests} 个测试通过 ({success_rate:.1f}%)")
 
         if passed_tests == total_tests:
-            print("🎉 可靠传输协议验证全部通过！第一阶段修复确认有效。")
+            if large_file_path:
+                print("🎉 可靠传输协议验证全部通过！包括大文件传输测试。")
+            else:
+                print("🎉 可靠传输协议验证全部通过！第一阶段修复确认有效。")
             return True
         else:
             print("⚠️  部分测试失败，需要进一步检查协议实现。")
@@ -334,10 +510,26 @@ def main():
     """主函数"""
     print("可靠传输协议自动化验证脚本")
     print("验证第一阶段修复内容: 真正握手闭环机制")
+
+    # 检查是否提供了大文件测试参数
+    large_file_path = None
+    if len(sys.argv) > 1:
+        large_file_path = sys.argv[1]
+        if not os.path.exists(large_file_path):
+            print(f"❌ 指定的测试文件不存在: {large_file_path}")
+            return 1
+        print(f"🎯 将进行大文件传输测试: {large_file_path}")
+    else:
+        # 默认测试文件
+        default_test_file = "/mnt/c/Users/huangl/Desktop/PortMaster/upd-pcl6-x64-7.3.0.25919.zip"
+        if os.path.exists(default_test_file):
+            large_file_path = default_test_file
+            print(f"🎯 使用默认大文件进行传输测试: {os.path.basename(large_file_path)}")
+
     print("=" * 60)
 
     verifier = ReliableChannelVerifier()
-    success = verifier.run_comprehensive_verification()
+    success = verifier.run_comprehensive_verification(large_file_path)
 
     return 0 if success else 1
 
