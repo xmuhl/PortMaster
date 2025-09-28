@@ -56,7 +56,7 @@ struct LoopbackTestConfig
     DWORD packetLossRate = 0;                  // 丢包率(0-100%)
     bool enableJitter = false;                 // 启用抖动
     DWORD jitterMaxMs = 5;                     // 最大抖动(ms)
-    DWORD maxQueueSize = 1000;                 // 最大队列大小
+    DWORD maxQueueSize = 10000;                // 最大队列大小（扩大以支持大文件传输）
     bool autoTest = false;                     // 自动测试
     bool reliableMode = true;                  // 可靠模式
     

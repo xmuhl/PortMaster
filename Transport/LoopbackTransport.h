@@ -18,7 +18,7 @@ struct LoopbackConfig : public TransportConfig
     uint32_t packetLossRate = 0;        // 丢包率(0-100%)
     bool enableJitter = false;          // 启用抖动模拟
     uint32_t jitterMaxMs = 5;           // 最大抖动时间(ms)
-    uint32_t maxQueueSize = 1000;       // 最大队列大小
+    uint32_t maxQueueSize = 10000;      // 最大队列大小（扩大以支持大文件传输）
     bool enableLogging = true;          // 启用详细日志
     
     LoopbackConfig()

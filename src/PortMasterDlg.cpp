@@ -678,11 +678,39 @@ void CPortMasterDlg::PerformDataTransmission()
 								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
 								   ", size=" + std::to_string(currentChunkSize));
 
-					TransportError chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
+					TransportError chunkError = TransportError::Success;
+					int retryCount = 0;
+					const int maxRetries = 3;
+					const int retryDelayMs = 50;
+
+					// 智能重试机制：对Busy错误进行有限重试
+					do
+					{
+						chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
+
+						if (chunkError == TransportError::Success)
+						{
+							break; // 发送成功，退出重试循环
+						}
+						else if (chunkError == TransportError::Busy && retryCount < maxRetries)
+						{
+							retryCount++;
+							this->WriteLog("PerformDataTransmission: Raw chunk send busy, retry " + std::to_string(retryCount) +
+										   "/" + std::to_string(maxRetries) + " in " + std::to_string(retryDelayMs) + "ms");
+							std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
+						}
+						else
+						{
+							// 非Busy错误或重试次数用尽，记录错误并退出
+							this->WriteLog("PerformDataTransmission: Raw chunk send failed at " + std::to_string(totalSent) +
+										   "/" + std::to_string(data.size()) + ", error=" + std::to_string(static_cast<int>(chunkError)) +
+										   (retryCount > 0 ? " (after " + std::to_string(retryCount) + " retries)" : ""));
+							break;
+						}
+					} while (chunkError == TransportError::Busy && retryCount <= maxRetries);
+
 					if (chunkError != TransportError::Success)
 					{
-						this->WriteLog("PerformDataTransmission: Raw chunk send failed at " + std::to_string(totalSent) +
-									   "/" + std::to_string(data.size()) + ", error=" + std::to_string(static_cast<int>(chunkError)));
 						error = chunkError;
 						break;
 					}
@@ -3598,8 +3626,34 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_btnSend.SetWindowText(_T("发送"));
 
 		CString errorMsg;
-		errorMsg.Format(_T("发送失败: %d"), static_cast<int>(error));
-		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+		CString errorTitle;
+
+		// 根据错误类型提供用户友好的错误提示
+		switch (error)
+		{
+		case TransportError::Busy:
+			errorMsg = _T("传输队列繁忙，大文件传输时可能出现此问题。\n\n建议解决方案：\n1. 稍后重试\n2. 尝试将文件分割成较小的块\n3. 使用可靠传输模式");
+			errorTitle = _T("传输队列繁忙");
+			break;
+		case TransportError::Timeout:
+			errorMsg = _T("传输超时，请检查连接状态或增加超时时间");
+			errorTitle = _T("传输超时");
+			break;
+		case TransportError::NotOpen:
+			errorMsg = _T("传输通道未打开，请先建立连接");
+			errorTitle = _T("连接错误");
+			break;
+		case TransportError::WriteFailed:
+			errorMsg = _T("数据写入失败，请检查目标设备状态");
+			errorTitle = _T("写入错误");
+			break;
+		default:
+			errorMsg.Format(_T("发送失败，错误代码: %d\n\n请查看调试日志获取详细信息"), static_cast<int>(error));
+			errorTitle = _T("传输错误");
+			break;
+		}
+
+		MessageBox(errorMsg, errorTitle, MB_OK | MB_ICONERROR);
 
 		// 重置进度条
 		m_progress.SetPos(0);
