@@ -213,6 +213,11 @@ private:
 	std::vector<uint8_t> ReadAllDataFromTempCache();
 	void ClearTempCacheFile();
 
+	// 【临时文件状态监控与自动恢复】新增机制
+	bool CheckAndRecoverTempCacheFile();
+	void LogTempCacheFileStatus(const std::string& context);
+	bool VerifyTempCacheFileIntegrity();
+
 	// 【保存完整性误报修复】不加锁的读取版本，用于已持锁的保存流程
 	std::vector<uint8_t> ReadDataFromTempCacheUnlocked(uint64_t offset, size_t length);
 	std::vector<uint8_t> ReadAllDataFromTempCacheUnlocked();

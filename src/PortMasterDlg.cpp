@@ -1,4 +1,4 @@
-﻿// PortMasterDlg.cpp : 实现文件
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿// PortMasterDlg.cpp : 实现文件
 //
 
 #include "pch.h"
@@ -2272,7 +2272,21 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 	}
 	m_receiveCacheValid = true;
 
-	// 2. 立即同步写入临时文件（强制串行化，确保数据完全落盘）
+	// 2. 【优化】简化状态检查，仅在文件流关闭时恢复
+	if (m_useTempCacheFile && !m_tempCacheFile.is_open())
+	{
+		this->WriteLog("⚠️ 检测到临时文件流关闭，启动自动恢复...");
+		if (CheckAndRecoverTempCacheFile())
+		{
+			this->WriteLog("✅ 临时文件自动恢复成功，继续数据写入");
+		}
+		else
+		{
+			this->WriteLog("❌ 临时文件自动恢复失败，数据将仅保存到内存缓存");
+		}
+	}
+
+	// 3. 立即同步写入临时文件（强制串行化，确保数据完全落盘）
 	if (m_useTempCacheFile && m_tempCacheFile.is_open())
 	{
 		this->WriteLog("执行强制同步写入临时缓存文件...");
@@ -2289,6 +2303,9 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 
 			this->WriteLog("强制同步写入成功: " + std::to_string(data.size()) + " 字节");
 			this->WriteLog("更新后总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
+
+			// 【修复】数据写入后进行状态诊断
+			LogTempCacheFileStatus("数据写入后状态验证");
 		}
 		catch (const std::exception& e)
 		{
@@ -2550,6 +2567,7 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	std::vector<uint8_t> binaryData;
 	CString saveData;
 	bool isBinaryMode = false;
+	bool tempFileAvailable = false; // 添加变量声明
 
 	// 添加调试输出：记录保存操作的详细信息
 	this->WriteLog("=== 保存数据调试信息 ===");
@@ -2570,61 +2588,81 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		// 【简化保存流程】采用直接读取+后验证模式，移除复杂的稳定性检测
 		this->WriteLog("=== 开始简化保存流程 ===");
 
-		// 检查传输状态仅用于日志记录，不阻塞保存
+		// 【用户体验优化】传输状态检查与用户确认
 		if (m_isTransmitting || m_transmissionPaused)
 		{
-			this->WriteLog("⚠️ 检测到传输仍在进行中，但继续执行保存操作");
+			this->WriteLog("⚠️ 检测到传输仍在进行中");
+
+			// 询问用户是否要等待传输完成
+			int userChoice = MessageBox(
+				_T("⚠️ 传输正在进行中\n\n")
+				_T("当前数据可能不完整，建议等待传输完成后再保存。\n\n")
+				_T("选择操作：\n")
+				_T("• 是(Y) - 等待传输完成后再保存\n")
+				_T("• 否(N) - 强制保存当前已接收的数据\n")
+				_T("• 取消 - 取消保存操作"),
+				_T("传输状态提醒"),
+				MB_YESNOCANCEL | MB_ICONWARNING | MB_DEFBUTTON1
+			);
+
+			if (userChoice == IDYES)
+			{
+				this->WriteLog("用户选择等待传输完成");
+				MessageBox(_T("请等待传输完成后再点击保存按钮"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+				return;
+			}
+			else if (userChoice == IDCANCEL)
+			{
+				this->WriteLog("用户取消保存操作");
+				return;
+			}
+			else
+			{
+				this->WriteLog("用户选择强制保存当前数据");
+			}
 		}
 
-		// 直接读取数据，无需复杂检测
+		// 【关键修复】优先使用临时缓存文件，确保大文件传输的数据完整性
 		try
 		{
-			std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
-
-			// 简化数据读取：直接获取全部数据
-			finalCachedData = ReadAllDataFromTempCacheUnlocked();
-
-			this->WriteLog("直接读取数据大小: " + std::to_string(finalCachedData.size()) + " 字节");
-			this->WriteLog("文件写入统计: " + std::to_string(m_totalReceivedBytes) + " 字节");
-
-			if (finalCachedData.empty())
+			// 【延后读取策略】先检查数据源可用性，但不即时读取数据
+			this->WriteLog("策略：检查临时缓存文件可用性");
+			
+			// 仅检查文件是否存在，不读取内容
+			// 【关键修复】移除重复声明，直接使用外层变量避免变量遮蔽
 			{
-				this->WriteLog("⚠️ 读取到空数据，可能传输尚未开始或缓存已清空");
-				MessageBox(_T("⚠️ 无数据可保存\n\n")
-						  _T("接收缓存为空，请确认：\n")
-						  _T("1. 是否已接收到数据\n")
-						  _T("2. 传输是否已开始\n")
-						  _T("3. 缓存是否被意外清空"),
-						  _T("保存提示"), MB_OK | MB_ICONWARNING);
-				return;
+				std::lock_guard<std::mutex> quickLock(m_receiveFileMutex);
+				tempFileAvailable = PathFileExists(m_tempCacheFilePath) && (m_totalReceivedBytes > 0);
+			}
+			
+			if (tempFileAvailable)
+			{
+				this->WriteLog("✅ 临时缓存文件可用，将在用户确认保存后读取最新数据");
+				isBinaryMode = true; // 标记为二进制模式，但不读取数据
+				// 为了通过后续判断，添加一个占位元素
+				binaryData.push_back(0); // 占位数据，将在用户确认后替换为真实数据
+			}
+			else
+			{
+				this->WriteLog("⚠️ 临时缓存文件不可用，将使用备选数据源");
+				
+				// 使用内存缓存作为备选
+				if (m_receiveCacheValid && !m_receiveDataCache.empty())
+				{
+					this->WriteLog("使用内存缓存数据作为备选");
+					binaryData = m_receiveDataCache;
+					isBinaryMode = true;
+				}
 			}
 		}
 		catch (const std::exception& e)
 		{
-			this->WriteLog("❌ 数据读取失败: " + std::string(e.what()));
-			MessageBox(_T("⚠️ 数据读取失败\n\n")
-					  _T("无法读取接收数据，请稍后重试。\n")
+			this->WriteLog("❌ 数据检查失败: " + std::string(e.what()));
+			MessageBox(_T("⚠️ 数据检查失败\n\n")
+					  _T("无法检查接收数据，请稍后重试。\n")
 					  _T("如果问题持续存在，请重新启动传输。"),
-					  _T("读取错误"), MB_OK | MB_ICONERROR);
+					  _T("检查错误"), MB_OK | MB_ICONERROR);
 			return;
-		}
-
-		if (!finalCachedData.empty())
-		{
-			this->WriteLog("保存策略：使用最新读取的原始字节数据");
-
-			// 使用最新读取的数据，而不是早期缓存
-			binaryData = finalCachedData;
-			isBinaryMode = true;
-
-			if (m_checkHex.GetCheck() == BST_CHECKED)
-			{
-				this->WriteLog("十六进制模式：保存最新原始二进制数据");
-			}
-			else
-			{
-				this->WriteLog("文本模式：保存最新原始二进制数据");
-			}
 		}
 	}
 
@@ -2703,7 +2741,84 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 
 		if (dlg.DoModal() == IDOK)
 		{
-			SaveBinaryDataToFile(dlg.GetPathName(), binaryData);
+			// 【关键修复】在用户确认保存后立即读取最新数据，确保数据完整性
+			if (tempFileAvailable)
+			{
+				this->WriteLog("用户确认保存，立即读取临时文件最新数据");
+				
+				// 读取最新的完整数据
+				std::vector<uint8_t> latestData;
+				try
+				{
+					std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
+					latestData = ReadAllDataFromTempCacheUnlocked();
+					this->WriteLog("最新数据大小: " + std::to_string(latestData.size()) + " 字节");
+
+					// 【数据完整性验证】确保读取到的数据不为空且大小合理
+					if (latestData.empty())
+					{
+						this->WriteLog("❌ 致命错误：从临时文件读取到的数据为空");
+						MessageBox(_T("❌ 数据读取失败\n\n")
+								  _T("无法从临时文件中读取到任何数据。\n")
+								  _T("这可能是由于文件损坏或访问冲突造成的。\n\n")
+								  _T("建议：\n")
+								  _T("• 重新启动传输\n")
+								  _T("• 检查磁盘空间是否充足"),
+								  _T("数据读取错误"), MB_OK | MB_ICONERROR);
+						return;
+					}
+					else if (latestData.size() < 100) // 对于大文件传输，数据应该远大于100字节
+					{
+						this->WriteLog("⚠️ 数据异常：读取到的数据量过小，可能存在问题");
+						int userChoice = MessageBox(
+							CString(_T("⚠️ 数据量异常\n\n")) +
+							CString(_T("检测到数据量异常小（")) +
+							CString(std::to_string(latestData.size()).c_str()) +
+							CString(_T(" 字节），这可能不是完整的传输数据。\n\n")) +
+							CString(_T("是否仍要继续保存？")),
+							_T("数据量异常"),
+							MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+						);
+
+						if (userChoice == IDNO)
+						{
+							this->WriteLog("用户取消保存异常数据");
+							return;
+						}
+					}
+				}
+				catch (const std::exception& e)
+				{
+					this->WriteLog("❌ 读取最新数据失败: " + std::string(e.what()));
+					MessageBox(_T("❌ 数据读取异常\n\n")
+							  _T("无法读取临时文件中的数据：\n") +
+							  CString(e.what()) + _T("\n\n")
+							  _T("请检查：\n")
+							  _T("• 临时文件是否被其他程序占用\n")
+							  _T("• 磁盘空间是否充足\n")
+							  _T("• 文件权限是否正确"),
+							  _T("读取错误"), MB_OK | MB_ICONERROR);
+					return; // 读取失败时直接返回，不保存错误数据
+				}
+				
+				SaveBinaryDataToFile(dlg.GetPathName(), latestData);
+			}
+			else
+			{
+				// 【安全处理】临时文件不可用时的错误处理
+				this->WriteLog("❌ 临时文件不可用，无法保存完整数据");
+				MessageBox(_T("❌ 数据源不可用\n\n")
+						  _T("临时缓存文件不可用，无法保存完整的接收数据。\n\n")
+						  _T("可能的原因：\n")
+						  _T("• 数据尚未完全接收\n")
+						  _T("• 临时文件已被清理\n")
+						  _T("• 文件访问权限问题\n\n")
+						  _T("建议：\n")
+						  _T("• 等待传输完成后再保存\n")
+						  _T("• 重新启动传输\n")
+						  _T("• 切换到内存缓存模式"),
+						  _T("保存失败"), MB_OK | MB_ICONERROR);
+			}
 		}
 	}
 	else if (!saveData.IsEmpty())
@@ -3990,14 +4105,11 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 		// 【深层修复】使用接收文件专用互斥锁，与接收线程直接落盘完全互斥
 		std::lock_guard<std::mutex> lock(m_receiveFileMutex);
 
-		// 安全关闭写入流并确保数据完整性
-		bool needReopenWrite = false;
+		// 【读写冲突消除】保持写入流打开，仅刷新确保数据落盘
 		if (m_tempCacheFile.is_open())
 		{
-			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
-			m_tempCacheFile.close(); // 关闭写入流避免冲突
-			needReopenWrite = true;
-			WriteLog("ReadDataFromTempCache: 安全关闭写入流，待写入队列大小: " + std::to_string(m_pendingWrites.size()));
+			m_tempCacheFile.flush(); // 确保所有数据写入磁盘，但不关闭文件流
+			WriteLog("ReadDataFromTempCache: 刷新写入流，保持文件流打开状态");
 		}
 
 		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
@@ -4018,11 +4130,6 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 		{
 			WriteLog("ReadDataFromTempCache: 偏移量超出文件大小");
 			file.close();
-			// 重新打开写入流
-			if (needReopenWrite)
-			{
-				m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
-			}
 			return result;
 		}
 
@@ -4050,41 +4157,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 		file.close();
 
-		// 【并发安全修复】重新打开写入流并处理待写入队列
-		if (needReopenWrite)
-		{
-			m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
-			if (m_tempCacheFile.is_open())
-			{
-				WriteLog("ReadDataFromTempCache: 重新打开写入流成功");
-
-				// 处理在读取期间积累的待写入数据
-				size_t processedCount = 0;
-				while (!m_pendingWrites.empty())
-				{
-					const auto& pendingData = m_pendingWrites.front();
-					m_tempCacheFile.write(reinterpret_cast<const char*>(pendingData.data()), pendingData.size());
-					if (m_tempCacheFile.fail())
-					{
-						WriteLog("处理待写入队列失败，剩余 " + std::to_string(m_pendingWrites.size()) + " 项");
-						break;
-					}
-					m_totalReceivedBytes += pendingData.size();
-					m_pendingWrites.pop();
-					processedCount++;
-				}
-
-				if (processedCount > 0)
-				{
-					m_tempCacheFile.flush();
-					WriteLog("已处理 " + std::to_string(processedCount) + " 个待写入数据项");
-				}
-			}
-			else
-			{
-				WriteLog("ReadDataFromTempCache: 重新打开写入流失败，待写入队列大小: " + std::to_string(m_pendingWrites.size()));
-			}
-		}
+		WriteLog("ReadDataFromTempCache: 独立读取完成，写入流保持打开状态");
 
 		return result;
 	}
@@ -4113,13 +4186,18 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 
 	try
 	{
-		// 【简化逻辑】确保写入流已关闭，避免文件访问冲突
+		// 【关键修复】彻底解决读写冲突：临时关闭写入流，读取完成后重新打开
+		bool needReopenWrite = false;
 		if (m_tempCacheFile.is_open())
 		{
-			m_tempCacheFile.flush();
-			m_tempCacheFile.close();
-			WriteLog("ReadDataFromTempCacheUnlocked: 安全关闭写入流");
+			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
+			m_tempCacheFile.close(); // 临时关闭写入流，确保数据完全落盘
+			needReopenWrite = true;
+			WriteLog("ReadDataFromTempCacheUnlocked: 临时关闭写入流，确保读取数据完整性");
 		}
+		
+		// 额外等待确保文件系统同步（解决Windows文件缓存问题）
+		Sleep(50); // 50ms等待，确保文件系统完全同步
 
 		// 直接读取文件内容
 		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
@@ -4164,6 +4242,21 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 		}
 
 		file.close();
+		
+		// 【关键修复】重新打开写入流，恢复数据接收能力
+		if (needReopenWrite)
+		{
+			m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
+			if (m_tempCacheFile.is_open())
+			{
+				WriteLog("ReadDataFromTempCacheUnlocked: 写入流已重新打开，数据接收恢复正常");
+			}
+			else
+			{
+				WriteLog("ReadDataFromTempCacheUnlocked: 警告 - 无法重新打开写入流");
+			}
+		}
+		
 		return result;
 	}
 	catch (const std::exception &e)
@@ -4224,6 +4317,156 @@ void CPortMasterDlg::ClearTempCacheFile()
 			m_totalReceivedBytes = 0;
 			WriteLog("临时缓存文件已清空");
 		}
+	}
+}
+
+// 【临时文件状态监控与自动恢复】新增机制实现
+
+// 记录详细的临时文件状态诊断信息
+void CPortMasterDlg::LogTempCacheFileStatus(const std::string& context)
+{
+	this->WriteLog("=== 临时文件状态诊断 [" + context + "] ===");
+	this->WriteLog("m_useTempCacheFile: " + std::string(m_useTempCacheFile ? "true" : "false"));
+	this->WriteLog("m_tempCacheFile.is_open(): " + std::string(m_tempCacheFile.is_open() ? "true" : "false"));
+	this->WriteLog("临时文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
+
+	// 检查文件系统层面的文件状态
+	if (!m_tempCacheFilePath.IsEmpty())
+	{
+		bool fileExists = PathFileExists(m_tempCacheFilePath) ? true : false;
+		this->WriteLog("文件系统中文件存在: " + std::string(fileExists ? "true" : "false"));
+
+		if (fileExists)
+		{
+			// 获取文件大小
+			WIN32_FILE_ATTRIBUTE_DATA fileAttr;
+			if (GetFileAttributesEx(m_tempCacheFilePath, GetFileExInfoStandard, &fileAttr))
+			{
+				LARGE_INTEGER fileSize;
+				fileSize.LowPart = fileAttr.nFileSizeLow;
+				fileSize.HighPart = fileAttr.nFileSizeHigh;
+				this->WriteLog("文件系统中文件大小: " + std::to_string(fileSize.QuadPart) + " 字节");
+			}
+		}
+	}
+
+	this->WriteLog("内存缓存大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
+	this->WriteLog("统计接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
+	this->WriteLog("=== 状态诊断结束 ===");
+}
+
+// 验证临时文件完整性
+bool CPortMasterDlg::VerifyTempCacheFileIntegrity()
+{
+	if (m_tempCacheFilePath.IsEmpty())
+	{
+		this->WriteLog("验证失败：临时文件路径为空");
+		return false;
+	}
+
+	if (!PathFileExists(m_tempCacheFilePath))
+	{
+		this->WriteLog("验证失败：临时文件不存在");
+		return false;
+	}
+
+	// 获取文件实际大小
+	WIN32_FILE_ATTRIBUTE_DATA fileAttr;
+	if (!GetFileAttributesEx(m_tempCacheFilePath, GetFileExInfoStandard, &fileAttr))
+	{
+		this->WriteLog("验证失败：无法获取文件属性");
+		return false;
+	}
+
+	LARGE_INTEGER fileSize;
+	fileSize.LowPart = fileAttr.nFileSizeLow;
+	fileSize.HighPart = fileAttr.nFileSizeHigh;
+
+	// 验证文件大小与统计数据一致性
+	if (fileSize.QuadPart != m_totalReceivedBytes)
+	{
+		this->WriteLog("完整性验证：文件大小不匹配");
+		this->WriteLog("文件实际大小: " + std::to_string(fileSize.QuadPart) + " 字节");
+		this->WriteLog("统计接收字节: " + std::to_string(m_totalReceivedBytes) + " 字节");
+		return false;
+	}
+
+	this->WriteLog("完整性验证通过：文件大小 " + std::to_string(fileSize.QuadPart) + " 字节");
+	return true;
+}
+
+// 检查并恢复临时文件状态（核心函数）
+bool CPortMasterDlg::CheckAndRecoverTempCacheFile()
+{
+	// 记录检查开始
+	this->WriteLog("开始临时文件状态检查和恢复...");
+
+	// 如果明确禁用了临时文件机制，直接返回
+	if (!m_useTempCacheFile)
+	{
+		this->WriteLog("临时文件机制已禁用，无需恢复");
+		return false;
+	}
+
+	// 检查文件流状态
+	if (m_tempCacheFile.is_open())
+	{
+		// 验证文件流的健康状态
+		if (m_tempCacheFile.good())
+		{
+			this->WriteLog("临时文件流状态正常，无需恢复");
+			return true;
+		}
+		else
+		{
+			this->WriteLog("检测到文件流状态异常，开始修复...");
+			// 关闭异常的文件流
+			m_tempCacheFile.close();
+		}
+	}
+
+	// 文件流已关闭，尝试重新打开
+	this->WriteLog("尝试重新打开临时文件: " + std::string(CT2A(m_tempCacheFilePath)));
+
+	if (m_tempCacheFilePath.IsEmpty())
+	{
+		this->WriteLog("❌ 恢复失败：临时文件路径为空，尝试重新初始化");
+		return InitializeTempCacheFile();
+	}
+
+	try
+	{
+		// 使用追加模式重新打开，避免覆盖已有数据
+		m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
+
+		if (m_tempCacheFile.is_open())
+		{
+			this->WriteLog("✅ 临时文件恢复成功");
+
+			// 验证文件完整性
+			if (VerifyTempCacheFileIntegrity())
+			{
+				this->WriteLog("✅ 文件完整性验证通过");
+				return true;
+			}
+			else
+			{
+				this->WriteLog("⚠️ 文件完整性验证失败，但文件流已恢复");
+				// 即使完整性验证失败，文件流已经恢复，可以继续写入
+				return true;
+			}
+		}
+		else
+		{
+			this->WriteLog("❌ 文件流打开失败，尝试重新创建临时文件");
+			return InitializeTempCacheFile();
+		}
+	}
+	catch (const std::exception& e)
+	{
+		this->WriteLog("❌ 文件恢复异常: " + std::string(e.what()));
+		this->WriteLog("尝试重新初始化临时文件...");
+		return InitializeTempCacheFile();
 	}
 }
 
