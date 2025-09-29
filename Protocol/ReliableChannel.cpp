@@ -859,6 +859,16 @@ void ReliableChannel::ReceiveThread()
                             m_receiveQueue.push(slot.packet->data);
                             m_receiveCondition.notify_one();
                             WriteLog("ReceiveThread: data pushed, notifying condition");
+                            
+                            // 【关键修复】更新文件传输进度计数
+                            m_currentFileProgress += slot.packet->data.size();
+                            WriteLog("ReceiveThread: updated file progress to " + std::to_string(m_currentFileProgress) + " bytes");
+                            
+                            // 更新进度回调
+                            if (m_currentFileSize > 0)
+                            {
+                                UpdateProgress(m_currentFileProgress, m_currentFileSize);
+                            }
                         }
 
                         // 更新接收窗口
@@ -866,7 +876,8 @@ void ReliableChannel::ReceiveThread()
                         slot.inUse = false;
                         slot.packet.reset();
                         m_receiveBase = (m_receiveBase + 1) % 65536;
-                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase));
+                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase) + 
+                                ", file progress=" + std::to_string(m_currentFileProgress) + "/" + std::to_string(m_currentFileSize));
                         found = true;
                         break;
                     }
@@ -1074,6 +1085,11 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             return;
         }
 
+        // 【增强日志】检查槽位当前状态
+        bool slotWasInUse = m_receiveWindow[index].inUse;
+        WriteLog("ProcessDataFrame: slot " + std::to_string(index) + " status - wasInUse=" + std::to_string(slotWasInUse) +
+                 ", hasPacket=" + std::to_string(m_receiveWindow[index].packet != nullptr));
+        
         WriteLog("ProcessDataFrame: setting window slot " + std::to_string(index) + " to inUse=true");
         m_receiveWindow[index].inUse = true;
 
@@ -1082,11 +1098,17 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             WriteLog("ProcessDataFrame: creating new packet for slot " + std::to_string(index));
             m_receiveWindow[index].packet = std::make_shared<Packet>();
         }
+        else if (slotWasInUse)
+        {
+            WriteLog("ProcessDataFrame: WARNING - overwriting existing packet in slot " + std::to_string(index) +
+                     ", old sequence=" + std::to_string(m_receiveWindow[index].packet->sequence));
+        }
 
         m_receiveWindow[index].packet->sequence = frame.sequence;
         m_receiveWindow[index].packet->data = frame.payload;
         WriteLog("ProcessDataFrame: packet data set, sequence=" + std::to_string(m_receiveWindow[index].packet->sequence) +
-                 ", data.size()=" + std::to_string(m_receiveWindow[index].packet->data.size()));
+                 ", data.size()=" + std::to_string(m_receiveWindow[index].packet->data.size()) +
+                 ", expected_next=" + std::to_string(m_receiveBase));
     }
 
     WriteLog("ProcessDataFrame: window update completed, sending ACK");

@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿// PortMasterDlg.cpp : 实现文件
+﻿﻿// PortMasterDlg.cpp : 实现文件
 //
 
 #include "pch.h"
@@ -3381,17 +3381,36 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 
 	if (isReliableMode && m_reliableChannel && m_isConnected)
 	{
-		// 在可靠模式下，只有文件传输彻底完成才允许保存
+		// 【关键修复】在可靠模式下，需要更严格的完整性检查
 		bool fileTransferActive = m_reliableChannel->IsFileTransferActive();
-
+		
+		// 获取传输统计信息进行完整性验证
+		auto stats = m_reliableChannel->GetStats();
+		bool hasReceivedData = (stats.bytesReceived > 0);
+		
 		if (fileTransferActive)
 		{
 			enableSaveButton = false;
 			this->WriteLog("可靠模式：文件传输进行中，禁用保存按钮");
 		}
+		else if (!hasReceivedData)
+		{
+			enableSaveButton = false;
+			this->WriteLog("可靠模式：未接收到数据，禁用保存按钮");
+		}
 		else
 		{
-			this->WriteLog("可靠模式：文件传输已完成，启用保存按钮");
+			// 【增强验证】检查是否有足够的数据用于保存
+			bool hasValidData = (m_totalReceivedBytes > 0) || (!m_receiveDataCache.empty());
+			if (hasValidData)
+			{
+				this->WriteLog("可靠模式：文件传输已完成且有有效数据，启用保存按钮");
+			}
+			else
+			{
+				enableSaveButton = false;
+				this->WriteLog("可靠模式：传输完成但无有效数据，禁用保存按钮");
+			}
 		}
 	}
 	else if (!isReliableMode)
