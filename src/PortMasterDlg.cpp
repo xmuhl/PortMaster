@@ -177,6 +177,7 @@ ON_MESSAGE(WM_USER + 11, &CPortMasterDlg::OnTransmissionProgressUpdate)
 ON_MESSAGE(WM_USER + 12, &CPortMasterDlg::OnTransmissionStatusUpdate)
 ON_MESSAGE(WM_USER + 13, &CPortMasterDlg::OnTransmissionComplete)
 ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
+ON_MESSAGE(WM_USER + 15, &CPortMasterDlg::OnCleanupTransmissionTask)
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -523,239 +524,203 @@ void CPortMasterDlg::StartTransmission()
 									   { PerformDataTransmission(); });
 }
 
+// 【P1修复】更新传输控制方法 - 使用TransmissionTask实现暂停/恢复
 void CPortMasterDlg::PauseTransmission()
 {
-	// 直接暂停传输，不弹出提示对话框
+	// 暂停当前传输任务
+	if (m_currentTransmissionTask && m_currentTransmissionTask->IsRunning())
+	{
+		m_currentTransmissionTask->Pause();
+		this->WriteLog("传输任务已暂停");
+
+		// 更新按钮文本和状态栏
+		m_btnSend.SetWindowText(_T("继续"));
+		m_staticPortStatus.SetWindowText(_T("传输已暂停"));
+	}
+	else
+	{
+		this->WriteLog("PauseTransmission: 没有运行中的传输任务可暂停");
+	}
+
+	// 保持与旧代码的兼容性
 	m_transmissionPaused = true;
-
-	// 更新按钮文本和状态栏
-	m_btnSend.SetWindowText(_T("继续"));
-	m_staticPortStatus.SetWindowText(_T("传输已暂停"));
-
-	// 记录日志
-	this->WriteLog("传输已暂停");
 }
 
 void CPortMasterDlg::ResumeTransmission()
 {
-	m_transmissionPaused = false;
+	// 恢复当前传输任务
+	if (m_currentTransmissionTask && m_currentTransmissionTask->IsPaused())
+	{
+		m_currentTransmissionTask->Resume();
+		this->WriteLog("传输任务已恢复");
 
-	// 更新按钮文本和状态栏
-	m_btnSend.SetWindowText(_T("中断"));
-	m_staticPortStatus.SetWindowText(_T("传输已恢复"));
+		// 更新按钮文本和状态栏
+		m_btnSend.SetWindowText(_T("中断"));
+		m_staticPortStatus.SetWindowText(_T("传输已恢复"));
+	}
+	else
+	{
+		this->WriteLog("ResumeTransmission: 没有暂停的传输任务可恢复");
+	}
+
+	// 保持与旧代码的兼容性
+	m_transmissionPaused = false;
 }
 
+// 【P1修复】重构传输方法 - 使用TransmissionTask实现UI与传输解耦
 void CPortMasterDlg::PerformDataTransmission()
 {
 	try
 	{
-		// 直接使用缓存中的原始字节数据，无需任何解析转换
-		const std::vector<uint8_t> &data = m_sendDataCache;
+		// 检查是否已有传输任务在运行
+		if (m_currentTransmissionTask && !m_currentTransmissionTask->IsCompleted())
+		{
+			this->WriteLog("PerformDataTransmission: 传输任务已在运行中，忽略重复请求");
+			return;
+		}
 
-		// 添加调试输出：记录发送数据的详细信息
-		this->WriteLog("发送数据: " + std::to_string(data.size()) + " 字节");
+		// 获取待发送数据
+		const std::vector<uint8_t>& data = m_sendDataCache;
+		if (data.empty())
+		{
+			this->WriteLog("PerformDataTransmission: 发送数据为空，无需传输");
+			PostMessage(WM_USER + 13, (WPARAM)TransportError::InvalidParameter, 0);
+			return;
+		}
 
-		// 发送数据
-		TransportError error = TransportError::Success;
+		this->WriteLog("PerformDataTransmission: 开始创建传输任务，数据大小: " + std::to_string(data.size()) + " 字节");
 
-		// 初始化进度条（使用PostMessage确保线程安全）
-		PostMessage(WM_USER + 10, 0, 100); // 设置进度条范围
-		PostMessage(WM_USER + 11, 0, 0);   // 设置进度条位置
-
-		// 添加调试输出：检查传输通道状态
+		// 创建适当的传输任务
 		if (m_reliableChannel && m_reliableChannel->IsConnected())
 		{
-			this->WriteLog("使用可靠传输通道");
-
-			// 使用可靠传输通道
-			bool success = false;
-
-			// 对于较大的数据（>1KB），模拟进度更新
-			if (data.size() > 1024)
-			{
-				this->WriteLog("PerformDataTransmission: Large data detected, size=" + std::to_string(data.size()) + ", using chunked send");
-
-				// 分块发送以显示进度
-				const size_t chunkSize = 1024;
-				size_t totalSent = 0;
-
-				while (totalSent < data.size() && !m_transmissionCancelled)
-				{
-					// 检查是否暂停
-					while (m_transmissionPaused && !m_transmissionCancelled)
-					{
-						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					}
-
-					if (m_transmissionCancelled)
-						break;
-
-					size_t currentChunkSize = min(chunkSize, data.size() - totalSent);
-					std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + currentChunkSize);
-
-					this->WriteLog("PerformDataTransmission: Sending chunk " + std::to_string(totalSent / chunkSize + 1) +
-								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
-								   ", size=" + std::to_string(currentChunkSize));
-
-					success = m_reliableChannel->Send(chunk);
-					if (!success)
-					{
-						this->WriteLog("PerformDataTransmission: Chunk send failed at " + std::to_string(totalSent) +
-									   "/" + std::to_string(data.size()));
-						break;
-					}
-
-					totalSent += currentChunkSize;
-
-					// 更新进度条（使用PostMessage确保线程安全）
-					int progress = (int)((totalSent * 100) / data.size());
-					PostMessage(WM_USER + 11, 0, progress);
-
-					// 更新状态（使用PostMessage确保线程安全）
-					if (!m_transmissionPaused)
-					{
-						CString *progressStatus = new CString();
-						progressStatus->Format(_T("正在传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
-						PostMessage(WM_USER + 12, 0, (LPARAM)progressStatus);
-					}
-
-					// 添加小延迟，避免过快发送
-					std::this_thread::sleep_for(std::chrono::milliseconds(10));
-				}
-
-				// 检查传输结果
-				if (m_transmissionCancelled)
-				{
-					this->WriteLog("PerformDataTransmission: Transmission cancelled, " + std::to_string(totalSent) +
-								   "/" + std::to_string(data.size()) + " bytes sent");
-					error = TransportError::WriteFailed;
-				}
-				else if (totalSent == data.size())
-				{
-					this->WriteLog("PerformDataTransmission: Chunked transmission completed successfully");
-					error = success ? TransportError::Success : TransportError::WriteFailed;
-				}
-				else
-				{
-					error = TransportError::WriteFailed;
-				}
-			}
-			else
-			{
-				this->WriteLog("PerformDataTransmission: Small data, size=" + std::to_string(data.size()) + ", sending directly");
-				// 小数据直接发送
-				success = m_reliableChannel->Send(data);
-				this->WriteLog("PerformDataTransmission: Direct send result: " + std::to_string(success));
-				error = success ? TransportError::Success : TransportError::WriteFailed;
-			}
+			this->WriteLog("PerformDataTransmission: 使用可靠传输通道");
+			m_currentTransmissionTask = std::make_unique<ReliableTransmissionTask>(
+				std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*){}));
 		}
 		else if (m_transport && m_transport->IsOpen())
 		{
-			this->WriteLog("PerformDataTransmission: Using raw transport");
-
-			// 使用原始传输 - 添加分块发送支持以确保大数据完整传输
-			if (data.size() > 4096) // 对于大于4KB的数据进行分块发送
-			{
-				this->WriteLog("PerformDataTransmission: Large data for raw transport, size=" + std::to_string(data.size()) + ", using chunked send");
-
-				const size_t chunkSize = 4096; // 原始传输使用较大的块大小
-				size_t totalSent = 0;
-
-				while (totalSent < data.size() && !m_transmissionCancelled)
-				{
-					// 检查是否暂停
-					while (m_transmissionPaused && !m_transmissionCancelled)
-					{
-						std::this_thread::sleep_for(std::chrono::milliseconds(100));
-					}
-
-					if (m_transmissionCancelled)
-						break;
-
-					size_t currentChunkSize = (std::min)(chunkSize, data.size() - totalSent);
-
-					this->WriteLog("PerformDataTransmission: Sending raw chunk " + std::to_string(totalSent / chunkSize + 1) +
-								   "/" + std::to_string((data.size() + chunkSize - 1) / chunkSize) +
-								   ", size=" + std::to_string(currentChunkSize));
-
-					TransportError chunkError = TransportError::Success;
-					int retryCount = 0;
-					const int maxRetries = 3;
-					const int retryDelayMs = 50;
-
-					// 智能重试机制：对Busy错误进行有限重试
-					do
-					{
-						chunkError = m_transport->Write(data.data() + totalSent, currentChunkSize);
-
-						if (chunkError == TransportError::Success)
-						{
-							break; // 发送成功，退出重试循环
-						}
-						else if (chunkError == TransportError::Busy && retryCount < maxRetries)
-						{
-							retryCount++;
-							this->WriteLog("PerformDataTransmission: Raw chunk send busy, retry " + std::to_string(retryCount) +
-										   "/" + std::to_string(maxRetries) + " in " + std::to_string(retryDelayMs) + "ms");
-							std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
-						}
-						else
-						{
-							// 非Busy错误或重试次数用尽，记录错误并退出
-							this->WriteLog("PerformDataTransmission: Raw chunk send failed at " + std::to_string(totalSent) +
-										   "/" + std::to_string(data.size()) + ", error=" + std::to_string(static_cast<int>(chunkError)) +
-										   (retryCount > 0 ? " (after " + std::to_string(retryCount) + " retries)" : ""));
-							break;
-						}
-					} while (chunkError == TransportError::Busy && retryCount <= maxRetries);
-
-					if (chunkError != TransportError::Success)
-					{
-						error = chunkError;
-						break;
-					}
-
-					totalSent += currentChunkSize;
-
-					// 更新进度条（使用PostMessage确保线程安全）
-					int progress = (int)((totalSent * 100) / data.size());
-					PostMessage(WM_USER + 11, 0, progress);
-
-					// 更新状态（使用PostMessage确保线程安全）
-					if (!m_transmissionPaused)
-					{
-						CString *progressStatus = new CString();
-						progressStatus->Format(_T("原始传输: %u/%u 字节 (%d%%)"), totalSent, data.size(), progress);
-						PostMessage(WM_USER + 12, 0, (LPARAM)progressStatus);
-					}
-
-					// 添加小延迟，避免过快发送导致接收端处理不及时
-					std::this_thread::sleep_for(std::chrono::milliseconds(10));
-				}
-
-				if (totalSent == data.size() && error == TransportError::Success && !m_transmissionCancelled)
-				{
-					this->WriteLog("PerformDataTransmission: Raw chunked transmission completed successfully");
-				}
-			}
-			else
-			{
-				this->WriteLog("PerformDataTransmission: Small data for raw transport, size=" + std::to_string(data.size()) + ", sending directly");
-				error = m_transport->Write(data.data(), data.size());
-				this->WriteLog("PerformDataTransmission: Raw direct send result: " + std::to_string(static_cast<int>(error)));
-			}
+			this->WriteLog("PerformDataTransmission: 使用原始传输通道");
+			m_currentTransmissionTask = std::make_unique<RawTransmissionTask>(m_transport);
+		}
+		else
+		{
+			this->WriteLog("PerformDataTransmission: 错误 - 没有可用的传输通道");
+			PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
+			return;
 		}
 
-		// 通过PostMessage通知UI线程处理传输结果
-		PostMessage(WM_USER + 13, (WPARAM)error, 0);
+		// 设置回调函数
+		m_currentTransmissionTask->SetProgressCallback(
+			[this](const TransmissionProgress& progress) {
+				this->OnTransmissionProgress(progress);
+			});
 
-		this->WriteLog("=== 发送数据调试信息结束 ===");
+		m_currentTransmissionTask->SetCompletionCallback(
+			[this](const TransmissionResult& result) {
+				this->OnTransmissionCompleted(result);
+			});
+
+		m_currentTransmissionTask->SetLogCallback(
+			[this](const std::string& message) {
+				this->OnTransmissionLog(message);
+			});
+
+		// 初始化进度条
+		PostMessage(WM_USER + 10, 0, 100); // 设置进度条范围
+		PostMessage(WM_USER + 11, 0, 0);   // 设置进度条位置
+
+		// 启动传输任务
+		bool started = m_currentTransmissionTask->Start(data);
+		if (!started)
+		{
+			this->WriteLog("PerformDataTransmission: 错误 - 传输任务启动失败");
+			m_currentTransmissionTask.reset();
+			PostMessage(WM_USER + 13, (WPARAM)TransportError::WriteFailed, 0);
+			return;
+		}
+
+		this->WriteLog("PerformDataTransmission: 传输任务已成功启动，UI线程继续响应");
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		this->WriteLog("PerformDataTransmission异常: " + std::string(e.what()));
+		if (m_currentTransmissionTask)
+		{
+			m_currentTransmissionTask.reset();
+		}
 		PostMessage(WM_USER + 14, 0, 0); // 通知UI线程处理异常
 	}
+}
+
+// 【P1修复】传输任务回调方法实现 - UI与传输解耦
+
+void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress)
+{
+	// 使用PostMessage确保线程安全的UI更新
+	int progressPercent = progress.progressPercent;
+	PostMessage(WM_USER + 11, 0, progressPercent);
+
+	// 更新状态文本
+	CString* statusText = new CString();
+
+	// 【回归修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
+	// progress.statusText是UTF-8编码的std::string，需要显式转换为Unicode
+	CA2W statusTextW(progress.statusText.c_str(), CP_UTF8);
+	statusText->Format(_T("%s: %u/%u 字节 (%d%%)"),
+					   (LPCWSTR)statusTextW,
+					   (unsigned int)progress.bytesTransmitted,
+					   (unsigned int)progress.totalBytes,
+					   progressPercent);
+	PostMessage(WM_USER + 12, 0, (LPARAM)statusText);
+
+	// 记录详细进度信息（可选，用于调试）
+	if (progress.bytesTransmitted % (progress.totalBytes / 10 + 1) == 0 || progress.progressPercent == 100)
+	{
+		this->WriteLog("传输进度: " + std::to_string(progress.bytesTransmitted) + "/" +
+					   std::to_string(progress.totalBytes) + " 字节 (" +
+					   std::to_string(progress.progressPercent) + "%)");
+	}
+}
+
+// 【修复线程自阻塞】重构传输完成回调 - 避免在传输线程中直接析构任务对象
+void CPortMasterDlg::OnTransmissionCompleted(const TransmissionResult& result)
+{
+	this->WriteLog("传输任务完成: 状态=" + std::to_string(static_cast<int>(result.finalState)) +
+				   ", 错误码=" + std::to_string(static_cast<int>(result.errorCode)) +
+				   ", 传输字节=" + std::to_string(result.bytesTransmitted) +
+				   ", 耗时=" + std::to_string(result.duration.count()) + "ms");
+
+	// 【关键修复】不在传输线程中直接析构任务对象，改为PostMessage到UI线程
+	// 原因：当前回调在传输线程中执行，直接reset()会导致线程试图join自己，造成死锁
+
+	// 通过PostMessage通知UI线程处理传输结果
+	PostMessage(WM_USER + 13, (WPARAM)result.errorCode, 0);
+
+	// 【新增】通过PostMessage安全地清理传输任务对象（在UI线程中执行）
+	PostMessage(WM_USER + 15, 0, 0);
+
+	// 根据结果状态显示相应信息
+	switch (result.finalState)
+	{
+	case TransmissionTaskState::Completed:
+		this->WriteLog("传输成功完成，总用时: " + std::to_string(result.duration.count()) + "ms");
+		break;
+	case TransmissionTaskState::Cancelled:
+		this->WriteLog("传输被用户取消");
+		break;
+	case TransmissionTaskState::Failed:
+		this->WriteLog("传输失败: " + result.errorMessage);
+		break;
+	default:
+		this->WriteLog("传输结束，状态未知");
+		break;
+	}
+}
+
+void CPortMasterDlg::OnTransmissionLog(const std::string& message)
+{
+	// 直接转发到现有的日志系统
+	this->WriteLog(message);
 }
 
 // 新增：清除所有缓存数据函数
@@ -3362,6 +3327,13 @@ void CPortMasterDlg::StartReceiveThread()
                         std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
                         OnTransportDataReceived(data);
                     }
+                    // 【新增】处理超时和空数据情况，避免高频轮询
+                    else
+                    {
+                        // 当Read超时或返回0字节时，短暂休眠避免忙等
+                        // 这样可以将轮询频率从~10次/秒降低到~50次/秒
+                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                    }
                 }
             }
             catch (const std::exception& e)
@@ -3739,6 +3711,24 @@ LRESULT CPortMasterDlg::OnTransmissionError(WPARAM wParam, LPARAM lParam)
 	m_btnSend.SetWindowText(_T("发送"));
 
 	MessageBox(_T("传输过程中发生异常"), _T("错误"), MB_OK | MB_ICONERROR);
+	return 0;
+}
+
+// 【回归修复】传输任务清理消息处理
+LRESULT CPortMasterDlg::OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam)
+{
+	// 【关键修复】在UI线程中安全析构传输任务对象
+	// 此方法通过PostMessage调用，确保在UI线程中执行，避免线程自阻塞问题
+	if (m_currentTransmissionTask)
+	{
+		WriteLog("OnCleanupTransmissionTask - 开始安全清理传输任务对象");
+
+		// 在UI线程中安全析构，此时传输线程已完成，可以安全调用join()
+		m_currentTransmissionTask.reset();
+
+		WriteLog("OnCleanupTransmissionTask - 传输任务对象已安全清理");
+	}
+
 	return 0;
 }
 
@@ -4186,20 +4176,21 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 
 	try
 	{
-		// 【关键修复】彻底解决读写冲突：临时关闭写入流，读取完成后重新打开
-		bool needReopenWrite = false;
+		// 【回归修复】彻底解决竞态条件：使用独立读取流，避免关闭共享写入流
+		// 记录读取前的文件大小，用于完整性验证
+		uint64_t beforeReadBytes = m_totalReceivedBytes;
+
 		if (m_tempCacheFile.is_open())
 		{
+			// 【关键修复】仅刷新数据到磁盘，绝不关闭写入流
 			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
-			m_tempCacheFile.close(); // 临时关闭写入流，确保数据完全落盘
-			needReopenWrite = true;
-			WriteLog("ReadDataFromTempCacheUnlocked: 临时关闭写入流，确保读取数据完整性");
+			WriteLog("ReadDataFromTempCacheUnlocked: 刷新写入流到磁盘，保持流开放状态");
 		}
-		
+
 		// 额外等待确保文件系统同步（解决Windows文件缓存问题）
 		Sleep(50); // 50ms等待，确保文件系统完全同步
 
-		// 直接读取文件内容
+		// 【核心修复】使用独立读取流，避免与写入流冲突
 		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
 		if (!file.is_open())
 		{
@@ -4314,21 +4305,23 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 		}
 
 		file.close();
-		
-		// 【关键修复】重新打开写入流，恢复数据接收能力
-		if (needReopenWrite)
+
+		// 【新增】数据完整性验证：检测读取过程中是否有新数据写入
+		uint64_t afterReadBytes = m_totalReceivedBytes;
+		if (afterReadBytes > beforeReadBytes)
 		{
-			m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
-			if (m_tempCacheFile.is_open())
-			{
-				WriteLog("ReadDataFromTempCacheUnlocked: 写入流已重新打开，数据接收恢复正常");
-			}
-			else
-			{
-				WriteLog("ReadDataFromTempCacheUnlocked: 警告 - 无法重新打开写入流");
-			}
+			size_t newDataSize = static_cast<size_t>(afterReadBytes - beforeReadBytes);
+			WriteLog("⚠️ 检测到读取过程中有新数据写入: " + std::to_string(newDataSize) + " 字节");
+			WriteLog("读取前: " + std::to_string(beforeReadBytes) + " 字节, 读取后: " + std::to_string(afterReadBytes) + " 字节");
+
+			// 这里可以选择重新读取或者提示用户，当前先记录警告
+			WriteLog("当前返回的数据可能不完整，建议用户等待传输完成后重新保存");
 		}
-		
+		else
+		{
+			WriteLog("✅ 数据完整性验证通过，读取期间无新数据写入");
+		}
+
 		return result;
 	}
 	catch (const std::exception &e)

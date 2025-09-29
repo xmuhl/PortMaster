@@ -237,10 +237,18 @@ bool ReliableChannel::Send(const std::vector<uint8_t> &data)
         return false;
     }
 
+    // 【P0修复】确保会话已启动，如果未启动则自动执行握手
+    if (!EnsureSessionStarted())
+    {
+        WriteLog("Send: ERROR - failed to ensure session started, cannot send data");
+        return false;
+    }
+
     std::lock_guard<std::mutex> lock(m_sendMutex);
     m_sendQueue.push(data);
     m_sendCondition.notify_one();
 
+    WriteLog("Send: data queued successfully, queue size=" + std::to_string(m_sendQueue.size()));
     return true;
 }
 
@@ -1269,6 +1277,21 @@ void ReliableChannel::ProcessStartFrame(const Frame &frame)
         {
             WriteLog("ProcessStartFrame: ACK sent successfully, handshake established");
 
+            // 【新增】同步接收窗口基准到START帧序列号 - 解决NAK风暴问题
+            {
+                std::lock_guard<std::mutex> lock(m_windowMutex);
+                WriteLog("ProcessStartFrame: synchronizing receive window base from " + 
+                         std::to_string(m_receiveBase) + " to " + std::to_string(frame.sequence + 1));
+                
+                // 将接收基准设置为START帧的下一个序列号，确保与发送方一致
+                uint16_t newBase = (frame.sequence + 1) % 65536;
+                m_receiveBase = newBase;
+                m_receiveNext = newBase;
+                
+                WriteLog("ProcessStartFrame: receive window synchronized, new base=" + 
+                         std::to_string(m_receiveBase) + ", new next=" + std::to_string(m_receiveNext));
+            }
+
             // 推动接收端状态机 - 准备接收数据
             WriteLog("ProcessStartFrame: receiver ready for data transmission");
         }
@@ -1995,4 +2018,138 @@ bool ReliableChannel::WaitForHandshakeCompletion(uint32_t timeoutMs)
     }
 
     return completed;
+}
+
+// 【P0修复】确保会话已启动，如果未启动则自动执行握手
+bool ReliableChannel::EnsureSessionStarted()
+{
+    WriteLog("EnsureSessionStarted: checking session status");
+
+    // 检查是否已经连接
+    if (!IsConnected())
+    {
+        WriteLog("EnsureSessionStarted: ERROR - not connected");
+        return false;
+    }
+
+    // 检查握手是否已完成
+    if (m_handshakeCompleted.load())
+    {
+        WriteLog("EnsureSessionStarted: handshake already completed, sessionId=" + std::to_string(m_sessionId.load()));
+        return true;
+    }
+
+    WriteLog("EnsureSessionStarted: handshake not completed, initiating new handshake");
+
+    // 生成会话ID
+    uint16_t sessionId = GenerateSessionId();
+    WriteLog("EnsureSessionStarted: generated sessionId=" + std::to_string(sessionId));
+
+    // 重置握手状态
+    m_handshakeCompleted.store(false);
+    WriteLog("EnsureSessionStarted: handshake state reset");
+
+    // 构造START帧的元数据（用于握手，不包含文件信息）
+    StartMetadata metadata;
+    metadata.version = m_config.version;
+    metadata.flags = 0;
+    metadata.fileName = ""; // 空文件名表示纯握手
+    metadata.fileSize = 0;
+    metadata.modifyTime = std::chrono::duration_cast<std::chrono::seconds>(
+                             std::chrono::system_clock::now().time_since_epoch()).count();
+    metadata.sessionId = sessionId;
+
+    // 分配序列号用于START控制帧
+    uint16_t sequence = AllocateSequence();
+    m_handshakeSequence.store(sequence);
+    WriteLog("EnsureSessionStarted: allocated sequence=" + std::to_string(sequence) + " for handshake START frame");
+
+    // 编码开始帧
+    WriteLog("EnsureSessionStarted: encoding handshake START frame");
+    std::vector<uint8_t> frameData = m_frameCodec->EncodeStartFrame(sequence, metadata);
+    WriteLog("EnsureSessionStarted: frame encoded, size=" + std::to_string(frameData.size()));
+
+    // 将START帧存储到发送窗口中以支持ACK匹配
+    {
+        std::lock_guard<std::mutex> lock(m_windowMutex);
+        uint16_t index = sequence % m_config.windowSize;
+
+        if (index < m_sendWindow.size())
+        {
+            auto packet = std::make_shared<Packet>(sequence, frameData);
+            packet->acknowledged = false;
+
+            m_sendWindow[index].packet = packet;
+            m_sendWindow[index].inUse = true;
+
+            WriteLog("EnsureSessionStarted: handshake START frame stored in send window at index=" + std::to_string(index));
+        }
+        else
+        {
+            WriteLog("EnsureSessionStarted: ERROR - window index out of bounds: " + std::to_string(index));
+            ReportError("发送窗口索引越界");
+            return false;
+        }
+    }
+
+    // 发送握手帧
+    WriteLog("EnsureSessionStarted: sending handshake START frame to transport");
+    size_t written = 0;
+    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
+    bool success = (error == TransportError::Success && written == frameData.size());
+
+    if (!success)
+    {
+        WriteLog("EnsureSessionStarted: ERROR - failed to send handshake START frame, error=" +
+                 std::to_string(static_cast<int>(error)) + ", written=" + std::to_string(written));
+
+        // 发送失败时清理发送窗口
+        {
+            std::lock_guard<std::mutex> lock(m_windowMutex);
+            uint16_t index = sequence % m_config.windowSize;
+            if (index < m_sendWindow.size())
+            {
+                m_sendWindow[index].inUse = false;
+                m_sendWindow[index].packet.reset();
+            }
+        }
+        return false;
+    }
+
+    WriteLog("EnsureSessionStarted: handshake START frame sent successfully, " + std::to_string(written) + " bytes written");
+
+    // 更新统计
+    {
+        std::lock_guard<std::mutex> lock(m_statsMutex);
+        m_stats.packetsSent++;
+        m_stats.bytesSent += frameData.size();
+    }
+
+    // 等待握手完成，使用配置的超时时间
+    uint32_t timeoutMs = m_config.timeoutMax; // 使用最大超时时间
+    WriteLog("EnsureSessionStarted: waiting for handshake completion, timeout=" + std::to_string(timeoutMs) + "ms");
+
+    bool handshakeSuccess = WaitForHandshakeCompletion(timeoutMs);
+
+    if (handshakeSuccess)
+    {
+        WriteLog("EnsureSessionStarted: handshake completed successfully, sessionId=" + std::to_string(m_sessionId.load()));
+    }
+    else
+    {
+        WriteLog("EnsureSessionStarted: ERROR - handshake timeout or failed");
+
+        // 握手失败时清理发送窗口
+        {
+            std::lock_guard<std::mutex> lock(m_windowMutex);
+            uint16_t index = sequence % m_config.windowSize;
+            if (index < m_sendWindow.size())
+            {
+                m_sendWindow[index].inUse = false;
+                m_sendWindow[index].packet.reset();
+            }
+        }
+    }
+
+    return handshakeSuccess;
 }

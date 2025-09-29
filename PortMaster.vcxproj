@@ -131,6 +131,7 @@
     <ClInclude Include="Common\RingBuffer.h" />
     <ClInclude Include="Protocol\FrameCodec.h" />
     <ClInclude Include="Protocol\ReliableChannel.h" />
+    <ClInclude Include="src\TransmissionTask.h" />
     <ClInclude Include="Transport\ITransport.h" />
     <ClInclude Include="Transport\LoopbackTransport.h" />
     <ClInclude Include="Transport\SerialTransport.h" />
@@ -145,6 +146,7 @@
     </ClCompile>
     <ClCompile Include="src\PortMaster.cpp" />
     <ClCompile Include="src\PortMasterDlg.cpp" />
+    <ClCompile Include="src\TransmissionTask.cpp" />
     <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Protocol\FrameCodec.cpp" />
     <ClCompile Include="Protocol\ReliableChannel.cpp" />

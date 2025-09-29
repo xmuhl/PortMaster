@@ -705,16 +705,53 @@ TransportError NetworkPrintTransport::SendData(const void* data, size_t size, si
         if (sent) *sent = 0;
         return TransportError::Success;
     }
-    
-    int result = send(m_socket, static_cast<const char*>(data), static_cast<int>(size), 0);
-    if (result == SOCKET_ERROR)
+
+    // 【P0修复】实施循环发送机制处理部分写入
+    const char* dataPtr = static_cast<const char*>(data);
+    size_t totalSent = 0;
+    size_t remainingBytes = size;
+
+    while (remainingBytes > 0)
     {
-        if (sent) *sent = 0;
-        return GetSocketError();
+        int result = send(m_socket, dataPtr + totalSent, static_cast<int>(remainingBytes), 0);
+
+        if (result == SOCKET_ERROR)
+        {
+            int errorCode = WSAGetLastError();
+            if (errorCode == WSAEWOULDBLOCK)
+            {
+                // 非阻塞模式下暂时无法发送，短暂等待后重试
+                Sleep(1);
+                continue;
+            }
+
+            // 其他错误，返回已发送的字节数和错误状态
+            if (sent) *sent = totalSent;
+            return GetSocketError();
+        }
+
+        if (result == 0)
+        {
+            // 连接已关闭，返回已发送的字节数
+            break;
+        }
+
+        // 累计已发送字节数
+        totalSent += result;
+        remainingBytes -= result;
+
+        // 更新统计（每次实际发送后）
+        UpdateStats(result, 0);
     }
-    
-    if (sent) *sent = result;
-    UpdateStats(result, 0);
+
+    if (sent) *sent = totalSent;
+
+    // 如果未能发送全部数据，返回错误状态
+    if (totalSent < size)
+    {
+        return TransportError::WriteFailed;
+    }
+
     return TransportError::Success;
 }
 

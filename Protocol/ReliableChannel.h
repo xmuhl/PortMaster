@@ -154,6 +154,7 @@ private:
     // 握手管理
     uint16_t GenerateSessionId();
     bool WaitForHandshakeCompletion(uint32_t timeoutMs);
+    bool EnsureSessionStarted(); // 【P0修复】确保会话已启动，如果未启动则自动执行握手
 
     uint32_t CalculateTimeout() const;
     void UpdateRTT(uint32_t rttMs);

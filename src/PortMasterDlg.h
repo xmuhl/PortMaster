@@ -4,6 +4,7 @@
 #include "../Transport/ITransport.h"
 #include "../Protocol/ReliableChannel.h"
 #include "../Common/ConfigStore.h"
+#include "TransmissionTask.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -61,6 +62,11 @@ protected:
 	void ResumeTransmission();
 	void PerformDataTransmission();
 	void ClearAllCacheData();  // 新增：清除所有缓存数据
+
+	// 【P1修复】传输任务回调处理 - UI与传输解耦
+	void OnTransmissionProgress(const TransmissionProgress& progress);
+	void OnTransmissionCompleted(const TransmissionResult& result);
+	void OnTransmissionLog(const std::string& message);
 
 	// 十六进制转换函数
 	CString StringToHex(const CString &str);
@@ -154,6 +160,9 @@ private:
 	std::atomic<bool> m_transmissionCancelled;  // 新增：传输取消状态
 	std::thread m_receiveThread;
 	std::thread m_transmissionThread;  // 新增：传输线程
+
+	// 【P1修复】传输任务管理 - 实现UI与传输解耦
+	std::unique_ptr<TransmissionTask> m_currentTransmissionTask;
 
 	// 配置管理
 	ConfigStore &m_configStore;
@@ -259,4 +268,5 @@ private:
 	afx_msg LRESULT OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionComplete(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionError(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam);
 };
