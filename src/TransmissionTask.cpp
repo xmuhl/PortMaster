@@ -1,6 +1,8 @@
 ﻿#include "pch.h"
 #include "TransmissionTask.h"
 #include <algorithm>
+#include <fstream>
+#include <windows.h>
 
 // 【P1修复】传输任务基类实现
 
@@ -394,23 +396,54 @@ bool TransmissionTask::CheckPauseAndCancel()
 // 【P1修复】可靠传输任务实现类
 
 ReliableTransmissionTask::ReliableTransmissionTask(std::shared_ptr<ReliableChannel> reliableChannel)
-    : m_reliableChannel(reliableChannel)
+    : m_reliableChannel(reliableChannel), m_useFileProtocol(true)
 {
-    // 为可靠传输设置较小的块大小以提供更精确的进度
-    SetChunkSize(1024);
+    // 【重构】可靠传输使用完整文件协议，不再分块发送
+    // 设置较大的块大小，因为实际传输由SendFile内部管理
+    SetChunkSize(65536); // 64KB，但实际不会用到分块逻辑
+}
+
+ReliableTransmissionTask::~ReliableTransmissionTask()
+{
+    CleanupTempFile();
+    
+    // 【关键修复】确保协议层正确清理，防止线程泄漏
+    if (m_reliableChannel)
+    {
+        WriteLog("ReliableTransmissionTask::~ReliableTransmissionTask - 开始清理协议层");
+        
+        // 如果传输仍在活跃状态，先停止传输
+        if (m_reliableChannel->IsFileTransferActive())
+        {
+            WriteLog("ReliableTransmissionTask::~ReliableTransmissionTask - 检测到传输仍活跃，强制停止");
+        }
+        
+        // 关闭协议层，确保所有线程正确退出
+        m_reliableChannel->Shutdown();
+        WriteLog("ReliableTransmissionTask::~ReliableTransmissionTask - 协议层清理完成");
+    }
 }
 
 TransportError ReliableTransmissionTask::DoSendChunk(const uint8_t* data, size_t size)
 {
+    // 【重构】不再使用分块发送，而是使用完整文件协议
     if (!m_reliableChannel || !m_reliableChannel->IsConnected())
     {
         return TransportError::NotOpen;
     }
 
-    std::vector<uint8_t> chunk(data, data + size);
-    bool success = m_reliableChannel->Send(chunk);
-
-    return success ? TransportError::Success : TransportError::WriteFailed;
+    // 如果启用文件协议，则使用SendFile
+    if (m_useFileProtocol)
+    {
+        return ExecuteFileTransmission() ? TransportError::Success : TransportError::WriteFailed;
+    }
+    else
+    {
+        // 兼容模式：保持原有的分块发送逻辑
+        std::vector<uint8_t> chunk(data, data + size);
+        bool success = m_reliableChannel->Send(chunk);
+        return success ? TransportError::Success : TransportError::WriteFailed;
+    }
 }
 
 bool ReliableTransmissionTask::IsTransportReady() const
@@ -421,6 +454,118 @@ bool ReliableTransmissionTask::IsTransportReady() const
 std::string ReliableTransmissionTask::GetTransportDescription() const
 {
     return "可靠传输通道";
+}
+
+// 【重构】使用SendFile完整协议执行文件传输
+bool ReliableTransmissionTask::ExecuteFileTransmission()
+{
+    WriteLog("ReliableTransmissionTask::ExecuteFileTransmission - 开始使用完整文件协议传输");
+    
+    // 创建临时文件
+    if (!CreateTempFileFromData(GetTransmissionData(), m_tempFilePath))
+    {
+        WriteLog("ReliableTransmissionTask::ExecuteFileTransmission - 创建临时文件失败");
+        return false;
+    }
+    
+    WriteLog("ReliableTransmissionTask::ExecuteFileTransmission - 临时文件创建成功: " + m_tempFilePath);
+    
+    // 设置进度回调
+    auto progressCallback = [this](int64_t current, int64_t total) {
+        if (total > 0)
+        {
+            int progress = static_cast<int>((current * 100) / total);
+            UpdateProgress(static_cast<size_t>(current), static_cast<size_t>(total),
+                          "正在传输: " + std::to_string(current) + "/" + std::to_string(total) +
+                          " 字节 (" + std::to_string(progress) + "%)");
+        }
+    };
+    
+    // 使用SendFile执行完整的START/DATA/END协议
+    WriteLog("ReliableTransmissionTask::ExecuteFileTransmission - 调用SendFile执行完整协议");
+    bool success = m_reliableChannel->SendFile(m_tempFilePath, progressCallback);
+    
+    if (success)
+    {
+        WriteLog("ReliableTransmissionTask::ExecuteFileTransmission - 文件传输成功完成");
+    }
+    else
+    {
+        WriteLog("ReliableTransmissionTask::ExecuteFileTransmission - 文件传输失败");
+    }
+    
+    // 清理临时文件
+    CleanupTempFile();
+    
+    return success;
+}
+
+// 【重构】从内存数据创建临时文件
+bool ReliableTransmissionTask::CreateTempFileFromData(const std::vector<uint8_t>& data, std::string& tempFilePath)
+{
+    if (data.empty())
+    {
+        WriteLog("ReliableTransmissionTask::CreateTempFileFromData - 数据为空");
+        return false;
+    }
+    
+    // 生成临时文件路径
+    char tempPath[MAX_PATH];
+    char tempFileName[MAX_PATH];
+    
+    if (GetTempPathA(MAX_PATH, tempPath) == 0)
+    {
+        WriteLog("ReliableTransmissionTask::CreateTempFileFromData - 获取临时目录失败");
+        return false;
+    }
+    
+    if (GetTempFileNameA(tempPath, "PMT", 0, tempFileName) == 0)
+    {
+        WriteLog("ReliableTransmissionTask::CreateTempFileFromData - 生成临时文件名失败");
+        return false;
+    }
+    
+    tempFilePath = tempFileName;
+    
+    // 写入数据到临时文件
+    try
+    {
+        std::ofstream file(tempFilePath, std::ios::binary);
+        if (!file.is_open())
+        {
+            WriteLog("ReliableTransmissionTask::CreateTempFileFromData - 打开临时文件失败: " + tempFilePath);
+            return false;
+        }
+        
+        file.write(reinterpret_cast<const char*>(data.data()), data.size());
+        file.close();
+        
+        WriteLog("ReliableTransmissionTask::CreateTempFileFromData - 临时文件创建成功，大小: " + 
+                 std::to_string(data.size()) + " 字节");
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        WriteLog("ReliableTransmissionTask::CreateTempFileFromData - 异常: " + std::string(e.what()));
+        return false;
+    }
+}
+
+// 【重构】清理临时文件
+void ReliableTransmissionTask::CleanupTempFile()
+{
+    if (!m_tempFilePath.empty())
+    {
+        if (DeleteFileA(m_tempFilePath.c_str()))
+        {
+            WriteLog("ReliableTransmissionTask::CleanupTempFile - 临时文件清理成功: " + m_tempFilePath);
+        }
+        else
+        {
+            WriteLog("ReliableTransmissionTask::CleanupTempFile - 临时文件清理失败: " + m_tempFilePath);
+        }
+        m_tempFilePath.clear();
+    }
 }
 
 // 【P1修复】原始传输任务实现类

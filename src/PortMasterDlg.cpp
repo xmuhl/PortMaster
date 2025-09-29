@@ -3715,6 +3715,24 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 
 		this->WriteLog("发送完成，缓存保持有效以支持重复发送");
 
+		// 【关键修复】可靠模式特殊处理 - 确保协议层正确终止
+		bool isReliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+		if (isReliableMode && m_reliableChannel)
+		{
+			this->WriteLog("可靠模式传输完成 - 检查协议层状态");
+			
+			// 等待协议层完全结束（给一些时间让END帧处理完成）
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			
+			// 检查文件传输是否真正完成
+			bool transferActive = m_reliableChannel->IsFileTransferActive();
+			this->WriteLog("可靠模式传输完成 - 协议层传输状态: " + 
+			              std::string(transferActive ? "仍活跃" : "已结束"));
+			
+			// 强制更新保存按钮状态
+			UpdateSaveButtonStatus();
+		}
+
 		// 2秒后恢复连接状态显示并重置进度条
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
 	}
