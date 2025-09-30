@@ -409,6 +409,9 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         {
             buffer.resize(bytesRead);
 
+            // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
+            uint16_t sequence = AllocateSequence();
+
             // 【流控机制】实现Busy状态重试逻辑
             const int MAX_RETRY_COUNT = 10;        // 最大重试次数
             const int RETRY_DELAY_MS = 50;         // 每次重试间隔（毫秒）
@@ -418,7 +421,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
 
             while (retryCount < MAX_RETRY_COUNT)
             {
-                sendError = SendPacket(AllocateSequence(), buffer);
+                sendError = SendPacket(sequence, buffer);  // 使用同一序列号重试
 
                 if (sendError == TransportError::Success)
                 {
@@ -427,14 +430,14 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
                 else if (sendError == TransportError::Busy)
                 {
                     // 传输层繁忙，等待后重试
-                    WriteLog("SendFile: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
+                    WriteLog("SendFile: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
                     std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
                     retryCount++;
                 }
                 else
                 {
                     // 其他错误（如Failed、NotOpen等），立即失败
-                    WriteLog("SendFile: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)));
+                    WriteLog("SendFile: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
                     break;
                 }
             }
@@ -826,7 +829,7 @@ void ReliableChannel::SendThread()
         try
         {
             WriteLog("SendThread: allocating sequence number...");
-            // 分配序列号并发送
+            // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
             uint16_t sequence = AllocateSequence();
             WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
 
@@ -839,29 +842,29 @@ void ReliableChannel::SendThread()
 
             while (retryCount < MAX_RETRY_COUNT)
             {
-                sendError = SendPacket(sequence, data);
+                sendError = SendPacket(sequence, data);  // 使用同一序列号重试
 
                 if (sendError == TransportError::Success)
                 {
-                    WriteLog("SendThread: SendPacket succeeded");
+                    WriteLog("SendThread: SendPacket succeeded for sequence " + std::to_string(sequence));
                     break;
                 }
                 else if (sendError == TransportError::Busy)
                 {
-                    WriteLog("SendThread: transport busy, retry " + std::to_string(retryCount + 1));
+                    WriteLog("SendThread: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
                     std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
                     retryCount++;
                 }
                 else
                 {
-                    WriteLog("SendThread: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)));
+                    WriteLog("SendThread: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
                     break;
                 }
             }
 
             if (sendError != TransportError::Success)
             {
-                WriteLog("SendThread: SendPacket failed after retries");
+                WriteLog("SendThread: SendPacket failed after retries for sequence " + std::to_string(sequence));
                 ReportError("发送数据包失败");
             }
         }
