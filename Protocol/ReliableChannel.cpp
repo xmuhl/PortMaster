@@ -1678,29 +1678,64 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
         }
     }
 
-    // 发送帧数据
-    WriteLog("SendStart: sending START frame to transport...");
-    size_t written = 0;
-    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
-    bool success = (error == TransportError::Success && written == frameData.size());
+    // 【流控机制】为START控制帧添加Busy重试机制
+    WriteLog("SendStart: sending START frame with retry mechanism...");
+    const int MAX_RETRY_COUNT = 10;
+    const int RETRY_DELAY_MS = 50;
 
-    if (success)
+    int retryCount = 0;
+    TransportError sendError = TransportError::Success;
+    bool success = false;
+
+    while (retryCount < MAX_RETRY_COUNT)
     {
-        WriteLog("SendStart: START frame sent successfully, " + std::to_string(written) + " bytes written");
+        size_t written = 0;
+        sendError = m_transport->Write(frameData.data(), frameData.size(), &written);
 
-        // 更新统计
+        if (sendError == TransportError::Success && written == frameData.size())
         {
-            std::lock_guard<std::mutex> lock(m_statsMutex);
-            m_stats.packetsSent++;
-            m_stats.bytesSent += frameData.size();
-        }
+            WriteLog("SendStart: START frame sent successfully, " + std::to_string(written) + " bytes written, sequence=" + std::to_string(sequence));
+            success = true;
 
-        WriteLog("SendStart: START control frame stored in send window for ACK tracking");
+            // 更新统计
+            {
+                std::lock_guard<std::mutex> lock(m_statsMutex);
+                m_stats.packetsSent++;
+                m_stats.bytesSent += frameData.size();
+            }
+
+            WriteLog("SendStart: START control frame stored in send window for ACK tracking");
+            break;
+        }
+        else if (sendError == TransportError::Busy)
+        {
+            // 传输层繁忙，等待后重试
+            WriteLog("SendStart: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
+            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+            retryCount++;
+        }
+        else
+        {
+            // 其他错误，立即失败
+            WriteLog("SendStart: ERROR - failed to send START frame, error=" +
+                     std::to_string(static_cast<int>(sendError)) + ", written=" + std::to_string(written) +
+                     " for sequence " + std::to_string(sequence));
+            break;
+        }
     }
-    else
+
+    // 处理失败情况
+    if (!success)
     {
-        WriteLog("SendStart: ERROR - failed to send START frame, error=" +
-                 std::to_string(static_cast<int>(error)) + ", written=" + std::to_string(written));
+        if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
+        {
+            WriteLog("SendStart: transport busy, retry exhausted for sequence " + std::to_string(sequence));
+            ReportError("传输层持续繁忙，START帧发送失败");
+        }
+        else
+        {
+            ReportError("START帧发送失败");
+        }
 
         // 发送失败时清理发送窗口
         {
@@ -1712,8 +1747,6 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
                 m_sendWindow[index].packet.reset();
             }
         }
-
-        ReportError("START帧发送失败");
     }
 
     return success;
@@ -1722,9 +1755,48 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
 // 发送结束帧
 bool ReliableChannel::SendEnd()
 {
+    // 【关键修复】在重试循环外分配序列号
     uint16_t sequence = AllocateSequence();
-    TransportError error = SendPacket(sequence, {}, FrameType::FRAME_END);
-    return (error == TransportError::Success);
+
+    // 【流控机制】为END控制帧添加Busy重试机制
+    const int MAX_RETRY_COUNT = 10;
+    const int RETRY_DELAY_MS = 50;
+
+    int retryCount = 0;
+    TransportError sendError = TransportError::Success;
+
+    while (retryCount < MAX_RETRY_COUNT)
+    {
+        sendError = SendPacket(sequence, {}, FrameType::FRAME_END);
+
+        if (sendError == TransportError::Success)
+        {
+            WriteLog("SendEnd: END frame sent successfully, sequence=" + std::to_string(sequence));
+            return true;
+        }
+        else if (sendError == TransportError::Busy)
+        {
+            // 传输层繁忙，等待后重试
+            WriteLog("SendEnd: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
+            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+            retryCount++;
+        }
+        else
+        {
+            // 其他错误，立即失败
+            WriteLog("SendEnd: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
+            return false;
+        }
+    }
+
+    // 重试耗尽
+    if (sendError == TransportError::Busy)
+    {
+        WriteLog("SendEnd: transport busy, retry exhausted for sequence " + std::to_string(sequence));
+        ReportError("传输层持续繁忙，END帧发送失败");
+    }
+
+    return false;
 }
 
 // 重传数据包（内部版本，假设已持有窗口锁）
