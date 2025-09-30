@@ -4822,7 +4822,9 @@ void CPortMasterDlg::InitializeManagersAfterControlsCreated()
 		// 【进度更新安全化】初始化线程安全进度管理器
 		InitializeThreadSafeProgressManager();
 
-		// 【新增】注册UI控件到线程安全更新器
+		// 【临时修复】暂时注释掉控件注册，避免可能的断言问题
+		// TODO: 调查ThreadSafeUIUpdater.RegisterControl方法的正确用法
+		/*
 		if (m_threadSafeUIUpdater) {
 			// 注册主要状态控件
 			m_threadSafeUIUpdater->RegisterControl(IDC_STATIC_PORT_STATUS, &m_staticPortStatus);
@@ -4831,6 +4833,7 @@ void CPortMasterDlg::InitializeManagersAfterControlsCreated()
 			m_threadSafeUIUpdater->RegisterControl(IDC_PROGRESS, &m_progress);
 			WriteLog("UI控件已注册到线程安全更新器");
 		}
+		*/
 
 		WriteLog("所有管理器初始化完成");
 
