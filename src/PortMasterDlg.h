@@ -249,6 +249,9 @@ private:
 	void OnProgressChanged(const ProgressInfo& progress);  // 进度变化回调
 	void UpdateProgressSafe(uint64_t current, uint64_t total, const std::string& status = "");  // 安全的进度更新
 
+	// 【修复】在控件创建完成后统一初始化所有管理器
+	void InitializeManagersAfterControlsCreated();  // 在控件创建完成后初始化管理器
+
 	// 【可靠模式按钮管控】保存按钮状态控制
 	void UpdateSaveButtonStatus();
 	void OnTransportDataReceived(const std::vector<uint8_t> &data);

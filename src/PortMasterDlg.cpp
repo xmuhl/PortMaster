@@ -103,20 +103,8 @@ CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 
-	// 【UI响应修复】初始化状态管理器
-	InitializeUIStateManager();
-
-	// 【传输状态管理统一】初始化传输状态管理器
-	InitializeTransmissionStateManager();
-
-	// 【按钮状态控制优化】初始化按钮状态管理器
-	InitializeButtonStateManager();
-
-	// 【UI更新队列机制】初始化线程安全UI更新器
-	InitializeThreadSafeUIUpdater();
-
-	// 【进度更新安全化】初始化线程安全进度管理器
-	InitializeThreadSafeProgressManager();
+	// 【修复】不在构造函数中初始化管理器，移到OnInitDialog中
+	// 这确保了在控件创建完成后再初始化管理器
 }
 
 void CPortMasterDlg::DoDataExchange(CDataExchange *pDX)
@@ -280,6 +268,10 @@ BOOL CPortMasterDlg::OnInitDialog()
 	SetDlgItemText(IDC_STATIC_MODE, _T("直通")); // 与默认选择的直通模式保持一致
 	SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("手动输入"));
+
+	// 【修复】在控件创建完成后初始化管理器
+	// 这确保了所有控件都已创建并可用
+	InitializeManagersAfterControlsCreated();
 
 	// 初始化传输配置
 	InitializeTransportConfig();
@@ -4807,6 +4799,58 @@ void CPortMasterDlg::InitializeThreadSafeProgressManager()
 	m_threadSafeProgressManager->SetMinUpdateInterval(std::chrono::milliseconds(100));
 
 	WriteLog("线程安全进度管理器已初始化");
+}
+
+// 【修复】在控件创建完成后统一初始化所有管理器
+void CPortMasterDlg::InitializeManagersAfterControlsCreated()
+{
+	WriteLog("开始在控件创建完成后初始化管理器");
+
+	try {
+		// 【UI响应修复】初始化状态管理器
+		InitializeUIStateManager();
+
+		// 【传输状态管理统一】初始化传输状态管理器
+		InitializeTransmissionStateManager();
+
+		// 【按钮状态控制优化】初始化按钮状态管理器
+		InitializeButtonStateManager();
+
+		// 【UI更新队列机制】初始化线程安全UI更新器
+		InitializeThreadSafeUIUpdater();
+
+		// 【进度更新安全化】初始化线程安全进度管理器
+		InitializeThreadSafeProgressManager();
+
+		// 【新增】注册UI控件到线程安全更新器
+		if (m_threadSafeUIUpdater) {
+			// 注册主要状态控件
+			m_threadSafeUIUpdater->RegisterControl(IDC_STATIC_PORT_STATUS, &m_staticPortStatus);
+			m_threadSafeUIUpdater->RegisterControl(IDC_STATIC_MODE, &m_staticMode);
+			m_threadSafeUIUpdater->RegisterControl(IDC_STATIC_SPEED, &m_staticSpeed);
+			m_threadSafeUIUpdater->RegisterControl(IDC_PROGRESS, &m_progress);
+			WriteLog("UI控件已注册到线程安全更新器");
+		}
+
+		WriteLog("所有管理器初始化完成");
+
+		// 【新增】初始化完成后，将当前UI状态同步到管理器
+		if (m_uiStateManager) {
+			// 同步当前连接状态到状态管理器
+			CString currentStatus;
+			m_staticPortStatus.GetWindowText(currentStatus);
+			CT2CA statusText(currentStatus);
+			m_uiStateManager->UpdateConnectionStatus(statusText, UIStateManager::Priority::Normal);
+		}
+
+	} catch (const std::exception& e) {
+		WriteLog("管理器初始化异常: " + std::string(e.what()));
+		// 如果初始化失败，记录错误但不阻止程序启动
+		LogMessage(_T("管理器初始化失败，程序将继续运行"));
+	} catch (...) {
+		WriteLog("管理器初始化发生未知异常");
+		LogMessage(_T("管理器初始化发生未知异常，程序将继续运行"));
+	}
 }
 
 // 更新UI状态显示
