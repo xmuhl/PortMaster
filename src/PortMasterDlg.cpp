@@ -4843,7 +4843,8 @@ void CPortMasterDlg::InitializeManagersAfterControlsCreated()
 			CString currentStatus;
 			m_staticPortStatus.GetWindowText(currentStatus);
 			CT2CA statusText(currentStatus);
-			m_uiStateManager->UpdateConnectionStatus(statusText, UIStateManager::Priority::Normal);
+			std::string statusStr(statusText);
+			m_uiStateManager->UpdateConnectionStatus(statusStr, UIStateManager::Priority::Normal);
 		}
 
 	} catch (const std::exception& e) {

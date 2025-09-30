@@ -193,24 +193,23 @@ int main()
     cout << "[OK] Loopback transport created" << endl;
     cout << endl;
 
-    // 步骤3: 创建可靠传输通道
+    // 步骤3: 创建可靠传输通道（单通道架构）
     cout << "[STEP 3/8] Creating reliable channel..." << endl;
 
     auto reliableChannel = make_shared<ReliableChannel>();
 
     ReliableConfig reliableConfig;
-    reliableConfig.windowSize = 1;
+    reliableConfig.windowSize = 16;  // 增加窗口大小以支持更多并行传输
     reliableConfig.maxRetries = 10;
 
     if (!reliableChannel->Initialize(transport, reliableConfig))
     {
-        cerr << "[ERROR] Failed to initialize reliable channel" << endl;
+        cerr << "[ERROR] Failed to initialize channel" << endl;
         return 1;
     }
 
     reliableChannel->SetErrorCallback(OnError);
     reliableChannel->SetProgressCallback(OnSendProgress);
-    reliableChannel->SetStateChangedCallback(OnStateChanged);
 
     cout << "[OK] Reliable channel configured" << endl;
     cout << endl;

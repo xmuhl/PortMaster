@@ -29,7 +29,7 @@ void ReliableChannel::WriteLog(const std::string &message)
 
 // 构造函数
 ReliableChannel::ReliableChannel()
-    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
+    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_sendFileSize(0), m_sendFileProgress(0), m_sendFileActive(false), m_recvFileSize(0), m_recvFileProgress(0), m_recvFileActive(false), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
 {
     m_lastActivity = std::chrono::steady_clock::now();
     WriteLog("ReliableChannel constructor called");
@@ -345,14 +345,14 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
     int64_t fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // 设置文件传输状态
+    // 设置发送端文件传输状态
     {
         std::lock_guard<std::mutex> lock(m_receiveMutex);
-        m_currentFileName = filePath;
-        m_currentFileSize = fileSize;
-        m_currentFileProgress = 0;
-        m_fileTransferActive = true;
-        m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+        m_sendFileName = filePath;
+        m_sendFileSize = fileSize;
+        m_sendFileProgress = 0;
+        m_sendFileActive = true;
+        m_sendStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
     }
 
     // 发送开始帧
@@ -364,7 +364,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
     if (!SendStart(filePath, fileSize, modifyTime))
     {
         file.close();
-        m_fileTransferActive = false;
+        m_sendFileActive = false;
         WriteLog("SendFile: ERROR - SendStart failed");
         return false;
     }
@@ -382,7 +382,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         WriteLog("SendFile: ERROR - handshake timeout after " + std::to_string(handshakeTimeoutMs) + "ms");
         ReportError("握手超时，接收端未响应START帧");
         file.close();
-        m_fileTransferActive = false;
+        m_sendFileActive = false;
         return false;
     }
 
@@ -390,7 +390,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
     {
         WriteLog("SendFile: ERROR - connection lost during handshake");
         file.close();
-        m_fileTransferActive = false;
+        m_sendFileActive = false;
         return false;
     }
 
@@ -454,7 +454,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
                     ReportError("发送文件数据失败");
                 }
                 file.close();
-                m_fileTransferActive = false;
+                m_sendFileActive = false;
                 return false;
             }
 
@@ -470,15 +470,20 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
 
     file.close();
 
+    // 【修复】直接发送END帧，不等待ACK
+    // 理由：等待ACK的判断条件有缺陷（slot.inUse在ACK后被设为false）
+    // ProcessThread会继续处理重传，END帧本身也需要ACK确认
+    WriteLog("SendFile: all data packets sent, sending END frame");
+
     // 发送结束帧
     if (m_connected && !SendEnd())
     {
         ReportError("发送文件结束帧失败");
-        m_fileTransferActive = false;
+        m_sendFileActive = false;
         return false;
     }
 
-    m_fileTransferActive = false;
+    m_sendFileActive = false;
     return m_connected;
 }
 
@@ -490,27 +495,26 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
         return false;
     }
 
-    // 【关键修复】设置初始状态，但不覆盖m_currentFileSize
-    // 设置文件传输状态
+    // 设置接收端文件传输状态
     {
         std::lock_guard<std::mutex> lock(m_receiveMutex);
-        m_currentFileName = filePath;
-        // 不覆盖m_currentFileSize，它将由ProcessStartFrame设置
-        // 但如果之前没有设置过，初始化为0
-        if (m_currentFileSize == 0)
+        m_recvFileName = filePath;
+        // 不覆盖m_recvFileSize，它将由ProcessStartFrame设置
+        // 如果之前没有设置过，初始化为0
+        if (m_recvFileSize == 0)
         {
             // 首次调用，等待START帧设置文件大小
         }
-        m_currentFileProgress = 0;
-        m_fileTransferActive = true; // 必须设置为true，表示准备接收
-        m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+        m_recvFileProgress = 0;
+        m_recvFileActive = true; // 设置为true，表示准备接收
+        m_recvStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
     }
 
     std::ofstream file(filePath, std::ios::binary);
     if (!file.is_open())
     {
         ReportError("无法创建文件: " + filePath);
-        m_fileTransferActive = false;
+        m_recvFileActive = false;
         return false;
     }
 
@@ -533,7 +537,7 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
             m_receiveCondition.wait_for(
                 lock,
                 std::chrono::milliseconds(100),
-                [this] { return !m_receiveQueue.empty() || !m_fileTransferActive || !m_connected; }
+                [this] { return !m_receiveQueue.empty() || !m_recvFileActive || !m_connected; }
             );
 
             if (!m_connected)
@@ -542,7 +546,7 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
                 break;
             }
 
-            transferActive = m_fileTransferActive;
+            transferActive = m_recvFileActive;
             queueEmpty = m_receiveQueue.empty();
 
             // 【关键修复】即使传输标记为结束，也要继续排空接收队列
@@ -568,7 +572,7 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
             if (progressCallback)
             {
                 std::lock_guard<std::mutex> lock(m_receiveMutex);
-                progressCallback(m_currentFileProgress, m_currentFileSize);
+                progressCallback(m_recvFileProgress, m_recvFileSize);
             }
         }
         else if (!transferActive && queueEmpty)
@@ -582,7 +586,7 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
     file.close();
     WriteLog("ReceiveFile: file closed, total bytes written=" + std::to_string(bytesWritten));
 
-    return !m_fileTransferActive && m_connected;
+    return !m_recvFileActive && m_connected;
 }
 
 // 设置配置
@@ -696,7 +700,8 @@ size_t ReliableChannel::GetReceiveQueueSize() const
 // 【可靠模式按钮管控】检查文件传输是否活跃
 bool ReliableChannel::IsFileTransferActive() const
 {
-    if (!m_fileTransferActive) return false;
+    // 检查发送端或接收端是否有活跃传输
+    if (!m_sendFileActive && !m_recvFileActive) return false;
 
     // 检查传输超时（需要非const访问来修改状态）
     if (const_cast<ReliableChannel*>(this)->CheckTransferTimeout()) {
@@ -704,7 +709,7 @@ bool ReliableChannel::IsFileTransferActive() const
     }
 
     // 返回当前文件传输的活跃状态，用于UI层判断保存按钮启用时机
-    return m_fileTransferActive;
+    return m_sendFileActive || m_recvFileActive;
 }
 
 // 处理线程
@@ -990,13 +995,13 @@ void ReliableChannel::ReceiveThread()
                             WriteLog("ReceiveThread: data pushed, notifying condition");
                             
                             // 【关键修复】更新文件传输进度计数
-                            m_currentFileProgress += slot.packet->data.size();
-                            WriteLog("ReceiveThread: updated file progress to " + std::to_string(m_currentFileProgress) + " bytes");
-                            
+                            m_recvFileProgress += slot.packet->data.size();
+                            WriteLog("ReceiveThread: updated file progress to " + std::to_string(m_recvFileProgress) + " bytes");
+
                             // 更新进度回调
-                            if (m_currentFileSize > 0)
+                            if (m_recvFileSize > 0)
                             {
-                                UpdateProgress(m_currentFileProgress, m_currentFileSize);
+                                UpdateProgress(m_recvFileProgress, m_recvFileSize);
                             }
                         }
 
@@ -1005,8 +1010,8 @@ void ReliableChannel::ReceiveThread()
                         slot.inUse = false;
                         slot.packet.reset();
                         m_receiveBase = (m_receiveBase + 1) % 65536;
-                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase) + 
-                                ", file progress=" + std::to_string(m_currentFileProgress) + "/" + std::to_string(m_currentFileSize));
+                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase) +
+                                ", file progress=" + std::to_string(m_recvFileProgress) + "/" + std::to_string(m_recvFileSize));
                         found = true;
                         break;
                     }
@@ -1020,8 +1025,8 @@ void ReliableChannel::ReceiveThread()
             }
         }
 
-        WriteLog("ReceiveThread: sleeping for 10ms...");
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        WriteLog("ReceiveThread: sleeping for 1ms...");
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
     WriteLog("ReceiveThread exiting");
@@ -1409,14 +1414,14 @@ void ReliableChannel::ProcessStartFrame(const Frame &frame)
                  ", fileSize=" + std::to_string(metadata.fileSize) +
                  ", version=" + std::to_string(metadata.version));
 
-        // 设置文件传输信息
+        // 设置接收端文件传输信息
         {
             std::lock_guard<std::mutex> lock(m_receiveMutex);
-            m_currentFileName = metadata.fileName;
-            m_currentFileSize = metadata.fileSize;
-            m_currentFileProgress = 0;
-            m_fileTransferActive = true; // 激活文件传输状态
-            m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+            m_recvFileName = metadata.fileName;
+            m_recvFileSize = metadata.fileSize;
+            m_recvFileProgress = 0;
+            m_recvFileActive = true; // 激活文件传输状态
+            m_recvStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
         }
 
         // 更新进度显示
@@ -1468,33 +1473,33 @@ void ReliableChannel::ProcessEndFrame(const Frame &frame)
     WriteLog("ProcessEndFrame: 收到END帧，验证传输完整性...");
 
     // 检查是否有预期的文件大小信息
-    if (m_currentFileSize > 0)
+    if (m_recvFileSize > 0)
     {
         // 验证实际接收字节数与预期文件大小是否匹配
-        if (m_currentFileProgress >= m_currentFileSize)
+        if (m_recvFileProgress >= m_recvFileSize)
         {
             WriteLog("ProcessEndFrame: 传输完整性验证通过 - " +
-                     std::to_string(m_currentFileProgress) + "/" +
-                     std::to_string(m_currentFileSize) + " 字节");
-            m_fileTransferActive = false;
-            UpdateProgress(m_currentFileSize, m_currentFileSize);
+                     std::to_string(m_recvFileProgress) + "/" +
+                     std::to_string(m_recvFileSize) + " 字节");
+            m_recvFileActive = false;
+            UpdateProgress(m_recvFileSize, m_recvFileSize);
             WriteLog("ProcessEndFrame: 文件传输正常完成");
         }
         else
         {
             // 【关键修复】智能完成机制：根据完成度采取不同策略
-            float completionRate = (float)m_currentFileProgress / m_currentFileSize;
+            float completionRate = (float)m_recvFileProgress / m_recvFileSize;
             WriteLog("ProcessEndFrame: 传输不完整 - 收到 " +
-                     std::to_string(m_currentFileProgress) + "/" +
-                     std::to_string(m_currentFileSize) + " 字节 (" +
+                     std::to_string(m_recvFileProgress) + "/" +
+                     std::to_string(m_recvFileSize) + " 字节 (" +
                      std::to_string(completionRate * 100) + "% 完成)");
 
             if (completionRate >= 0.95) {
                 // 95%以上完成：可能是轻微数据丢失，强制完成
                 WriteLog("ProcessEndFrame: 传输接近完成(" +
                          std::to_string(completionRate * 100) + "%)，强制结束");
-                m_fileTransferActive = false;
-                UpdateProgress(m_currentFileProgress, m_currentFileSize);
+                m_recvFileActive = false;
+                UpdateProgress(m_recvFileProgress, m_recvFileSize);
                 ReportWarning("文件传输基本完成，可能有轻微数据丢失 (" +
                              std::to_string(completionRate * 100) + "% 完成)");
             }
@@ -1502,11 +1507,11 @@ void ReliableChannel::ProcessEndFrame(const Frame &frame)
                 // 10%以下完成：严重问题，立即终止
                 WriteLog("ProcessEndFrame: 传输严重不完整(" +
                          std::to_string(completionRate * 100) + "%)，立即终止");
-                m_fileTransferActive = false;
+                m_recvFileActive = false;
                 ReportError("文件传输严重失败，仅完成 " +
                            std::to_string(completionRate * 100) + "% (" +
-                           std::to_string(m_currentFileProgress) + "/" +
-                           std::to_string(m_currentFileSize) + " 字节)");
+                           std::to_string(m_recvFileProgress) + "/" +
+                           std::to_string(m_recvFileSize) + " 字节)");
             }
             else {
                 // 10%-95%之间：设置短超时，等待可能的补传
@@ -1519,19 +1524,19 @@ void ReliableChannel::ProcessEndFrame(const Frame &frame)
                 m_shortTimeoutDuration = 30; // 30秒
 
                 ReportWarning("文件传输部分完成(" + std::to_string(completionRate * 100) + "%)，等待补传超时");
-                // 暂时不设置 m_fileTransferActive = false，但使用短超时机制
+                // 暂时不设置 m_recvFileActive = false，但使用短超时机制
             }
         }
     }
     else
     {
         WriteLog("ProcessEndFrame: 无文件大小信息，使用传统逻辑结束传输");
-        m_fileTransferActive = false;
-        UpdateProgress(m_currentFileProgress, m_currentFileProgress);
+        m_recvFileActive = false;
+        UpdateProgress(m_recvFileProgress, m_recvFileProgress);
         WriteLog("ProcessEndFrame: 传统模式传输结束");
     }
 
-    WriteLog("ProcessEndFrame: 处理完成，当前传输状态 = " + std::string(m_fileTransferActive ? "活跃" : "已结束"));
+    WriteLog("ProcessEndFrame: 处理完成，当前传输状态 = " + std::string(m_recvFileActive ? "活跃" : "已结束"));
 }
 
 // 处理心跳帧
@@ -2303,7 +2308,8 @@ void ReliableChannel::UpdateProgress(int64_t current, int64_t total)
 // 检查传输超时
 bool ReliableChannel::CheckTransferTimeout()
 {
-    if (!m_fileTransferActive) return false;
+    // 检查发送端或接收端是否活跃
+    if (!m_sendFileActive && !m_recvFileActive) return false;
 
     auto now = std::chrono::steady_clock::now();
 
@@ -2316,29 +2322,31 @@ bool ReliableChannel::CheckTransferTimeout()
             WriteLog("CheckTransferTimeout: 短超时触发，强制结束不完整传输");
             WriteLog("CheckTransferTimeout: 短超时时间 " + std::to_string(m_shortTimeoutDuration) +
                     " 秒，实际等待 " + std::to_string(shortElapsed) + " 秒");
-            WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_currentFileSize) +
-                    " 字节，当前进度 " + std::to_string(m_currentFileProgress) + " 字节");
+            WriteLog("CheckTransferTimeout: 接收文件大小 " + std::to_string(m_recvFileSize) +
+                    " 字节，当前进度 " + std::to_string(m_recvFileProgress) + " 字节");
 
-            m_fileTransferActive = false;
+            m_recvFileActive = false;
             m_shortTimeoutActive = false;
             ReportError("不完整传输短超时：等待补传超时，传输完成 " +
-                       std::to_string((m_currentFileProgress * 100.0 / m_currentFileSize)) + "%");
+                       std::to_string((m_recvFileProgress * 100.0 / m_recvFileSize)) + "%");
             return true;
         }
     }
 
-    // 原有的传输超时逻辑
-    auto transferDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_transferStartTime);
+    // 原有的传输超时逻辑 - 检查发送端或接收端
+    auto sendDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_sendStartTime);
+    auto recvDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_recvStartTime);
 
     // 计算合理的传输超时时间
     // 【修改】调整超时参数：最小5分钟，最大10分钟（原为30分钟）
     int64_t maxExpectedSeconds;
-    if (m_currentFileSize > 0)
+    int64_t currentFileSize = m_sendFileActive ? m_sendFileSize : m_recvFileSize;
+    if (currentFileSize > 0)
     {
         // 按1KB/s的最低速度计算，但至少5分钟，最多10分钟
         int64_t minSeconds = 300LL;    // 5分钟（原为60秒）
         int64_t maxSeconds = 600LL;    // 10分钟（原为30分钟）
-        int64_t calculatedSeconds = m_currentFileSize / 1024;
+        int64_t calculatedSeconds = currentFileSize / 1024;
         maxExpectedSeconds = (calculatedSeconds > minSeconds) ?
                             ((calculatedSeconds < maxSeconds) ? calculatedSeconds : maxSeconds) :
                             minSeconds;
@@ -2349,17 +2357,34 @@ bool ReliableChannel::CheckTransferTimeout()
         maxExpectedSeconds = 300;
     }
 
-    if (transferDuration.count() > maxExpectedSeconds)
+    // 检查发送端超时
+    if (m_sendFileActive && sendDuration.count() > maxExpectedSeconds)
     {
-        WriteLog("CheckTransferTimeout: 传输超时，强制结束");
+        WriteLog("CheckTransferTimeout: 发送超时，强制结束");
         WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
-                " 秒，实际用时 " + std::to_string(transferDuration.count()) + " 秒");
-        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_currentFileSize) +
-                " 字节，当前进度 " + std::to_string(m_currentFileProgress) + " 字节");
+                " 秒，实际用时 " + std::to_string(sendDuration.count()) + " 秒");
+        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_sendFileSize) +
+                " 字节，当前进度 " + std::to_string(m_sendFileProgress) + " 字节");
 
-        m_fileTransferActive = false;
+        m_sendFileActive = false;
         m_shortTimeoutActive = false; // 清除短超时状态
-        ReportError("文件传输超时：传输时间 " + std::to_string(transferDuration.count()) +
+        ReportError("文件发送超时：传输时间 " + std::to_string(sendDuration.count()) +
+                   " 秒超过预期 " + std::to_string(maxExpectedSeconds) + " 秒");
+        return true;
+    }
+
+    // 检查接收端超时
+    if (m_recvFileActive && recvDuration.count() > maxExpectedSeconds)
+    {
+        WriteLog("CheckTransferTimeout: 接收超时，强制结束");
+        WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
+                " 秒，实际用时 " + std::to_string(recvDuration.count()) + " 秒");
+        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_recvFileSize) +
+                " 字节，当前进度 " + std::to_string(m_recvFileProgress) + " 字节");
+
+        m_recvFileActive = false;
+        m_shortTimeoutActive = false; // 清除短超时状态
+        ReportError("文件接收超时：传输时间 " + std::to_string(recvDuration.count()) +
                    " 秒超过预期 " + std::to_string(maxExpectedSeconds) + " 秒");
         return true;
     }

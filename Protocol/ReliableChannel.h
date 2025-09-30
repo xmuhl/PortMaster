@@ -216,12 +216,19 @@ private:
     std::condition_variable m_sendCondition;    // 发送条件变量
     std::condition_variable m_receiveCondition; // 接收条件变量
 
-    // 文件传输相关
-    std::string m_currentFileName; // 当前文件名
-    int64_t m_currentFileSize;     // 当前文件大小
-    int64_t m_currentFileProgress; // 当前文件进度
-    bool m_fileTransferActive;     // 文件传输活动状态
-    std::chrono::steady_clock::time_point m_transferStartTime; // 传输开始时间
+    // 文件传输相关 - 发送端状态
+    std::string m_sendFileName;     // 发送文件名
+    int64_t m_sendFileSize;         // 发送文件大小
+    int64_t m_sendFileProgress;     // 发送文件进度
+    bool m_sendFileActive;          // 发送文件活动状态
+    std::chrono::steady_clock::time_point m_sendStartTime; // 发送开始时间
+
+    // 文件传输相关 - 接收端状态
+    std::string m_recvFileName;     // 接收文件名
+    int64_t m_recvFileSize;         // 接收文件大小
+    int64_t m_recvFileProgress;     // 接收文件进度
+    bool m_recvFileActive;          // 接收文件活动状态
+    std::chrono::steady_clock::time_point m_recvStartTime; // 接收开始时间
 
     // 握手状态管理
     std::atomic<bool> m_handshakeCompleted;    // 握手完成标志
