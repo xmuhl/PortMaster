@@ -1581,12 +1581,38 @@ bool ReliableChannel::SendAck(uint16_t sequence)
     std::vector<uint8_t> frameData = m_frameCodec->EncodeAckFrame(sequence);
     WriteLog("SendAck: frame encoded, size=" + std::to_string(frameData.size()));
 
-    size_t written = 0;
-    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
-    bool success = (error == TransportError::Success && written == frameData.size());
+    // 【流控机制】为ACK控制帧添加Busy重试机制
+    const int MAX_RETRY_COUNT = 5;
+    const int RETRY_DELAY_MS = 20;
+
+    int retryCount = 0;
+    TransportError error = TransportError::Success;
+    bool success = false;
+
+    while (retryCount < MAX_RETRY_COUNT)
+    {
+        size_t written = 0;
+        error = m_transport->Write(frameData.data(), frameData.size(), &written);
+
+        if (error == TransportError::Success && written == frameData.size())
+        {
+            success = true;
+            break;
+        }
+        else if (error == TransportError::Busy)
+        {
+            WriteLog("SendAck: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+            retryCount++;
+        }
+        else
+        {
+            break;
+        }
+    }
 
     WriteLog("SendAck: transport write result: error=" + std::to_string(static_cast<int>(error)) +
-             ", written=" + std::to_string(written) + ", success=" + std::to_string(success));
+             ", retries=" + std::to_string(retryCount) + ", success=" + std::to_string(success));
 
     return success;
 }
@@ -1599,12 +1625,38 @@ bool ReliableChannel::SendNak(uint16_t sequence)
     std::vector<uint8_t> frameData = m_frameCodec->EncodeNakFrame(sequence);
     WriteLog("SendNak: frame encoded, size=" + std::to_string(frameData.size()));
 
-    size_t written = 0;
-    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
-    bool success = (error == TransportError::Success && written == frameData.size());
+    // 【流控机制】为NAK控制帧添加Busy重试机制
+    const int MAX_RETRY_COUNT = 5;
+    const int RETRY_DELAY_MS = 20;
+
+    int retryCount = 0;
+    TransportError error = TransportError::Success;
+    bool success = false;
+
+    while (retryCount < MAX_RETRY_COUNT)
+    {
+        size_t written = 0;
+        error = m_transport->Write(frameData.data(), frameData.size(), &written);
+
+        if (error == TransportError::Success && written == frameData.size())
+        {
+            success = true;
+            break;
+        }
+        else if (error == TransportError::Busy)
+        {
+            WriteLog("SendNak: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
+            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+            retryCount++;
+        }
+        else
+        {
+            break;
+        }
+    }
 
     WriteLog("SendNak: transport write result: error=" + std::to_string(static_cast<int>(error)) +
-             ", written=" + std::to_string(written) + ", success=" + std::to_string(success));
+             ", retries=" + std::to_string(retryCount) + ", success=" + std::to_string(success));
 
     return success;
 }
@@ -1843,16 +1895,52 @@ void ReliableChannel::RetransmitPacketInternal(uint16_t sequence)
                 sequence, m_sendWindow[index].packet->data);
             WriteLog("RetransmitPacketInternal: frame encoded, size=" + std::to_string(frameData.size()));
 
-            size_t written = 0;
-            WriteLog("RetransmitPacketInternal: writing to transport...");
-            TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
-            WriteLog("RetransmitPacketInternal: transport write completed, written=" + std::to_string(written) +
-                     ", error=" + std::to_string(static_cast<int>(error)));
+            // 【流控机制】为重传添加Busy重试机制
+            const int MAX_RETRY_COUNT = 10;
+            const int RETRY_DELAY_MS = 50;
 
-            if (error != TransportError::Success)
+            int retryCount = 0;
+            TransportError error = TransportError::Success;
+            bool success = false;
+
+            while (retryCount < MAX_RETRY_COUNT)
             {
-                WriteLog("RetransmitPacketInternal: ERROR - transport write failed with error: " + std::to_string(static_cast<int>(error)));
-                ReportError("重传数据包失败，传输错误: " + std::to_string(static_cast<int>(error)));
+                size_t written = 0;
+                WriteLog("RetransmitPacketInternal: writing to transport (retry " + std::to_string(retryCount) + ")...");
+                error = m_transport->Write(frameData.data(), frameData.size(), &written);
+                WriteLog("RetransmitPacketInternal: transport write completed, written=" + std::to_string(written) +
+                         ", error=" + std::to_string(static_cast<int>(error)));
+
+                if (error == TransportError::Success && written == frameData.size())
+                {
+                    WriteLog("RetransmitPacketInternal: retransmission succeeded");
+                    success = true;
+                    break;
+                }
+                else if (error == TransportError::Busy)
+                {
+                    WriteLog("RetransmitPacketInternal: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                    retryCount++;
+                }
+                else
+                {
+                    WriteLog("RetransmitPacketInternal: ERROR - transport write failed with error: " + std::to_string(static_cast<int>(error)));
+                    break;
+                }
+            }
+
+            if (!success)
+            {
+                if (error == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
+                {
+                    WriteLog("RetransmitPacketInternal: transport busy, retry exhausted");
+                    ReportError("传输层持续繁忙，重传失败");
+                }
+                else
+                {
+                    ReportError("重传数据包失败，传输错误: " + std::to_string(static_cast<int>(error)));
+                }
                 return;
             }
 
