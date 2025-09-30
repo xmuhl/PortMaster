@@ -1025,8 +1025,8 @@ void ReliableChannel::ReceiveThread()
             }
         }
 
-        WriteLog("ReceiveThread: sleeping for 1ms...");
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        WriteLog("ReceiveThread: sleeping for 10ms...");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
     WriteLog("ReceiveThread exiting");
