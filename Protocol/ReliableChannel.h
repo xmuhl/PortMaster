@@ -135,7 +135,7 @@ private:
     void ProcessEndFrame(const Frame &frame);
     void ProcessHeartbeatFrame(const Frame &frame);
 
-    bool SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type = FrameType::FRAME_DATA);
+    TransportError SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type = FrameType::FRAME_DATA);
     bool SendAck(uint16_t sequence);
     bool SendNak(uint16_t sequence);
     bool SendHeartbeat();

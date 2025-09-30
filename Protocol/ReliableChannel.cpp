@@ -408,9 +408,48 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         if (bytesRead > 0)
         {
             buffer.resize(bytesRead);
-            if (!SendPacket(AllocateSequence(), buffer))
+
+            // 【流控机制】实现Busy状态重试逻辑
+            const int MAX_RETRY_COUNT = 10;        // 最大重试次数
+            const int RETRY_DELAY_MS = 50;         // 每次重试间隔（毫秒）
+
+            int retryCount = 0;
+            TransportError sendError = TransportError::Success;
+
+            while (retryCount < MAX_RETRY_COUNT)
             {
-                ReportError("发送文件数据失败");
+                sendError = SendPacket(AllocateSequence(), buffer);
+
+                if (sendError == TransportError::Success)
+                {
+                    break; // 成功，退出重试循环
+                }
+                else if (sendError == TransportError::Busy)
+                {
+                    // 传输层繁忙，等待后重试
+                    WriteLog("SendFile: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                    retryCount++;
+                }
+                else
+                {
+                    // 其他错误（如Failed、NotOpen等），立即失败
+                    WriteLog("SendFile: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)));
+                    break;
+                }
+            }
+
+            // 检查最终结果
+            if (sendError != TransportError::Success)
+            {
+                if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
+                {
+                    ReportError("传输层持续繁忙，重试次数已耗尽");
+                }
+                else
+                {
+                    ReportError("发送文件数据失败");
+                }
                 file.close();
                 m_fileTransferActive = false;
                 return false;
@@ -790,14 +829,40 @@ void ReliableChannel::SendThread()
             // 分配序列号并发送
             uint16_t sequence = AllocateSequence();
             WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
-            if (!SendPacket(sequence, data))
+
+            // 【流控机制】实现Busy状态重试逻辑
+            const int MAX_RETRY_COUNT = 5;   // 队列发送的重试次数较少
+            const int RETRY_DELAY_MS = 20;   // 重试间隔较短
+
+            int retryCount = 0;
+            TransportError sendError = TransportError::Success;
+
+            while (retryCount < MAX_RETRY_COUNT)
             {
-                WriteLog("SendThread: SendPacket failed");
-                ReportError("发送数据包失败");
+                sendError = SendPacket(sequence, data);
+
+                if (sendError == TransportError::Success)
+                {
+                    WriteLog("SendThread: SendPacket succeeded");
+                    break;
+                }
+                else if (sendError == TransportError::Busy)
+                {
+                    WriteLog("SendThread: transport busy, retry " + std::to_string(retryCount + 1));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                    retryCount++;
+                }
+                else
+                {
+                    WriteLog("SendThread: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)));
+                    break;
+                }
             }
-            else
+
+            if (sendError != TransportError::Success)
             {
-                WriteLog("SendThread: SendPacket succeeded");
+                WriteLog("SendThread: SendPacket failed after retries");
+                ReportError("发送数据包失败");
             }
         }
         catch (const std::exception &e)
@@ -1380,7 +1445,7 @@ void ReliableChannel::ProcessHeartbeatFrame(const Frame &frame)
 }
 
 // 发送数据包
-bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type)
+TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type)
 {
     WriteLog("SendPacket called: sequence=" + std::to_string(sequence) +
              ", data.size()=" + std::to_string(data.size()) +
@@ -1422,7 +1487,7 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
         break;
     default:
         WriteLog("SendPacket: ERROR - unknown frame type " + std::to_string(static_cast<int>(type)));
-        return false;
+        return TransportError::WriteFailed;
     }
 
     WriteLog("SendPacket: frame encoded, frameData.size()=" + std::to_string(frameData.size()));
@@ -1430,10 +1495,19 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
     // 发送数据
     WriteLog("SendPacket: writing to transport...");
     size_t written = 0;
-    if (m_transport->Write(frameData.data(), frameData.size(), &written) != TransportError::Success || written != frameData.size())
+    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
+
+    // 检查写入结果
+    if (error != TransportError::Success)
     {
-        WriteLog("SendPacket: ERROR - transport write failed or incomplete");
-        return false;
+        WriteLog("SendPacket: transport write returned error=" + std::to_string(static_cast<int>(error)));
+        return error; // 直接返回传输层的错误码（包括Busy状态）
+    }
+
+    if (written != frameData.size())
+    {
+        WriteLog("SendPacket: ERROR - incomplete write: " + std::to_string(written) + "/" + std::to_string(frameData.size()));
+        return TransportError::WriteFailed;
     }
 
     WriteLog("SendPacket: transport write succeeded, " + std::to_string(written) + " bytes written");
@@ -1458,7 +1532,7 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
         {
             WriteLog("SendPacket: ERROR - window not initialized or size is 0");
             ReportError("发送窗口未初始化或大小为0");
-            return false;
+            return TransportError::WriteFailed;
         }
 
         uint16_t index = sequence % m_config.windowSize;
@@ -1471,7 +1545,7 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
             WriteLog("SendPacket: ERROR - index out of bounds: " + std::to_string(index) +
                      " >= " + std::to_string(m_sendWindow.size()));
             ReportError("发送窗口索引越界: " + std::to_string(index) + " >= " + std::to_string(m_sendWindow.size()));
-            return false;
+            return TransportError::WriteFailed;
         }
 
         WriteLog("SendPacket: setting window slot " + std::to_string(index) + " to inUse=true");
@@ -1493,7 +1567,7 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
     }
 
     WriteLog("SendPacket: completed successfully");
-    return true;
+    return TransportError::Success;
 }
 
 // 发送ACK
@@ -1646,7 +1720,8 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
 bool ReliableChannel::SendEnd()
 {
     uint16_t sequence = AllocateSequence();
-    return SendPacket(sequence, {}, FrameType::FRAME_END);
+    TransportError error = SendPacket(sequence, {}, FrameType::FRAME_END);
+    return (error == TransportError::Success);
 }
 
 // 重传数据包（内部版本，假设已持有窗口锁）
