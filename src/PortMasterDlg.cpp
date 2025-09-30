@@ -102,6 +102,21 @@ CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
 	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false), m_updateDisplayInProgress(false), m_receiveDisplayPending(false), m_lastReceiveDisplayUpdate(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
+
+	// 【UI响应修复】初始化状态管理器
+	InitializeUIStateManager();
+
+	// 【传输状态管理统一】初始化传输状态管理器
+	InitializeTransmissionStateManager();
+
+	// 【按钮状态控制优化】初始化按钮状态管理器
+	InitializeButtonStateManager();
+
+	// 【UI更新队列机制】初始化线程安全UI更新器
+	InitializeThreadSafeUIUpdater();
+
+	// 【进度更新安全化】初始化线程安全进度管理器
+	InitializeThreadSafeProgressManager();
 }
 
 void CPortMasterDlg::DoDataExchange(CDataExchange *pDX)
@@ -336,7 +351,12 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 	{
 		// 定时器1：恢复连接状态显示
 		KillTimer(TIMER_ID_CONNECTION_STATUS);
-		UpdateConnectionStatus();
+
+		// 【UI响应修复】清除传输状态，让连接状态显示
+		if (m_uiStateManager) {
+			m_uiStateManager->ClearStatus(UIStateManager::StatusType::Transmission);
+			UpdateConnectionStatus(); // 更新连接状态
+		}
 
 		// 不再自动重置进度条，保持传输完成后的100%状态
 		// 进度条只在开始新传输时重置为0
@@ -365,6 +385,34 @@ void CPortMasterDlg::PostNcDestroy()
 	{
 		m_transmissionCancelled = true;
 		m_transmissionThread.join();
+	}
+
+	// 【传输状态管理统一】清理传输状态管理器
+	if (m_transmissionStateManager) {
+		m_transmissionStateManager->ClearCallbacks();
+		g_transmissionStateManager = nullptr;
+		m_transmissionStateManager.reset();
+	}
+
+	// 【按钮状态控制优化】清理按钮状态管理器
+	if (m_buttonStateManager) {
+		m_buttonStateManager->ClearCallbacks();
+		g_buttonStateManager = nullptr;
+		m_buttonStateManager.reset();
+	}
+
+	// 【UI更新队列机制】清理线程安全UI更新器
+	if (m_threadSafeUIUpdater) {
+		m_threadSafeUIUpdater->Stop();
+		g_threadSafeUIUpdater = nullptr;
+		m_threadSafeUIUpdater.reset();
+	}
+
+	// 【进度更新安全化】清理线程安全进度管理器
+	if (m_threadSafeProgressManager) {
+		m_threadSafeProgressManager->ClearProgressCallback();
+		g_threadSafeProgressManager = nullptr;
+		m_threadSafeProgressManager.reset();
 	}
 
 	// 清理临时缓存文件
@@ -502,6 +550,14 @@ void CPortMasterDlg::StartTransmission()
 		return;
 	}
 
+	// 【传输状态管理统一】请求状态转换到传输中
+	if (m_transmissionStateManager) {
+		if (!m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Transmitting, "开始数据传输")) {
+			MessageBox(_T("无法开始传输，当前状态不允许"), _T("错误"), MB_OK | MB_ICONERROR);
+			return;
+		}
+	}
+
 	// 重置传输状态
 	m_isTransmitting = true;
 	m_transmissionPaused = false;
@@ -510,9 +566,14 @@ void CPortMasterDlg::StartTransmission()
 	// 重置进度条（仅在开始新传输时重置）
 	m_progress.SetPos(0);
 
-	// 更新按钮文本和状态栏
+	// 更新按钮文本
 	m_btnSend.SetWindowText(_T("中断"));
-	m_staticPortStatus.SetWindowText(_T("数据传输已开始"));
+
+	// 【UI响应修复】使用状态管理器更新传输状态
+	if (m_uiStateManager) {
+		m_uiStateManager->UpdateTransmissionStatus("数据传输已开始", UIStateManager::Priority::Normal);
+		UpdateUIStatus();
+	}
 
 	// 启动异步传输线程，避免UI阻塞
 	if (m_transmissionThread.joinable())
@@ -527,15 +588,22 @@ void CPortMasterDlg::StartTransmission()
 // 【P1修复】更新传输控制方法 - 使用TransmissionTask实现暂停/恢复
 void CPortMasterDlg::PauseTransmission()
 {
+	// 【传输状态管理统一】请求状态转换到暂停
+	if (m_transmissionStateManager) {
+		if (!m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Paused, "用户暂停传输")) {
+			this->WriteLog("PauseTransmission: 当前状态不允许暂停");
+			return;
+		}
+	}
+
 	// 暂停当前传输任务
 	if (m_currentTransmissionTask && m_currentTransmissionTask->IsRunning())
 	{
 		m_currentTransmissionTask->Pause();
 		this->WriteLog("传输任务已暂停");
 
-		// 更新按钮文本和状态栏
+		// 更新按钮文本
 		m_btnSend.SetWindowText(_T("继续"));
-		m_staticPortStatus.SetWindowText(_T("传输已暂停"));
 	}
 	else
 	{
@@ -548,15 +616,22 @@ void CPortMasterDlg::PauseTransmission()
 
 void CPortMasterDlg::ResumeTransmission()
 {
+	// 【传输状态管理统一】请求状态转换到传输中
+	if (m_transmissionStateManager) {
+		if (!m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Transmitting, "用户恢复传输")) {
+			this->WriteLog("ResumeTransmission: 当前状态不允许恢复");
+			return;
+		}
+	}
+
 	// 恢复当前传输任务
 	if (m_currentTransmissionTask && m_currentTransmissionTask->IsPaused())
 	{
 		m_currentTransmissionTask->Resume();
 		this->WriteLog("传输任务已恢复");
 
-		// 更新按钮文本和状态栏
+		// 更新按钮文本
 		m_btnSend.SetWindowText(_T("中断"));
-		m_staticPortStatus.SetWindowText(_T("传输已恢复"));
 	}
 	else
 	{
@@ -3355,20 +3430,17 @@ void CPortMasterDlg::StopReceiveThread()
 
 void CPortMasterDlg::UpdateConnectionStatus()
 {
-	CString statusText;
-	if (m_isConnected)
-	{
-		statusText = _T("已连接");
+	// 【UI响应修复】使用状态管理器更新连接状态
+	if (m_uiStateManager) {
+		std::string statusText = m_isConnected ? "已连接" : "未连接";
+		m_uiStateManager->UpdateConnectionStatus(statusText, UIStateManager::Priority::Normal);
 	}
-	else
-	{
-		statusText = _T("未连接");
-	}
-
-	m_staticPortStatus.SetWindowText(statusText);
 
 	// 【可靠模式按钮管控】根据缺陷分析报告实施按钮状态控制
 	UpdateSaveButtonStatus();
+
+	// 【UI响应修复】应用状态更新到UI控件
+	UpdateUIStatus();
 }
 
 // 【可靠模式按钮管控】更新保存按钮状态的专用函数
@@ -3496,8 +3568,8 @@ void CPortMasterDlg::OnTransportError(const std::string &error)
 
 void CPortMasterDlg::OnReliableProgress(uint32_t progress)
 {
-	// 更新进度条
-	m_progress.SetPos(progress);
+	// 【进度更新安全化】使用安全的进度更新方式
+	UpdateProgressSafe(static_cast<uint64_t>(progress), 100, "传输中...");
 }
 
 void CPortMasterDlg::OnReliableComplete(bool success)
@@ -3506,10 +3578,12 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 
 	if (success)
 	{
-		// 传输完成 - 显示传输完成消息
-		CString completeStatus;
-		completeStatus.Format(_T("传输完成"));
-		m_staticPortStatus.SetWindowText(completeStatus);
+		// 【传输状态管理统一】请求状态转换到完成
+		if (m_transmissionStateManager) {
+			m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Completed, "可靠传输完成");
+		}
+
+		// 传输完成 - 更新进度条
 		m_progress.SetPos(100);
 
 		// 2秒后恢复连接状态显示，但保持进度条100%状态
@@ -3517,10 +3591,12 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 	}
 	else
 	{
-		// 传输失败 - 显示错误消息
-		CString errorStatus;
-		errorStatus.Format(_T("传输失败"));
-		m_staticPortStatus.SetWindowText(errorStatus);
+		// 【传输状态管理统一】请求状态转换到失败
+		if (m_transmissionStateManager) {
+			m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Failed, "可靠传输失败");
+		}
+
+		// 传输失败 - 更新进度条
 		m_progress.SetPos(0);
 
 		MessageBox(_T("传输失败"), _T("错误"), MB_OK | MB_ICONERROR);
@@ -3536,16 +3612,23 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 	// 连接状态变化回调 - 只处理连接状态，不显示传输完成消息
 	if (connected)
 	{
-		// 连接成功 - 更新状态显示
-		CString statusText = _T("已连接");
-		m_staticPortStatus.SetWindowText(statusText);
+		// 连接成功 - 更新进度条
+		// 【UI响应修复】使用状态管理器更新连接状态
+		if (m_uiStateManager) {
+			m_uiStateManager->UpdateConnectionStatus("已连接", UIStateManager::Priority::Normal);
+			UpdateUIStatus();
+		}
 	}
 	else
 	{
-		// 连接断开 - 更新状态显示
-		CString statusText = _T("连接断开");
-		m_staticPortStatus.SetWindowText(statusText);
+		// 连接断开 - 更新进度条
 		m_progress.SetPos(0);
+
+		// 【UI响应修复】使用状态管理器更新连接状态
+		if (m_uiStateManager) {
+			m_uiStateManager->UpdateConnectionStatus("连接断开", UIStateManager::Priority::Normal);
+			UpdateUIStatus();
+		}
 	}
 }
 
@@ -3639,8 +3722,13 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_isTransmitting = false;
 		m_transmissionPaused = false;
 		m_btnSend.SetWindowText(_T("发送"));
-		m_staticPortStatus.SetWindowText(_T("传输已终止"));
 		m_progress.SetPos(0);
+
+		// 【UI响应修复】使用状态管理器更新状态
+		if (m_uiStateManager) {
+			m_uiStateManager->UpdateTransmissionStatus("传输已终止", UIStateManager::Priority::Normal);
+			UpdateUIStatus();
+		}
 	}
 	else if (error != TransportError::Success)
 	{
@@ -3699,11 +3787,15 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		sentText.Format(_T("%u"), m_bytesSent);
 		SetDlgItemText(IDC_STATIC_SENT, sentText);
 
-		// 显示传输完成状态并设置进度条为100%
-		CString completeStatus;
-		completeStatus.Format(_T("传输完成: %u 字节"), data.size());
-		m_staticPortStatus.SetWindowText(completeStatus);
+		// 设置进度条为100%
 		m_progress.SetPos(100);
+
+		// 【UI响应修复】使用状态管理器更新传输状态
+		if (m_uiStateManager) {
+			std::string completeStatus = "传输完成: " + std::to_string(data.size()) + " 字节";
+			m_uiStateManager->UpdateTransmissionStatus(completeStatus, UIStateManager::Priority::Normal);
+			UpdateUIStatus();
+		}
 
 		// 添加传输完成提示对话框
 		CString successMsg;
@@ -4617,4 +4709,412 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 
 	// 调用基类处理
 	CDialogEx::OnDropFiles(hDropInfo);
+}
+
+// 【UI响应修复】状态管理器相关方法实现
+
+// 初始化状态管理器
+void CPortMasterDlg::InitializeUIStateManager()
+{
+	// 创建状态管理器实例
+	m_uiStateManager = std::make_unique<UIStateManager>();
+
+	// 设置全局指针
+	g_uiStateManager = m_uiStateManager.get();
+
+	// 初始化连接状态
+	m_uiStateManager->UpdateConnectionStatus("未连接", UIStateManager::Priority::Normal);
+}
+
+// 【传输状态管理统一】初始化传输状态管理器
+void CPortMasterDlg::InitializeTransmissionStateManager()
+{
+	// 创建传输状态管理器实例
+	m_transmissionStateManager = std::make_unique<TransmissionStateManager>();
+
+	// 设置全局指针
+	g_transmissionStateManager = m_transmissionStateManager.get();
+
+	// 设置状态变化回调
+	m_transmissionStateManager->SetStateChangeCallback(
+		[this](TransmissionUIState oldState, TransmissionUIState newState) {
+			OnTransmissionStateChanged(oldState, newState);
+		});
+
+	// 初始化为空闲状态
+	m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Idle, "初始化传输状态管理器");
+}
+
+// 【按钮状态控制优化】初始化按钮状态管理器
+void CPortMasterDlg::InitializeButtonStateManager()
+{
+	// 创建按钮状态管理器实例
+	m_buttonStateManager = std::make_unique<ButtonStateManager>();
+
+	// 设置全局指针
+	g_buttonStateManager = m_buttonStateManager.get();
+
+	// 设置状态变化回调
+	m_buttonStateManager->SetStateChangeCallback(
+		[this](ButtonID buttonId, ButtonState newState, const std::string& reason) {
+			OnButtonStateChanged(buttonId, newState, reason);
+		});
+
+	// 初始化为空闲状态
+	m_buttonStateManager->ApplyIdleState();
+
+	// 更新按钮状态显示
+	UpdateButtonStates();
+}
+
+// 【UI更新队列机制】初始化线程安全UI更新器
+void CPortMasterDlg::InitializeThreadSafeUIUpdater()
+{
+	// 创建线程安全UI更新器实例
+	m_threadSafeUIUpdater = std::make_unique<ThreadSafeUIUpdater>();
+
+	// 设置全局指针
+	g_threadSafeUIUpdater = m_threadSafeUIUpdater.get();
+
+	// 启动UI更新器
+	if (m_threadSafeUIUpdater->Start()) {
+		WriteLog("线程安全UI更新器已启动");
+	} else {
+		WriteLog("线程安全UI更新器启动失败");
+	}
+
+	// 注册主要UI控件（这里使用示例控件ID，实际需要根据资源文件调整）
+	// 注意：这里注册的是控件指针，需要在控件创建后进行注册
+	// 将在OnInitDialog中进行控件注册
+}
+
+// 【进度更新安全化】初始化线程安全进度管理器
+void CPortMasterDlg::InitializeThreadSafeProgressManager()
+{
+	// 创建线程安全进度管理器实例
+	m_threadSafeProgressManager = std::make_unique<ThreadSafeProgressManager>();
+
+	// 设置全局指针
+	g_threadSafeProgressManager = m_threadSafeProgressManager.get();
+
+	// 设置进度变化回调
+	m_threadSafeProgressManager->SetProgressCallback(
+		[this](const ProgressInfo& progress) {
+			OnProgressChanged(progress);
+		});
+
+	// 设置最小更新间隔为100ms，避免过于频繁的UI更新
+	m_threadSafeProgressManager->SetMinUpdateInterval(std::chrono::milliseconds(100));
+
+	WriteLog("线程安全进度管理器已初始化");
+}
+
+// 更新UI状态显示
+void CPortMasterDlg::UpdateUIStatus()
+{
+	if (m_uiStateManager) {
+		// 应用状态到状态栏控件
+		bool updated = m_uiStateManager->ApplyStatusToControl(&m_staticPortStatus);
+
+		// 如果状态有更新，记录日志
+		if (updated) {
+			WriteLog("UI状态已更新: " + m_uiStateManager->GetCurrentStatusText());
+		}
+	}
+}
+
+// 【传输状态管理统一】传输状态变化回调处理
+void CPortMasterDlg::OnTransmissionStateChanged(TransmissionUIState oldState, TransmissionUIState newState)
+{
+	// 根据新状态更新UI显示
+	switch (newState) {
+	case TransmissionUIState::Idle:
+		m_uiStateManager->UpdateTransmissionStatus("准备就绪");
+		break;
+	case TransmissionUIState::Connecting:
+		m_uiStateManager->UpdateTransmissionStatus("连接中...");
+		break;
+	case TransmissionUIState::Connected:
+		m_uiStateManager->UpdateTransmissionStatus("已连接");
+		break;
+	case TransmissionUIState::Initializing:
+		m_uiStateManager->UpdateTransmissionStatus("初始化传输...");
+		break;
+	case TransmissionUIState::Handshaking:
+		m_uiStateManager->UpdateTransmissionStatus("协议握手...");
+		break;
+	case TransmissionUIState::Transmitting:
+		m_uiStateManager->UpdateTransmissionStatus("数据传输中...");
+		break;
+	case TransmissionUIState::Paused:
+		m_uiStateManager->UpdateTransmissionStatus("传输已暂停");
+		break;
+	case TransmissionUIState::Completing:
+		m_uiStateManager->UpdateTransmissionStatus("完成传输...");
+		break;
+	case TransmissionUIState::Completed:
+		m_uiStateManager->UpdateTransmissionStatus("传输完成");
+		break;
+	case TransmissionUIState::Failed:
+		m_uiStateManager->UpdateTransmissionStatus("传输失败", UIStateManager::Priority::High);
+		break;
+	case TransmissionUIState::Error:
+		m_uiStateManager->UpdateTransmissionStatus("传输错误", UIStateManager::Priority::High);
+		break;
+	}
+
+	// 更新UI状态显示
+	UpdateUIStatus();
+
+	// 记录状态变化
+	std::string logMsg = "传输状态变化: "
+		+ std::string(m_transmissionStateManager->GetStateDescription(oldState))
+		+ " -> "
+		+ std::string(m_transmissionStateManager->GetStateDescription(newState));
+	WriteLog(logMsg);
+
+	// 【按钮状态控制优化】根据传输状态更新按钮状态
+	if (m_buttonStateManager) {
+		// 检查是否为可靠传输模式
+		bool isReliableMode = (m_reliableChannel != nullptr);
+
+		switch (newState) {
+		case TransmissionUIState::Idle:
+			m_buttonStateManager->ApplyIdleState();
+			break;
+		case TransmissionUIState::Connecting:
+			m_buttonStateManager->ApplyConnectingState();
+			break;
+		case TransmissionUIState::Connected:
+			m_buttonStateManager->ApplyConnectedState();
+			break;
+		case TransmissionUIState::Transmitting:
+			// 根据是否为可靠传输模式应用不同的按钮状态
+			if (isReliableMode) {
+				m_buttonStateManager->ApplyReliableModeTransmittingState();
+			} else {
+				m_buttonStateManager->ApplyTransmittingState();
+			}
+			break;
+		case TransmissionUIState::Paused:
+			// 根据是否为可靠传输模式应用不同的按钮状态
+			if (isReliableMode) {
+				m_buttonStateManager->ApplyReliableModePausedState();
+			} else {
+				m_buttonStateManager->ApplyPausedState();
+			}
+			break;
+		case TransmissionUIState::Completed:
+			// 根据是否为可靠传输模式应用不同的按钮状态
+			if (isReliableMode) {
+				m_buttonStateManager->ApplyReliableModeCompletedState();
+			} else {
+				m_buttonStateManager->ApplyCompletedState();
+			}
+			break;
+		case TransmissionUIState::Failed:
+		case TransmissionUIState::Error:
+			m_buttonStateManager->ApplyErrorState();
+			break;
+		default:
+			break;
+		}
+
+		// 更新按钮状态显示
+		UpdateButtonStates();
+	}
+}
+
+// 【按钮状态控制优化】按钮状态变化回调处理
+void CPortMasterDlg::OnButtonStateChanged(ButtonID buttonId, ButtonState newState, const std::string& reason)
+{
+	// 根据按钮ID和状态更新对应的控件
+	switch (buttonId) {
+	case ButtonID::Connect:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnConnect.EnableWindow(TRUE);
+		} else {
+			m_btnConnect.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::Disconnect:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnDisconnect.EnableWindow(TRUE);
+		} else {
+			m_btnDisconnect.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::Send:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnSend.EnableWindow(TRUE);
+		} else {
+			m_btnSend.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::Stop:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnStop.EnableWindow(TRUE);
+		} else {
+			m_btnStop.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::File:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnFile.EnableWindow(TRUE);
+		} else {
+			m_btnFile.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::ClearAll:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnClearAll.EnableWindow(TRUE);
+		} else {
+			m_btnClearAll.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::ClearReceive:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnClearReceive.EnableWindow(TRUE);
+		} else {
+			m_btnClearReceive.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::CopyAll:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnCopyAll.EnableWindow(TRUE);
+		} else {
+			m_btnCopyAll.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::SaveAll:
+		if (newState == ButtonState::Enabled || newState == ButtonState::Visible) {
+			m_btnSaveAll.EnableWindow(TRUE);
+		} else {
+			m_btnSaveAll.EnableWindow(FALSE);
+		}
+		break;
+
+	case ButtonID::PauseResume:
+		// 暂停/继续按钮复用发送按钮，这里只记录状态
+		break;
+
+	default:
+		break;
+	}
+
+	// 记录状态变化
+	std::string logMsg = "按钮状态变化: ";
+
+	// 获取按钮名称
+	switch (buttonId) {
+	case ButtonID::Connect: logMsg += "连接"; break;
+	case ButtonID::Disconnect: logMsg += "断开"; break;
+	case ButtonID::Send: logMsg += "发送"; break;
+	case ButtonID::Stop: logMsg += "停止"; break;
+	case ButtonID::File: logMsg += "文件"; break;
+	case ButtonID::ClearAll: logMsg += "清空全部"; break;
+	case ButtonID::ClearReceive: logMsg += "清空接收"; break;
+	case ButtonID::CopyAll: logMsg += "复制全部"; break;
+	case ButtonID::SaveAll: logMsg += "保存全部"; break;
+	case ButtonID::PauseResume: logMsg += "暂停/继续"; break;
+	default: logMsg += "未知按钮"; break;
+	}
+
+	// 获取状态名称
+	switch (newState) {
+	case ButtonState::Enabled: logMsg += " -> 启用"; break;
+	case ButtonState::Disabled: logMsg += " -> 禁用"; break;
+	case ButtonState::Visible: logMsg += " -> 显示"; break;
+	case ButtonState::Hidden: logMsg += " -> 隐藏"; break;
+	}
+
+	if (!reason.empty()) {
+		logMsg += " (" + reason + ")";
+	}
+
+	WriteLog(logMsg);
+}
+
+// 【按钮状态控制优化】更新按钮状态显示
+void CPortMasterDlg::UpdateButtonStates()
+{
+	if (!m_buttonStateManager) {
+		return;
+	}
+
+	// 更新所有按钮的显示状态
+	OnButtonStateChanged(ButtonID::Connect, m_buttonStateManager->GetButtonState(ButtonID::Connect), "更新显示");
+	OnButtonStateChanged(ButtonID::Disconnect, m_buttonStateManager->GetButtonState(ButtonID::Disconnect), "更新显示");
+	OnButtonStateChanged(ButtonID::Send, m_buttonStateManager->GetButtonState(ButtonID::Send), "更新显示");
+	OnButtonStateChanged(ButtonID::Stop, m_buttonStateManager->GetButtonState(ButtonID::Stop), "更新显示");
+	OnButtonStateChanged(ButtonID::File, m_buttonStateManager->GetButtonState(ButtonID::File), "更新显示");
+	OnButtonStateChanged(ButtonID::ClearAll, m_buttonStateManager->GetButtonState(ButtonID::ClearAll), "更新显示");
+	OnButtonStateChanged(ButtonID::ClearReceive, m_buttonStateManager->GetButtonState(ButtonID::ClearReceive), "更新显示");
+	OnButtonStateChanged(ButtonID::CopyAll, m_buttonStateManager->GetButtonState(ButtonID::CopyAll), "更新显示");
+	OnButtonStateChanged(ButtonID::SaveAll, m_buttonStateManager->GetButtonState(ButtonID::SaveAll), "更新显示");
+	OnButtonStateChanged(ButtonID::PauseResume, m_buttonStateManager->GetButtonState(ButtonID::PauseResume), "更新显示");
+}
+
+// 【UI更新队列机制】线程安全的状态更新
+void CPortMasterDlg::UpdateUIStatusThreadSafe(const std::string& status)
+{
+	if (m_threadSafeUIUpdater) {
+		// 将状态更新操作排队到UI线程执行
+		m_threadSafeUIUpdater->QueueUpdate([this, status]() {
+			if (m_uiStateManager) {
+				m_uiStateManager->UpdateTransmissionStatus(status);
+				UpdateUIStatus();
+			}
+		}, "线程安全状态更新");
+	}
+}
+
+// 【UI更新队列机制】线程安全的进度更新
+void CPortMasterDlg::UpdateProgressThreadSafe(int progress)
+{
+	if (m_threadSafeUIUpdater) {
+		// 将进度更新操作排队到UI线程执行
+		m_threadSafeUIUpdater->QueueUpdate([this, progress]() {
+			m_progress.SetPos(progress);
+		}, "线程安全进度更新");
+	}
+}
+
+// 【进度更新安全化】进度变化回调处理
+void CPortMasterDlg::OnProgressChanged(const ProgressInfo& progress)
+{
+	// 使用线程安全的方式更新UI进度条
+	UpdateProgressThreadSafe(progress.percentage);
+
+	// 如果有状态文本，也更新状态显示
+	if (!progress.statusText.empty()) {
+		UpdateUIStatusThreadSafe(progress.statusText);
+	}
+
+	// 记录进度信息（可选）
+	std::ostringstream log;
+	log << "进度更新: " << progress.current << "/" << progress.total
+		<< " (" << progress.percentage << "%)";
+
+	if (!progress.statusText.empty()) {
+		log << " - " << progress.statusText;
+	}
+
+	WriteLog(log.str());
+}
+
+// 【进度更新安全化】安全的进度更新
+void CPortMasterDlg::UpdateProgressSafe(uint64_t current, uint64_t total, const std::string& status)
+{
+	if (m_threadSafeProgressManager) {
+		m_threadSafeProgressManager->SetProgress(current, total, status);
+	}
 }

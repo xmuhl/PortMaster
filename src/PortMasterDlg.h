@@ -5,6 +5,11 @@
 #include "../Protocol/ReliableChannel.h"
 #include "../Common/ConfigStore.h"
 #include "TransmissionTask.h"
+#include "UIStateManager.h"
+#include "TransmissionStateManager.h"
+#include "ButtonStateManager.h"
+#include "ThreadSafeUIUpdater.h"
+#include "ThreadSafeProgressManager.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -164,6 +169,21 @@ private:
 	// 【P1修复】传输任务管理 - 实现UI与传输解耦
 	std::unique_ptr<TransmissionTask> m_currentTransmissionTask;
 
+	// 【UI响应修复】状态管理器 - 解决状态栏重复显示问题
+	std::unique_ptr<UIStateManager> m_uiStateManager;
+
+	// 【传输状态管理统一】传输状态管理器 - 统一状态管理机制
+	std::unique_ptr<TransmissionStateManager> m_transmissionStateManager;
+
+	// 【按钮状态控制优化】按钮状态管理器 - 统一按钮控制机制
+	std::unique_ptr<ButtonStateManager> m_buttonStateManager;
+
+	// 【UI更新队列机制】线程安全UI更新器 - 队列化UI更新机制
+	std::unique_ptr<ThreadSafeUIUpdater> m_threadSafeUIUpdater;
+
+	// 【进度更新安全化】线程安全进度管理器 - 安全化进度更新机制
+	std::unique_ptr<ThreadSafeProgressManager> m_threadSafeProgressManager;
+
 	// 配置管理
 	ConfigStore &m_configStore;
 
@@ -205,6 +225,29 @@ private:
 	void StopReceiveThread();
 	void UpdateConnectionStatus();
 	void UpdateStatistics();
+
+	// 【UI响应修复】状态管理器方法
+	void UpdateUIStatus();  // 更新UI状态显示
+	void InitializeUIStateManager();  // 初始化状态管理器
+
+	// 【传输状态管理统一】传输状态管理器方法
+	void InitializeTransmissionStateManager();  // 初始化传输状态管理器
+	void OnTransmissionStateChanged(TransmissionUIState oldState, TransmissionUIState newState);  // 传输状态变化回调
+
+	// 【按钮状态控制优化】按钮状态管理器方法
+	void InitializeButtonStateManager();  // 初始化按钮状态管理器
+	void OnButtonStateChanged(ButtonID buttonId, ButtonState newState, const std::string& reason);  // 按钮状态变化回调
+	void UpdateButtonStates();  // 更新按钮状态显示
+
+	// 【UI更新队列机制】线程安全UI更新器方法
+	void InitializeThreadSafeUIUpdater();  // 初始化线程安全UI更新器
+	void UpdateUIStatusThreadSafe(const std::string& status);  // 线程安全的状态更新
+	void UpdateProgressThreadSafe(int progress);  // 线程安全的进度更新
+
+	// 【进度更新安全化】线程安全进度管理器方法
+	void InitializeThreadSafeProgressManager();  // 初始化线程安全进度管理器
+	void OnProgressChanged(const ProgressInfo& progress);  // 进度变化回调
+	void UpdateProgressSafe(uint64_t current, uint64_t total, const std::string& status = "");  // 安全的进度更新
 
 	// 【可靠模式按钮管控】保存按钮状态控制
 	void UpdateSaveButtonStatus();

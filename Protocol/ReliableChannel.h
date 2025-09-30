@@ -166,11 +166,17 @@ private:
     std::vector<uint8_t> DecryptData(const std::vector<uint8_t> &data) const;
 
     void ReportError(const std::string &error);
+    void ReportWarning(const std::string &warning);
     void UpdateState(bool connected);
     void UpdateProgress(int64_t current, int64_t total);
 
     // 传输超时保护
     bool CheckTransferTimeout();
+
+    // 【修复】短超时机制用于处理不完整传输
+    bool m_shortTimeoutActive = false;
+    std::chrono::steady_clock::time_point m_shortTimeoutStart;
+    uint32_t m_shortTimeoutDuration = 30; // 短超时时间（秒）
 
 private:
     // 成员变量

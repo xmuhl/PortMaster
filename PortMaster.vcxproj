@@ -146,6 +146,11 @@
     </ClCompile>
     <ClCompile Include="src\PortMaster.cpp" />
     <ClCompile Include="src\PortMasterDlg.cpp" />
+    <ClCompile Include="src\UIStateManager.cpp" />
+    <ClCompile Include="src\TransmissionStateManager.cpp" />
+    <ClCompile Include="src\ButtonStateManager.cpp" />
+    <ClCompile Include="src\ThreadSafeUIUpdater.cpp" />
+    <ClCompile Include="src\ThreadSafeProgressManager.cpp" />
     <ClCompile Include="src\TransmissionTask.cpp" />
     <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Protocol\FrameCodec.cpp" />
