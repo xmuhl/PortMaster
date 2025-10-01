@@ -2457,11 +2457,49 @@ void CPortMasterDlg::LogMessage(const CString &message)
 
 void CPortMasterDlg::OnBnClickedRadioReliable()
 {
+	// 【P0修复】检查是否正在传输，禁止切换模式
+	if (m_isTransmitting)
+	{
+		MessageBox(_T("传输进行中，无法切换模式\n请先停止传输"), _T("模式切换失败"), MB_OK | MB_ICONWARNING);
+		// 恢复到直通模式单选按钮
+		m_radioDirect.SetCheck(BST_CHECKED);
+		m_radioReliable.SetCheck(BST_UNCHECKED);
+		WriteLog("模式切换被阻止：传输进行中");
+		return;
+	}
+
 	// TODO: 在此添加控件通知处理程序代码
 	MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 
 	// 更新状态条模式信息
 	m_staticMode.SetWindowText(_T("可靠"));
+
+	// 【P0修复】强制重置传输状态管理器
+	if (m_transmissionStateManager)
+	{
+		// 获取当前状态，如果不是Idle则强制重置
+		TransmissionUIState currentState = m_transmissionStateManager->GetCurrentState();
+		if (currentState != TransmissionUIState::Idle)
+		{
+			m_transmissionStateManager->ForceState(TransmissionUIState::Idle, "模式切换：强制重置到空闲状态");
+			WriteLog("模式切换：传输状态已重置到Idle");
+		}
+	}
+
+	// 【P0修复】根据连接状态更新按钮状态管理器
+	if (m_buttonStateManager)
+	{
+		if (m_isConnected)
+		{
+			m_buttonStateManager->ApplyConnectedState();
+			WriteLog("模式切换：按钮状态已恢复到Connected模式");
+		}
+		else
+		{
+			m_buttonStateManager->ApplyIdleState();
+			WriteLog("模式切换：按钮状态已恢复到Idle模式");
+		}
+	}
 
 	// 【状态管理修复】模式切换后更新保存按钮状态
 	// 可靠模式下保存按钮的启用条件更严格（需要传输完成且有数据）
@@ -3103,11 +3141,49 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::ve
 
 void CPortMasterDlg::OnBnClickedRadioDirect()
 {
+	// 【P0修复】检查是否正在传输，禁止切换模式
+	if (m_isTransmitting)
+	{
+		MessageBox(_T("传输进行中，无法切换模式\n请先停止传输"), _T("模式切换失败"), MB_OK | MB_ICONWARNING);
+		// 恢复到可靠模式单选按钮
+		m_radioReliable.SetCheck(BST_CHECKED);
+		m_radioDirect.SetCheck(BST_UNCHECKED);
+		WriteLog("模式切换被阻止：传输进行中");
+		return;
+	}
+
 	// TODO: 在此添加控件通知处理程序代码
 	MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 
 	// 更新状态条模式信息
 	m_staticMode.SetWindowText(_T("直通"));
+
+	// 【P0修复】强制重置传输状态管理器
+	if (m_transmissionStateManager)
+	{
+		// 获取当前状态，如果不是Idle则强制重置
+		TransmissionUIState currentState = m_transmissionStateManager->GetCurrentState();
+		if (currentState != TransmissionUIState::Idle)
+		{
+			m_transmissionStateManager->ForceState(TransmissionUIState::Idle, "模式切换：强制重置到空闲状态");
+			WriteLog("模式切换：传输状态已重置到Idle");
+		}
+	}
+
+	// 【P0修复】根据连接状态更新按钮状态管理器
+	if (m_buttonStateManager)
+	{
+		if (m_isConnected)
+		{
+			m_buttonStateManager->ApplyConnectedState();
+			WriteLog("模式切换：按钮状态已恢复到Connected模式");
+		}
+		else
+		{
+			m_buttonStateManager->ApplyIdleState();
+			WriteLog("模式切换：按钮状态已恢复到Idle模式");
+		}
+	}
 
 	// 【状态管理修复】模式切换后更新保存按钮状态
 	// 直通模式下保存按钮的启用条件较宽松
@@ -3866,17 +3942,31 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		if (isReliableMode && m_reliableChannel)
 		{
 			this->WriteLog("可靠模式传输完成 - 检查协议层状态");
-			
+
 			// 等待协议层完全结束（给一些时间让END帧处理完成）
 			std::this_thread::sleep_for(std::chrono::milliseconds(100));
-			
+
 			// 检查文件传输是否真正完成
 			bool transferActive = m_reliableChannel->IsFileTransferActive();
-			this->WriteLog("可靠模式传输完成 - 协议层传输状态: " + 
+			this->WriteLog("可靠模式传输完成 - 协议层传输状态: " +
 			              std::string(transferActive ? "仍活跃" : "已结束"));
-			
+
 			// 强制更新保存按钮状态
 			UpdateSaveButtonStatus();
+		}
+
+		// 【P0修复】传输成功后更新状态管理器
+		if (m_transmissionStateManager)
+		{
+			m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Completed, "传输成功完成");
+			WriteLog("传输完成：TransmissionStateManager状态已转换到Completed");
+		}
+
+		// 【P0修复】传输成功后更新按钮状态管理器
+		if (m_buttonStateManager)
+		{
+			m_buttonStateManager->ApplyCompletedState();
+			WriteLog("传输完成：ButtonStateManager状态已转换到Completed");
 		}
 
 		// 2秒后恢复连接状态显示并重置进度条

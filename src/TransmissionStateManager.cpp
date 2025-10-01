@@ -15,17 +15,17 @@ TransmissionStateManager* g_transmissionStateManager = nullptr;
 // 状态转换映射表（合法的状态转换）
 static const bool s_validTransitions[11][11] = {
     // Idle, Connecting, Connected, Initializing, Handshaking, Transmitting, Paused, Completing, Completed, Failed, Error
-    {true,  true,      false,    true,        false,         false,      false,      false,      false,   true,   true},   // Idle
+    {true,  true,      true,     true,        false,         false,      false,      false,      false,   true,   true},   // Idle【P0修复】允许转到Connected
     {false, false,     false,    false,       false,         false,      false,      false,      false,   true,   true},   // Connecting
-    {false, false,     false,    true,        true,          false,      false,      false,      false,   true,   true},   // Connected
+    {true,  false,     false,    true,        true,          false,      false,      false,      false,   true,   true},   // Connected【P0修复】允许转回Idle（断开连接）
     {false, false,     false,    false,       true,          true,       false,      false,      false,   true,   true},   // Initializing【修复】允许转到Transmitting
     {false, false,     false,    false,       true,          true,       false,      false,      false,   true,   true},   // Handshaking【修复】允许转到Transmitting
-    {false, false,     false,    false,       false,         true,       true,       false,      false,   true,   true},   // Transmitting
+    {false, false,     false,    false,       false,         true,       true,       true,       true,    true,   true},   // Transmitting【P0修复】允许转到Completing和Completed
     {false, false,     false,    false,       false,         true,       false,      false,      false,   true,   true},   // Paused【修复】允许从暂停恢复到Transmitting
-    {false, false,     false,    false,       false,         true,       false,      false,      false,   true,   true},   // Completing
-    {false, false,     true,     false,       false,         false,      false,      false,      false,   true,   true},   // Completed
-    {false, false,     true,     true,        true,          true,       true,       true,       false,   true,   true},   // Failed
-    {false, false,     true,     true,        true,          true,       true,       true,       true,    true,   true},    // Error
+    {false, false,     false,    false,       false,         true,       false,      false,      true,    true,   true},   // Completing【P0修复】允许转到Completed
+    {true,  false,     true,     true,        false,         false,      false,      false,      false,   true,   true},   // Completed【P0修复】允许转到Idle/Connected/Initializing（支持重传）
+    {true,  false,     true,     true,        true,          true,       true,       true,       false,   true,   true},   // Failed【P0修复】增加转到Idle（重置）
+    {true,  false,     true,     true,        true,          true,       true,       true,       true,    true,   true},    // Error【P0修复】增加转到Idle（重置）
 };
 
 // 状态描述映射表
