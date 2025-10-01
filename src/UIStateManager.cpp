@@ -139,6 +139,14 @@ bool UIStateManager::ApplyStatusToControl(CStatic* pStaticControl)
         statusText = _T("就绪");
     }
 
+    // 【P1修复】增加控件级别的去重检查，避免相同内容重复设置
+    CString currentText;
+    pStaticControl->GetWindowText(currentText);
+    if (currentText == statusText) {
+        // 文本内容相同，无需更新
+        return false;
+    }
+
     // 更新UI控件
     try {
         pStaticControl->SetWindowText(statusText);

@@ -3835,7 +3835,23 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 	CString *statusText = reinterpret_cast<CString *>(lParam);
 	if (statusText)
 	{
-		m_staticPortStatus.SetWindowText(*statusText);
+		// 【P1修复】使用UIStateManager统一更新路径，避免重复更新
+		if (m_uiStateManager)
+		{
+			// 转换CString到UTF-8 std::string
+			CT2CA converter(*statusText, CP_UTF8);
+			std::string utf8Status(converter);
+
+			// 通过UIStateManager更新，自动去重
+			m_uiStateManager->UpdateTransmissionStatus(utf8Status, UIStateManager::Priority::Normal);
+			UpdateUIStatus();
+		}
+		else
+		{
+			// 如果UIStateManager不可用，降级为直接更新
+			m_staticPortStatus.SetWindowText(*statusText);
+		}
+
 		delete statusText;
 	}
 	return 0;
@@ -3858,6 +3874,20 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		if (m_uiStateManager) {
 			m_uiStateManager->UpdateTransmissionStatus("传输已终止", UIStateManager::Priority::Normal);
 			UpdateUIStatus();
+		}
+
+		// 【P1修复】传输取消后更新状态管理器
+		if (m_transmissionStateManager)
+		{
+			m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Failed, "传输被用户取消");
+			WriteLog("传输取消：TransmissionStateManager状态已转换到Failed");
+		}
+
+		// 【P1修复】传输取消后恢复按钮状态管理器到已连接状态
+		if (m_buttonStateManager)
+		{
+			m_buttonStateManager->ApplyConnectedState();
+			WriteLog("传输取消：ButtonStateManager状态已恢复到Connected");
 		}
 	}
 	else if (error != TransportError::Success)
@@ -3899,6 +3929,21 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 
 		// 重置进度条
 		m_progress.SetPos(0);
+
+		// 【P1修复】传输错误后更新状态管理器
+		if (m_transmissionStateManager)
+		{
+			m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Failed,
+				"传输失败: 错误代码 " + std::to_string(static_cast<int>(error)));
+			WriteLog("传输错误：TransmissionStateManager状态已转换到Failed");
+		}
+
+		// 【P1修复】传输错误后恢复按钮状态管理器到已连接状态
+		if (m_buttonStateManager)
+		{
+			m_buttonStateManager->ApplyConnectedState();
+			WriteLog("传输错误：ButtonStateManager状态已恢复到Connected");
+		}
 
 		// 恢复连接状态显示
 		UpdateConnectionStatus();
