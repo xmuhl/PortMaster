@@ -13,12 +13,12 @@
 // 回路传输配置
 struct LoopbackConfig : public TransportConfig
 {
-    uint32_t delayMs = 10;              // 模拟传输延迟(ms)
+    uint32_t delayMs = 0;               // 【P0修复】移除模拟延迟，避免握手超时（原值10ms）
     uint32_t errorRate = 0;             // 错误率(0-100%)
     uint32_t packetLossRate = 0;        // 丢包率(0-100%)
     bool enableJitter = false;          // 启用抖动模拟
     uint32_t jitterMaxMs = 5;           // 最大抖动时间(ms)
-    uint32_t maxQueueSize = 10000;      // 最大队列大小（扩大以支持大文件传输）
+    uint32_t maxQueueSize = 50000;      // 【P0修复】扩大队列容量支持大文件传输（原值10000）
     bool enableLogging = true;          // 启用详细日志
     
     LoopbackConfig()

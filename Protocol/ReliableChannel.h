@@ -127,6 +127,9 @@ private:
     // 日志函数
     void WriteLog(const std::string &message);
 
+    // 【P0修复】传输类型检测辅助函数
+    bool IsLoopbackTransport() const;
+
     void ProcessIncomingFrame(const Frame &frame);
     void ProcessDataFrame(const Frame &frame);
     void ProcessAckFrame(uint16_t sequence);

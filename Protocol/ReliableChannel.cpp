@@ -27,6 +27,19 @@ void ReliableChannel::WriteLog(const std::string &message)
     }
 }
 
+// 【P0修复】检测是否使用本地回路传输
+bool ReliableChannel::IsLoopbackTransport() const
+{
+    if (!m_transport)
+    {
+        return false;
+    }
+
+    // 通过端口名称判断：LoopbackTransport的portName为"LOOPBACK"
+    std::string portName = m_transport->GetPortName();
+    return (portName.find("LOOPBACK") != std::string::npos);
+}
+
 // 构造函数
 ReliableChannel::ReliableChannel()
     : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_sendFileSize(0), m_sendFileProgress(0), m_sendFileActive(false), m_recvFileSize(0), m_recvFileProgress(0), m_recvFileActive(false), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
@@ -369,10 +382,29 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         return false;
     }
 
-    // 【关键修复】等待握手真正完成 - 等待接收端 ACK 响应
+    // 【P0修复】本地回路模式主动休眠，等待START帧出队处理
+    if (IsLoopbackTransport())
+    {
+        WriteLog("SendFile: 检测到本地回路模式 - 主动休眠100ms等待START帧出队");
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+
+    // 【关键修复+P0优化】等待握手真正完成 - 等待接收端 ACK 响应
     WriteLog("SendFile: waiting for handshake ACK response");
-    uint32_t handshakeTimeoutMs = m_config.timeoutMax * 2; // 握手超时时间(ms)
-    WriteLog("SendFile: handshake timeout set to " + std::to_string(handshakeTimeoutMs) + "ms");
+
+    // 【P0修复】本地回路模式使用更长的握手超时
+    uint32_t handshakeTimeoutMs;
+    if (IsLoopbackTransport())
+    {
+        // 本地回路需要更长时间让工作线程处理队列
+        handshakeTimeoutMs = m_config.timeoutMax * 10;  // 20000ms (20秒)
+        WriteLog("SendFile: 本地回路模式 - 使用延长握手超时: " + std::to_string(handshakeTimeoutMs) + "ms");
+    }
+    else
+    {
+        handshakeTimeoutMs = m_config.timeoutMax * 2;   // 4000ms (保持原值)
+        WriteLog("SendFile: 标准握手超时: " + std::to_string(handshakeTimeoutMs) + "ms");
+    }
 
     // 使用条件变量和超时等待握手完成
     bool handshakeCompleted = WaitForHandshakeCompletion(handshakeTimeoutMs);
