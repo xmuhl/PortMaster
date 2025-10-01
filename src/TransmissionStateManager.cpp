@@ -18,10 +18,10 @@ static const bool s_validTransitions[11][11] = {
     {true,  true,      false,    true,        false,         false,      false,      false,      false,   true,   true},   // Idle
     {false, false,     false,    false,       false,         false,      false,      false,      false,   true,   true},   // Connecting
     {false, false,     false,    true,        true,          false,      false,      false,      false,   true,   true},   // Connected
-    {false, false,     false,    false,       true,          false,      false,      false,      false,   true,   true},   // Initializing
-    {false, false,     false,    false,       true,          false,      false,      false,      false,   true,   true},   // Handshaking
+    {false, false,     false,    false,       true,          true,       false,      false,      false,   true,   true},   // Initializing【修复】允许转到Transmitting
+    {false, false,     false,    false,       true,          true,       false,      false,      false,   true,   true},   // Handshaking【修复】允许转到Transmitting
     {false, false,     false,    false,       false,         true,       true,       false,      false,   true,   true},   // Transmitting
-    {false, false,     false,    false,       false,         false,      false,      false,      false,   true,   true},   // Paused
+    {false, false,     false,    false,       false,         true,       false,      false,      false,   true,   true},   // Paused【修复】允许从暂停恢复到Transmitting
     {false, false,     false,    false,       false,         true,       false,      false,      false,   true,   true},   // Completing
     {false, false,     true,     false,       false,         false,      false,      false,      false,   true,   true},   // Completed
     {false, false,     true,     true,        true,          true,       true,       true,       false,   true,   true},   // Failed

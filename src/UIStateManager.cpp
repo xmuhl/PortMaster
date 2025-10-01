@@ -28,10 +28,9 @@ UIStateManager::~UIStateManager()
     }
 }
 
-UIStateManager::StatusInfo UIStateManager::GetCurrentStatus() const
+// 【死锁修复】内部版本，不加锁，供已持有锁的函数调用
+UIStateManager::StatusInfo UIStateManager::GetCurrentStatus_Unlocked() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
-
     // 优先级：错误状态 > 传输状态 > 连接状态 > 进度状态
     // 如果有错误状态，优先显示错误
     if (!m_errorStatus.text.empty()) {
@@ -56,6 +55,13 @@ UIStateManager::StatusInfo UIStateManager::GetCurrentStatus() const
 
     // 默认返回连接状态
     return m_connectionStatus;
+}
+
+// 线程安全版本，加锁后调用内部版本
+UIStateManager::StatusInfo UIStateManager::GetCurrentStatus() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return GetCurrentStatus_Unlocked();
 }
 
 bool UIStateManager::ShouldUpdate(const StatusInfo& newStatus) const
@@ -115,17 +121,20 @@ bool UIStateManager::ApplyStatusToControl(CStatic* pStaticControl)
 
     std::lock_guard<std::mutex> lock(m_mutex);
 
-    StatusInfo currentStatus = GetCurrentStatus();
+    // 【死锁修复】使用不加锁的内部版本，因为此处已持有锁
+    StatusInfo currentStatus = GetCurrentStatus_Unlocked();
 
     // 检查是否需要更新
     if (!ShouldUpdate(currentStatus)) {
         return false;
     }
 
-    // 转换为CString
+    // 【编码修复】正确转换 UTF-8 std::string 到 UNICODE CString
     CString statusText;
     if (!currentStatus.text.empty()) {
-        statusText = CString(currentStatus.text.c_str());
+        // 使用ATL转换宏：ANSI/UTF-8 -> UNICODE
+        CA2T converter(currentStatus.text.c_str(), CP_UTF8);
+        statusText = converter;
     } else {
         statusText = _T("就绪");
     }
@@ -195,13 +204,15 @@ void UIStateManager::ClearAllStatus()
 std::string UIStateManager::GetCurrentStatusText() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    StatusInfo currentStatus = GetCurrentStatus();
+    // 【死锁修复】使用不加锁的内部版本，因为此处已持有锁
+    StatusInfo currentStatus = GetCurrentStatus_Unlocked();
     return currentStatus.text.empty() ? "就绪" : currentStatus.text;
 }
 
 bool UIStateManager::HasPendingUpdate() const
 {
     std::lock_guard<std::mutex> lock(m_mutex);
-    StatusInfo currentStatus = GetCurrentStatus();
+    // 【死锁修复】使用不加锁的内部版本，因为此处已持有锁
+    StatusInfo currentStatus = GetCurrentStatus_Unlocked();
     return ShouldUpdate(currentStatus);
 }

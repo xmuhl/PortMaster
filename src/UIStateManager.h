@@ -62,7 +62,10 @@ private:
     // 是否强制更新
     bool m_forceUpdate;
 
-    // 获取当前应该显示的状态
+    // 获取当前应该显示的状态（内部版本，不加锁）
+    StatusInfo GetCurrentStatus_Unlocked() const;
+
+    // 获取当前应该显示的状态（线程安全版本）
     StatusInfo GetCurrentStatus() const;
 
     // 检查状态是否应该更新

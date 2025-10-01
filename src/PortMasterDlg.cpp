@@ -464,12 +464,20 @@ void CPortMasterDlg::OnBnClickedButtonConnect()
 	// 启动接收线程
 	StartReceiveThread();
 
+	// 【传输状态管理】切换到已连接状态，允许后续开始传输
+	if (m_transmissionStateManager) {
+		m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Connected, "连接成功");
+		WriteLog("OnBnClickedButtonConnect: TransmissionStateManager切换到Connected状态");
+	}
+
+	// 【按钮状态管理】切换到已连接状态，正确更新所有按钮
+	if (m_buttonStateManager) {
+		m_buttonStateManager->ApplyConnectedState();
+		WriteLog("OnBnClickedButtonConnect: ButtonStateManager切换到Connected状态");
+	}
+
 	// 更新状态条连接状态
 	UpdateConnectionStatus();
-
-	// 启用断开按钮，禁用连接按钮
-	GetDlgItem(IDC_BUTTON_CONNECT)->EnableWindow(FALSE);
-	GetDlgItem(IDC_BUTTON_DISCONNECT)->EnableWindow(TRUE);
 
 	// 禁用端口参数控件
 	GetDlgItem(IDC_COMBO_PORT)->EnableWindow(FALSE);
@@ -490,12 +498,14 @@ void CPortMasterDlg::OnBnClickedButtonDisconnect()
 	// 清理临时缓存文件（断开连接时清空缓存）
 	ClearTempCacheFile();
 
+	// 【按钮状态管理】切换到空闲状态，正确更新所有按钮
+	if (m_buttonStateManager) {
+		m_buttonStateManager->ApplyIdleState();
+		WriteLog("OnBnClickedButtonDisconnect: ButtonStateManager切换到Idle状态");
+	}
+
 	// 更新状态条连接状态
 	UpdateConnectionStatus();
-
-	// 启用连接按钮，禁用断开按钮
-	GetDlgItem(IDC_BUTTON_CONNECT)->EnableWindow(TRUE);
-	GetDlgItem(IDC_BUTTON_DISCONNECT)->EnableWindow(FALSE);
 
 	// 启用端口参数控件
 	GetDlgItem(IDC_COMBO_PORT)->EnableWindow(TRUE);
@@ -542,8 +552,15 @@ void CPortMasterDlg::StartTransmission()
 		return;
 	}
 
-	// 【传输状态管理统一】请求状态转换到传输中
+	// 【传输状态管理统一】先转换到初始化状态，再转换到传输中
 	if (m_transmissionStateManager) {
+		// 步骤1：转换到初始化状态
+		if (!m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Initializing, "初始化数据传输")) {
+			MessageBox(_T("无法初始化传输，当前状态不允许"), _T("错误"), MB_OK | MB_ICONERROR);
+			return;
+		}
+
+		// 步骤2：转换到传输中状态
 		if (!m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Transmitting, "开始数据传输")) {
 			MessageBox(_T("无法开始传输，当前状态不允许"), _T("错误"), MB_OK | MB_ICONERROR);
 			return;
@@ -840,9 +857,22 @@ void CPortMasterDlg::OnBnClickedButtonStop()
 			// 立即终止传输进程并清除所有已接收的缓存数据
 			ClearAllCacheData();
 
-			// 更新界面状态
-			m_btnSend.SetWindowText(_T("发送"));
-			m_staticPortStatus.SetWindowText(_T("传输已终止"));
+			// 【状态管理修复】使用TransmissionStateManager管理状态转换
+			if (m_transmissionStateManager) {
+				m_transmissionStateManager->RequestStateTransition(TransmissionUIState::Failed, "用户手动终止传输");
+			}
+
+			// 【状态管理修复】使用ButtonStateManager更新按钮状态
+			if (m_buttonStateManager) {
+				m_buttonStateManager->ApplyConnectedState(); // 终止后回到已连接状态，允许重新发送
+			}
+
+			// 【状态管理修复】使用UIStateManager更新状态条
+			if (m_uiStateManager) {
+				m_uiStateManager->UpdateTransmissionStatus("传输已终止", UIStateManager::Priority::High);
+			}
+
+			// 更新进度条
 			m_progress.SetPos(0);
 
 			// 记录日志
@@ -1059,7 +1089,9 @@ void CPortMasterDlg::UpdatePortParameters()
 		std::vector<std::string> ports = SerialTransport::EnumerateSerialPorts();
 		for (const auto &port : ports)
 		{
-			m_comboPort.AddString(CString(port.c_str()));
+			// 【编码修复】使用ATL转换宏安全转换UTF-8到UNICODE
+			CA2T portName(port.c_str(), CP_UTF8);
+			m_comboPort.AddString(portName);
 		}
 		// 如果没有找到串口，添加默认选项
 		if (ports.empty())
@@ -1084,7 +1116,9 @@ void CPortMasterDlg::UpdatePortParameters()
 		std::vector<std::string> ports = ParallelTransport::EnumerateParallelPorts();
 		for (const auto &port : ports)
 		{
-			m_comboPort.AddString(CString(port.c_str()));
+			// 【编码修复】使用ATL转换宏安全转换UTF-8到UNICODE
+			CA2T portName(port.c_str(), CP_UTF8);
+			m_comboPort.AddString(portName);
 		}
 		// 如果没有找到并口，添加默认选项
 		if (ports.empty())
@@ -1108,7 +1142,9 @@ void CPortMasterDlg::UpdatePortParameters()
 		std::vector<std::string> ports = UsbPrintTransport::EnumerateUsbPorts();
 		for (const auto &port : ports)
 		{
-			m_comboPort.AddString(CString(port.c_str()));
+			// 【编码修复】使用ATL转换宏安全转换UTF-8到UNICODE
+			CA2T portName(port.c_str(), CP_UTF8);
+			m_comboPort.AddString(portName);
 		}
 		// 如果没有找到USB打印端口，添加默认选项
 		if (ports.empty())
@@ -2426,6 +2462,12 @@ void CPortMasterDlg::OnBnClickedRadioReliable()
 
 	// 更新状态条模式信息
 	m_staticMode.SetWindowText(_T("可靠"));
+
+	// 【状态管理修复】模式切换后更新保存按钮状态
+	// 可靠模式下保存按钮的启用条件更严格（需要传输完成且有数据）
+	UpdateSaveButtonStatus();
+
+	WriteLog("模式切换：可靠模式");
 }
 
 void CPortMasterDlg::OnEnChangeEditSendData()
@@ -2802,15 +2844,15 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 					else if (latestData.size() < 100) // 对于大文件传输，数据应该远大于100字节
 					{
 						this->WriteLog("⚠️ 数据异常：读取到的数据量过小，可能存在问题");
-						int userChoice = MessageBox(
-							CString(_T("⚠️ 数据量异常\n\n")) +
-							CString(_T("检测到数据量异常小（")) +
-							CString(std::to_string(latestData.size()).c_str()) +
-							CString(_T(" 字节），这可能不是完整的传输数据。\n\n")) +
-							CString(_T("是否仍要继续保存？")),
-							_T("数据量异常"),
-							MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
+						// 【编码修复】使用CString::Format安全格式化数字
+						CString message;
+						message.Format(
+							_T("⚠️ 数据量异常\n\n")
+							_T("检测到数据量异常小（%zu 字节），这可能不是完整的传输数据。\n\n")
+							_T("是否仍要继续保存？"),
+							latestData.size()
 						);
+						int userChoice = MessageBox(message, _T("数据量异常"), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2);
 
 						if (userChoice == IDNO)
 						{
@@ -3066,6 +3108,12 @@ void CPortMasterDlg::OnBnClickedRadioDirect()
 
 	// 更新状态条模式信息
 	m_staticMode.SetWindowText(_T("直通"));
+
+	// 【状态管理修复】模式切换后更新保存按钮状态
+	// 直通模式下保存按钮的启用条件较宽松
+	UpdateSaveButtonStatus();
+
+	WriteLog("模式切换：直通模式");
 }
 
 // Transport层集成实现
@@ -3422,17 +3470,27 @@ void CPortMasterDlg::StopReceiveThread()
 
 void CPortMasterDlg::UpdateConnectionStatus()
 {
+	this->WriteLog("UpdateConnectionStatus: 函数开始执行");
+
 	// 【UI响应修复】使用状态管理器更新连接状态
 	if (m_uiStateManager) {
 		std::string statusText = m_isConnected ? "已连接" : "未连接";
+		this->WriteLog("UpdateConnectionStatus: 更新连接状态为: " + statusText);
 		m_uiStateManager->UpdateConnectionStatus(statusText, UIStateManager::Priority::Normal);
+		this->WriteLog("UpdateConnectionStatus: 连接状态更新完成");
 	}
 
 	// 【可靠模式按钮管控】根据缺陷分析报告实施按钮状态控制
+	this->WriteLog("UpdateConnectionStatus: 准备调用UpdateSaveButtonStatus");
 	UpdateSaveButtonStatus();
+	this->WriteLog("UpdateConnectionStatus: UpdateSaveButtonStatus执行完毕");
 
 	// 【UI响应修复】应用状态更新到UI控件
+	this->WriteLog("UpdateConnectionStatus: 准备调用UpdateUIStatus");
 	UpdateUIStatus();
+	this->WriteLog("UpdateConnectionStatus: UpdateUIStatus执行完毕");
+
+	this->WriteLog("UpdateConnectionStatus: 函数执行完毕");
 }
 
 // 【可靠模式按钮管控】更新保存按钮状态的专用函数
@@ -3484,7 +3542,9 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 	}
 
 	// 更新保存按钮状态
+	this->WriteLog("UpdateSaveButtonStatus: 准备更新保存按钮状态，enableSaveButton=" + std::to_string(enableSaveButton));
 	m_btnSaveAll.EnableWindow(enableSaveButton ? TRUE : FALSE);
+	this->WriteLog("UpdateSaveButtonStatus: 保存按钮状态已更新");
 }
 
 void CPortMasterDlg::UpdateStatistics()
@@ -3554,7 +3614,9 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 void CPortMasterDlg::OnTransportError(const std::string &error)
 {
 	// 在主线程中显示错误
-	CString errorMsg(error.c_str());
+	// 【编码修复】使用ATL转换宏安全转换UTF-8到UNICODE
+	CA2T errorMsgT(error.c_str(), CP_UTF8);
+	CString errorMsg = errorMsgT;
 	PostMessage(WM_USER + 2, 0, (LPARAM) new CString(errorMsg));
 }
 
@@ -3870,7 +3932,9 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		const SerialConfig &serialConfig = config.serial;
 
 		// 设置端口名
-		SetDlgItemText(IDC_COMBO_PORT, CString(serialConfig.portName.c_str()));
+		// 【编码修复】使用ATL转换宏安全转换UTF-8到UNICODE
+	CA2T portName(serialConfig.portName.c_str(), CP_UTF8);
+	SetDlgItemText(IDC_COMBO_PORT, portName);
 
 		// 设置波特率
 		CString baudRateText;
@@ -4860,15 +4924,28 @@ void CPortMasterDlg::InitializeManagersAfterControlsCreated()
 // 更新UI状态显示
 void CPortMasterDlg::UpdateUIStatus()
 {
+	this->WriteLog("UpdateUIStatus: 函数开始执行");
+
 	if (m_uiStateManager) {
+		this->WriteLog("UpdateUIStatus: m_uiStateManager有效，准备应用状态");
+
 		// 应用状态到状态栏控件
+		this->WriteLog("UpdateUIStatus: 调用ApplyStatusToControl前");
 		bool updated = m_uiStateManager->ApplyStatusToControl(&m_staticPortStatus);
+		this->WriteLog("UpdateUIStatus: 调用ApplyStatusToControl后，updated=" + std::to_string(updated));
 
 		// 如果状态有更新，记录日志
 		if (updated) {
-			WriteLog("UI状态已更新: " + m_uiStateManager->GetCurrentStatusText());
+			this->WriteLog("UpdateUIStatus: 准备获取当前状态文本");
+			std::string statusText = m_uiStateManager->GetCurrentStatusText();
+			this->WriteLog("UI状态已更新: " + statusText);
 		}
 	}
+	else {
+		this->WriteLog("UpdateUIStatus: m_uiStateManager为空指针");
+	}
+
+	this->WriteLog("UpdateUIStatus: 函数执行完毕");
 }
 
 // 【传输状态管理统一】传输状态变化回调处理
