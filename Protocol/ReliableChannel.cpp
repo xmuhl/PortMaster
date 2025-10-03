@@ -272,6 +272,14 @@ bool ReliableChannel::Send(const void *data, size_t size)
         return false;
     }
 
+    // 【P0修复】验证输入参数
+    if (size > 10 * 1024 * 1024) // 限制单次发送最大10MB
+    {
+        WriteLog("Send: ERROR - data size too large: " + std::to_string(size) + " bytes");
+        ReportError("发送数据过大，超过单次发送限制");
+        return false;
+    }
+
     std::vector<uint8_t> buffer(size);
     std::memcpy(buffer.data(), data, size);
     return Send(buffer);
@@ -287,22 +295,36 @@ bool ReliableChannel::Receive(std::vector<uint8_t> &data, uint32_t timeout)
 
     std::unique_lock<std::mutex> lock(m_receiveMutex);
 
-    // 等待数据可用
-    if (timeout > 0)
-    {
-        auto result = m_receiveCondition.wait_for(lock, std::chrono::milliseconds(timeout),
-                                                  [this]
-                                                  { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
+    // 【P0修复】等待数据可用
+    auto startTime = std::chrono::steady_clock::now();
 
-        if (!result)
-        {
-            return false; // 超时
-        }
-    }
-    else
+    while (m_receiveQueue.empty() && m_connected && !m_shutdown)
     {
-        m_receiveCondition.wait(lock, [this]
-                                { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
+        if (timeout > 0)
+        {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startTime).count();
+
+            if (elapsed >= timeout)
+            {
+                return false; // 超时
+            }
+
+            uint32_t remainingTimeout = timeout - static_cast<uint32_t>(elapsed);
+            auto result = m_receiveCondition.wait_for(lock, std::chrono::milliseconds(remainingTimeout),
+                                                      [this]
+                                                      { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
+
+            if (!result)
+            {
+                return false; // 超时
+            }
+        }
+        else
+        {
+            m_receiveCondition.wait(lock, [this]
+                                    { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
+        }
     }
 
     if ((!m_connected || m_shutdown) && m_receiveQueue.empty())
@@ -312,8 +334,75 @@ bool ReliableChannel::Receive(std::vector<uint8_t> &data, uint32_t timeout)
 
     if (!m_receiveQueue.empty())
     {
+        // 【P0修复】获取第一个数据块
         data = m_receiveQueue.front();
         m_receiveQueue.pop();
+
+        // 【P0修复】如果是大数据传输，尝试收集更多分片
+        if (data.size() == m_config.maxPayloadSize)
+        {
+            WriteLog("Receive: detected possible fragmented data, collecting more chunks...");
+
+            // 【P0修复】持续收集分片数据，直到队列为空或达到合理大小
+            auto collectStartTime = std::chrono::steady_clock::now();
+            const uint32_t BASE_COLLECT_TIMEOUT = 5000; // 基础5秒收集超时
+            const size_t MAX_EXPECTED_SIZE = 50 * 1024 * 1024; // 最大预期50MB
+
+            size_t lastQueueSize = m_receiveQueue.size();
+            uint32_t noProgressCount = 0;
+            const uint32_t MAX_NO_PROGRESS_COUNT = 50; // 50次无进展后停止
+
+            while (!m_receiveQueue.empty() && data.size() < MAX_EXPECTED_SIZE)
+            {
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - collectStartTime).count();
+
+                // 动态调整超时时间：大数据允许更长时间
+                uint32_t dynamicTimeout = BASE_COLLECT_TIMEOUT;
+                if (data.size() > 1024 * 1024) // 如果已收集超过1MB
+                {
+                    dynamicTimeout = BASE_COLLECT_TIMEOUT * 4; // 延长到20秒
+                }
+
+                if (elapsed >= dynamicTimeout)
+                {
+                    WriteLog("Receive: collection timeout after " + std::to_string(elapsed) + "ms");
+                    break;
+                }
+
+                // 获取下一个数据块
+                std::vector<uint8_t> nextChunk = m_receiveQueue.front();
+                m_receiveQueue.pop();
+
+                // 检查是否有数据进展
+                if (nextChunk.size() > 0)
+                {
+                    // 将数据块追加到data后面
+                    data.insert(data.end(), nextChunk.begin(), nextChunk.end());
+                    WriteLog("Receive: collected additional chunk, total size now=" + std::to_string(data.size()));
+
+                    // 重置无进展计数
+                    noProgressCount = 0;
+                    lastQueueSize = m_receiveQueue.size();
+                }
+                else
+                {
+                    noProgressCount++;
+                    if (noProgressCount >= MAX_NO_PROGRESS_COUNT)
+                    {
+                        WriteLog("Receive: no progress for " + std::to_string(MAX_NO_PROGRESS_COUNT) + " iterations, stopping collection");
+                        break;
+                    }
+                }
+
+                // 短暂等待更多数据，但不要太久
+                m_receiveCondition.wait_for(lock, std::chrono::milliseconds(50));
+            }
+
+            WriteLog("Receive: data collection completed, final size=" + std::to_string(data.size()) +
+                     ", queue remaining=" + std::to_string(m_receiveQueue.size()));
+        }
+
         return true;
     }
 
@@ -428,76 +517,176 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
 
     WriteLog("SendFile: handshake completed, starting data transmission");
 
-    // 发送文件数据
-    std::vector<uint8_t> buffer(m_config.maxPayloadSize);
+    // 【P0修复】发送文件数据 - 修复数据分片逻辑
+    const size_t MAX_CHUNK_SIZE = m_config.maxPayloadSize;
+    std::vector<uint8_t> buffer(MAX_CHUNK_SIZE);
     int64_t bytesSent = 0;
+    int64_t totalBytesToRead = fileSize;
 
-    while (!file.eof() && m_connected)
+    WriteLog("SendFile: starting data transmission, fileSize=" + std::to_string(fileSize) +
+             ", maxChunkSize=" + std::to_string(MAX_CHUNK_SIZE));
+
+    while (bytesSent < totalBytesToRead && m_connected)
     {
-        file.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
+        // 【P0修复】精确计算本次要读取的数据大小
+        size_t remainingBytes = static_cast<size_t>(totalBytesToRead - bytesSent);
+        size_t bytesToRead = (remainingBytes < MAX_CHUNK_SIZE) ? remainingBytes : MAX_CHUNK_SIZE;
+
+        WriteLog("SendFile: reading chunk, remaining=" + std::to_string(remainingBytes) +
+                 ", toRead=" + std::to_string(bytesToRead));
+
+        // 精确读取数据块
+        file.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(bytesToRead));
         size_t bytesRead = static_cast<size_t>(file.gcount());
 
-        if (bytesRead > 0)
+        if (bytesRead == 0)
         {
-            buffer.resize(bytesRead);
-
-            // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
-            uint16_t sequence = AllocateSequence();
-
-            // 【流控机制】实现Busy状态重试逻辑
-            const int MAX_RETRY_COUNT = 10;        // 最大重试次数
-            const int RETRY_DELAY_MS = 50;         // 每次重试间隔（毫秒）
-
-            int retryCount = 0;
-            TransportError sendError = TransportError::Success;
-
-            while (retryCount < MAX_RETRY_COUNT)
+            // 检查是否到达文件末尾
+            if (file.eof())
             {
-                sendError = SendPacket(sequence, buffer);  // 使用同一序列号重试
-
-                if (sendError == TransportError::Success)
-                {
-                    break; // 成功，退出重试循环
-                }
-                else if (sendError == TransportError::Busy)
-                {
-                    // 传输层繁忙，等待后重试
-                    WriteLog("SendFile: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
-                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-                    retryCount++;
-                }
-                else
-                {
-                    // 其他错误（如Failed、NotOpen等），立即失败
-                    WriteLog("SendFile: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
-                    break;
-                }
+                WriteLog("SendFile: reached EOF, breaking");
+                break;
             }
-
-            // 检查最终结果
-            if (sendError != TransportError::Success)
+            else
             {
-                if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
-                {
-                    ReportError("传输层持续繁忙，重试次数已耗尽");
-                }
-                else
-                {
-                    ReportError("发送文件数据失败");
-                }
-                file.close();
-                m_sendFileActive = false;
-                return false;
-            }
-
-            bytesSent += bytesRead;
-            UpdateProgress(bytesSent, fileSize);
-
-            if (progressCallback)
-            {
-                progressCallback(bytesSent, fileSize);
+                WriteLog("SendFile: read 0 bytes but not EOF, continuing");
+                continue;
             }
         }
+
+        if (bytesRead != bytesToRead)
+        {
+            WriteLog("SendFile: WARNING - requested " + std::to_string(bytesToRead) +
+                     ", got " + std::to_string(bytesRead));
+        }
+
+        // 【P0修复】确保数据块大小正确
+        buffer.resize(bytesRead);
+
+        // 【P0修复】增加详细的数据块验证
+        WriteLog("SendFile: sending chunk " + std::to_string(bytesSent / MAX_CHUNK_SIZE + 1) +
+                 ", size=" + std::to_string(bytesRead) +
+                 ", progress=" + std::to_string(bytesSent) + "/" + std::to_string(totalBytesToRead));
+
+        // 【关键修复P0】等待发送窗口有空闲slot，避免覆盖未确认的包
+        while (m_connected)
+        {
+            bool windowAvailable = false;
+            {
+                std::lock_guard<std::mutex> lock(m_windowMutex);
+
+                // 计算窗口中未确认的包数量
+                uint16_t unacknowledged = GetWindowDistance(m_sendBase, m_sendNext);
+
+                if (unacknowledged < m_config.windowSize)
+                {
+                    // 窗口有空闲，可以继续发送
+                    WriteLog("SendFile: window available, unacknowledged=" + std::to_string(unacknowledged) +
+                             "/" + std::to_string(m_config.windowSize));
+                    windowAvailable = true;
+                }
+                else
+                {
+                    // 窗口满，需要等待
+                    WriteLog("SendFile: window full (" + std::to_string(unacknowledged) + "/" +
+                             std::to_string(m_config.windowSize) + "), waiting for ACK...");
+                }
+            }
+
+            if (windowAvailable)
+            {
+                break; // 窗口有空闲，退出等待循环
+            }
+
+            // 释放锁后短暂休眠，等待ACK推进窗口
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+
+        if (!m_connected)
+        {
+            WriteLog("SendFile: connection lost while waiting for window");
+            break;
+        }
+
+        // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
+        uint16_t sequence = AllocateSequence();
+
+        // 【流控机制】实现Busy状态重试逻辑
+        const int MAX_RETRY_COUNT = 10;        // 最大重试次数
+        const int RETRY_DELAY_MS = 50;         // 每次重试间隔（毫秒）
+
+        int retryCount = 0;
+        TransportError sendError = TransportError::Success;
+
+        while (retryCount < MAX_RETRY_COUNT)
+        {
+            sendError = SendPacket(sequence, buffer);  // 使用同一序列号重试
+
+            if (sendError == TransportError::Success)
+            {
+                WriteLog("SendFile: chunk sent successfully, sequence=" + std::to_string(sequence));
+                break; // 成功，退出重试循环
+            }
+            else if (sendError == TransportError::Busy)
+            {
+                // 传输层繁忙，等待后重试
+                WriteLog("SendFile: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
+                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                retryCount++;
+            }
+            else
+            {
+                // 其他错误（如Failed、NotOpen等），立即失败
+                WriteLog("SendFile: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
+                break;
+            }
+        }
+
+        // 检查最终结果
+        if (sendError != TransportError::Success)
+        {
+            if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
+            {
+                ReportError("传输层持续繁忙，重试次数已耗尽");
+            }
+            else
+            {
+                ReportError("发送文件数据失败");
+            }
+            file.close();
+            m_sendFileActive = false;
+            return false;
+        }
+
+        // 【P0修复】精确更新已发送字节数
+        bytesSent += bytesRead;
+
+        WriteLog("SendFile: chunk completed, bytesSent=" + std::to_string(bytesSent) +
+                 ", progress=" + std::to_string((bytesSent * 100 / totalBytesToRead)) + "%");
+
+        UpdateProgress(bytesSent, fileSize);
+
+        if (progressCallback)
+        {
+            progressCallback(bytesSent, fileSize);
+        }
+
+        // 【P0修复】恢复缓冲区大小以便下次读取
+        buffer.resize(MAX_CHUNK_SIZE);
+    }
+
+    WriteLog("SendFile: data transmission completed, bytesSent=" + std::to_string(bytesSent) +
+             ", expected=" + std::to_string(totalBytesToRead));
+
+    // 【P0修复】验证数据完整性
+    if (bytesSent != totalBytesToRead)
+    {
+        WriteLog("SendFile: ERROR - data integrity check failed: sent " + std::to_string(bytesSent) +
+                 ", expected " + std::to_string(totalBytesToRead));
+        ReportError("文件传输完整性验证失败：发送字节数不匹配");
+        file.close();
+        m_sendFileActive = false;
+        return false;
     }
 
     file.close();
@@ -923,47 +1112,103 @@ void ReliableChannel::SendThread()
             WriteLog("SendThread: data extracted, size: " + std::to_string(data.size()) + " bytes");
         }
 
-        // 在没有锁的情况下处理发送
+        // 【P0修复】在没有锁的情况下处理发送 - 支持大数据分片
         try
         {
-            WriteLog("SendThread: allocating sequence number...");
-            // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
-            uint16_t sequence = AllocateSequence();
-            WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
+            WriteLog("SendThread: starting data fragmentation, total size=" + std::to_string(data.size()) + " bytes");
 
-            // 【流控机制】实现Busy状态重试逻辑
-            const int MAX_RETRY_COUNT = 5;   // 队列发送的重试次数较少
-            const int RETRY_DELAY_MS = 20;   // 重试间隔较短
+            // 【P0修复】支持大数据分片发送
+            const size_t MAX_FRAME_SIZE = m_config.maxPayloadSize;
+            size_t totalSent = 0;
+            size_t totalSize = data.size();
+            bool allChunksSucceeded = true;
 
-            int retryCount = 0;
-            TransportError sendError = TransportError::Success;
-
-            while (retryCount < MAX_RETRY_COUNT)
+            while (totalSent < totalSize && m_connected)
             {
-                sendError = SendPacket(sequence, data);  // 使用同一序列号重试
+                // 计算当前分片大小
+                size_t remainingSize = totalSize - totalSent;
+                size_t chunkSize = (remainingSize < MAX_FRAME_SIZE) ? remainingSize : MAX_FRAME_SIZE;
 
-                if (sendError == TransportError::Success)
+                WriteLog("SendThread: sending chunk " + std::to_string(totalSent / MAX_FRAME_SIZE + 1) +
+                         ", offset=" + std::to_string(totalSent) +
+                         ", size=" + std::to_string(chunkSize) +
+                         ", remaining=" + std::to_string(remainingSize));
+
+                // 创建当前分片数据
+                std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + chunkSize);
+
+                // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
+                uint16_t sequence = AllocateSequence();
+                WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + " for chunk");
+
+                // 【流控机制】实现Busy状态重试逻辑
+                const int MAX_RETRY_COUNT = 5;   // 队列发送的重试次数较少
+                const int RETRY_DELAY_MS = 20;   // 重试间隔较短
+
+                int retryCount = 0;
+                TransportError sendError = TransportError::Success;
+
+                while (retryCount < MAX_RETRY_COUNT)
                 {
-                    WriteLog("SendThread: SendPacket succeeded for sequence " + std::to_string(sequence));
-                    break;
+                    sendError = SendPacket(sequence, chunk);  // 使用同一序列号重试
+
+                    if (sendError == TransportError::Success)
+                    {
+                        WriteLog("SendThread: chunk sent successfully, sequence=" + std::to_string(sequence));
+                        break;
+                    }
+                    else if (sendError == TransportError::Busy)
+                    {
+                        WriteLog("SendThread: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
+                        std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
+                        retryCount++;
+                    }
+                    else
+                    {
+                        WriteLog("SendThread: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
+                        break;
+                    }
                 }
-                else if (sendError == TransportError::Busy)
+
+                // 检查当前分片发送结果
+                if (sendError != TransportError::Success)
                 {
-                    WriteLog("SendThread: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
-                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-                    retryCount++;
+                    if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
+                    {
+                        WriteLog("SendThread: chunk send failed due to persistent busy state");
+                        ReportError("传输层持续繁忙，数据分片发送失败");
+                    }
+                    else
+                    {
+                        WriteLog("SendThread: chunk send failed with error=" + std::to_string(static_cast<int>(sendError)));
+                        ReportError("数据分片发送失败");
+                    }
+                    allChunksSucceeded = false;
+                    break;  // 任何一个分片失败都停止发送
                 }
-                else
-                {
-                    WriteLog("SendThread: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
-                    break;
-                }
+
+                // 更新已发送字节数
+                totalSent += chunkSize;
+                WriteLog("SendThread: chunk completed, totalSent=" + std::to_string(totalSent) +
+                         "/" + std::to_string(totalSize) + " (" +
+                         std::to_string((totalSent * 100 / totalSize)) + "%)");
             }
 
-            if (sendError != TransportError::Success)
+            // 【P0修复】验证所有分片是否都发送成功
+            if (!allChunksSucceeded)
             {
-                WriteLog("SendThread: SendPacket failed after retries for sequence " + std::to_string(sequence));
-                ReportError("发送数据包失败");
+                WriteLog("SendThread: ERROR - not all chunks were sent successfully, sent=" +
+                         std::to_string(totalSent) + "/" + std::to_string(totalSize));
+            }
+            else if (totalSent != totalSize)
+            {
+                WriteLog("SendThread: ERROR - data integrity check failed, sent=" +
+                         std::to_string(totalSent) + ", expected=" + std::to_string(totalSize));
+                ReportError("发送数据完整性验证失败：发送字节数不匹配");
+            }
+            else
+            {
+                WriteLog("SendThread: all chunks sent successfully, total=" + std::to_string(totalSent) + " bytes");
             }
         }
         catch (const std::exception &e)
@@ -2195,9 +2440,22 @@ uint16_t ReliableChannel::AllocateSequence()
         return 0;
     }
 
+    // 【P0修复】检查窗口是否满（防御性编程）
+    uint16_t unacknowledged = GetWindowDistance(m_sendBase, m_sendNext);
+    if (unacknowledged >= m_config.windowSize)
+    {
+        WriteLog("AllocateSequence: WARNING - window full (" + std::to_string(unacknowledged) +
+                 "/" + std::to_string(m_config.windowSize) + "), sequence may overwrite unacknowledged packet");
+        WriteLog("AllocateSequence: sendBase=" + std::to_string(m_sendBase) +
+                 ", sendNext=" + std::to_string(m_sendNext));
+        // 不阻止分配，但记录警告（调用者应该先检查窗口）
+    }
+
     uint16_t sequence = m_sendNext;
     WriteLog("AllocateSequence: returning sequence " + std::to_string(sequence) +
-             ", next will be " + std::to_string((m_sendNext + 1) % 65536));
+             ", next will be " + std::to_string((m_sendNext + 1) % 65536) +
+             ", unacknowledged=" + std::to_string(unacknowledged) +
+             "/" + std::to_string(m_config.windowSize));
     m_sendNext = (m_sendNext + 1) % 65536;
     return sequence;
 }

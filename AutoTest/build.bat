@@ -27,7 +27,7 @@ if not exist "obj" mkdir "obj"
 REM 编译所有源文件（不使用预编译头，不包含MFC）
 echo [STEP 1/2] Compiling source files...
 
-cl.exe /nologo /W3 /EHsc /MDd /Zi /Od ^
+cl.exe /nologo /W3 /EHsc /MDd /Zi /Od /std:c++17 ^
     /D "WIN32" /D "_DEBUG" /D "_CONSOLE" /D "_UNICODE" /D "UNICODE" /D "_AFXDLL" ^
     /I ".." /I "..\include" /I "..\Common" /I "..\Protocol" /I "..\Transport" ^
     /Fo"obj\\" ^
