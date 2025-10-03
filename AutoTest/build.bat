@@ -33,6 +33,7 @@ cl.exe /nologo /W3 /EHsc /MDd /Zi /Od /std:c++17 ^
     /Fo"obj\\" ^
     /c main.cpp ^
        ..\Transport\LoopbackTransport.cpp ^
+       ..\Transport\SerialTransport.cpp ^
        ..\Protocol\ReliableChannel.cpp ^
        ..\Protocol\FrameCodec.cpp
 
@@ -51,6 +52,7 @@ link.exe /nologo /OUT:AutoTest.exe ^
     /MACHINE:X86 ^
     obj\main.obj ^
     obj\LoopbackTransport.obj ^
+    obj\SerialTransport.obj ^
     obj\ReliableChannel.obj ^
     obj\FrameCodec.obj ^
     kernel32.lib user32.lib ws2_32.lib

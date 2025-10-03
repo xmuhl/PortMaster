@@ -1137,6 +1137,50 @@ void ReliableChannel::SendThread()
                 // 创建当前分片数据
                 std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + chunkSize);
 
+                // 【关键修复P0】等待发送窗口有空闲slot，避免覆盖未确认的包
+                while (m_connected)
+                {
+                    bool windowAvailable = false;
+                    {
+                        std::lock_guard<std::mutex> lock(m_windowMutex);
+
+                        // 计算窗口中未确认的包数量
+                        uint16_t unacknowledged = GetWindowDistance(m_sendBase, m_sendNext);
+
+                        if (unacknowledged < m_config.windowSize)
+                        {
+                            // 窗口有空闲，可以继续发送
+                            WriteLog("SendThread: window available, unacknowledged=" +
+                                     std::to_string(unacknowledged) + "/" +
+                                     std::to_string(m_config.windowSize));
+                            windowAvailable = true;
+                        }
+                        else
+                        {
+                            // 窗口满，需要等待
+                            WriteLog("SendThread: window full (" +
+                                     std::to_string(unacknowledged) + "/" +
+                                     std::to_string(m_config.windowSize) +
+                                     "), waiting for ACK...");
+                        }
+                    }
+
+                    if (windowAvailable)
+                    {
+                        break; // 窗口有空闲，退出等待循环
+                    }
+
+                    // 释放锁后短暂休眠，等待ACK推进窗口
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                }
+
+                if (!m_connected)
+                {
+                    WriteLog("SendThread: connection lost while waiting for window");
+                    allChunksSucceeded = false;
+                    break;
+                }
+
                 // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
                 uint16_t sequence = AllocateSequence();
                 WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + " for chunk");
@@ -2394,21 +2438,31 @@ void ReliableChannel::AdvanceSendWindow()
         }
 
         WriteLog("AdvanceSendWindow: checking slot " + std::to_string(index) +
-                 ", inUse=" + std::to_string(m_sendWindow[index].inUse));
+                 ", inUse=" + std::to_string(m_sendWindow[index].inUse) +
+                 ", hasPacket=" + std::to_string(m_sendWindow[index].packet != nullptr) +
+                 ", acknowledged=" + std::to_string(m_sendWindow[index].packet ? m_sendWindow[index].packet->acknowledged : false));
 
-        if (m_sendWindow[index].inUse && m_sendWindow[index].packet &&
-            m_sendWindow[index].packet->acknowledged)
+        // 【关键修复P0】修改条件：只要slot有已确认的packet就推进，不要求inUse
+        // ProcessAckFrame已经设置inUse=false，所以这里不能检查inUse
+        if (m_sendWindow[index].packet && m_sendWindow[index].packet->acknowledged)
         {
             WriteLog("AdvanceSendWindow: advancing window, old sendBase=" + std::to_string(m_sendBase));
-            m_sendWindow[index].inUse = false;
+            m_sendWindow[index].inUse = false; // 确保释放
             m_sendWindow[index].packet.reset();
             m_sendBase = (m_sendBase + 1) % 65536;
             advanceCount++;
             WriteLog("AdvanceSendWindow: new sendBase=" + std::to_string(m_sendBase) + ", advanceCount=" + std::to_string(advanceCount));
         }
+        else if (!m_sendWindow[index].packet)
+        {
+            // slot为空，说明从未使用或已清空，停止推进
+            WriteLog("AdvanceSendWindow: slot empty, stopping advancement");
+            break;
+        }
         else
         {
-            WriteLog("AdvanceSendWindow: no more slots to advance, breaking");
+            // slot有packet但未确认，停止推进
+            WriteLog("AdvanceSendWindow: slot has unacknowledged packet, stopping advancement");
             break;
         }
     }
