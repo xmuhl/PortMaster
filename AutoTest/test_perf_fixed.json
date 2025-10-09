@@ -1,0 +1,124 @@
+{
+  "test_run": {
+    "version": "2.0",
+    "timestamp": "2025-10-03T12:05:34",
+    "duration_seconds": 27.7589,
+    "summary": {
+      "total_suites": 3,
+      "total_tests": 12,
+      "passed": 4,
+      "failed": 8,
+      "success_rate": 33.3333
+    },
+    "results": [
+      {
+        "suite": "ThroughputTest",
+        "test": "Small file throughput (100KB)",
+        "passed": false,
+        "duration": 0.068928,
+        "error": "File size mismatch: expected 102400 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "ThroughputTest",
+        "test": "Medium file throughput (1MB)",
+        "passed": false,
+        "duration": 2.3942,
+        "error": "File size mismatch: expected 1048576 bytes, got 92160 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "ThroughputTest",
+        "test": "Large file throughput (10MB)",
+        "passed": false,
+        "duration": 6.48329,
+        "error": "File size mismatch: expected 10485760 bytes, got 166912 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 1",
+        "passed": false,
+        "duration": 6.20409,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 4",
+        "passed": false,
+        "duration": 3.02804,
+        "error": "Should send successfully",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 8",
+        "passed": false,
+        "duration": 3.03242,
+        "error": "Should send successfully",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 16",
+        "passed": false,
+        "duration": 3.04139,
+        "error": "Should send successfully",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 32",
+        "passed": false,
+        "duration": 3.04636,
+        "error": "Should send successfully",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "Zero latency",
+        "passed": true,
+        "duration": 0.087571,
+        "error": "",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "10ms latency",
+        "passed": true,
+        "duration": 0.056247,
+        "error": "",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "50ms latency",
+        "passed": true,
+        "duration": 0.105663,
+        "error": "",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "100ms latency",
+        "passed": true,
+        "duration": 0.210665,
+        "error": "",
+        "metrics": {
+        }
+      }
+    ]
+  }
+}

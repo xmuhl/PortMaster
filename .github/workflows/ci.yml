@@ -1,0 +1,184 @@
+name: CI - Automated Testing
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  pr-validation:
+    name: Pull Request Validation
+    runs-on: windows-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Run PR Validation
+        run: python ci_cd_integration.py pr --github-actions
+        continue-on-error: false
+
+      - name: Upload Test Reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: pr-test-reports
+          path: |
+            ci_artifacts/
+            automation_reports/
+          retention-days: 7
+
+      - name: Comment PR Results
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const fs = require('fs');
+            const prValidation = JSON.parse(fs.readFileSync('ci_artifacts/pr_validation.json', 'utf8'));
+
+            let comment = '## 🤖 自动化测试结果\n\n';
+            comment += `**状态**: ${prValidation.overall_success ? '✅ 成功' : '❌ 失败'}\n\n`;
+            comment += '### 测试步骤\n\n';
+
+            prValidation.steps.forEach((step, index) => {
+              const status = step.success ? '✅' : '❌';
+              comment += `${index + 1}. ${status} ${step.name}\n`;
+            });
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  quick-build:
+    name: Quick Build and Test
+    runs-on: windows-latest
+    if: github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Run Quick Test Workflow
+        run: python run_automated_workflow.py quick
+
+      - name: Upload Build Artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: quick-build-artifacts
+          path: |
+            bin/Debug/
+            automation_reports/
+          retention-days: 3
+
+  comprehensive-test:
+    name: Comprehensive Test Suite
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Install Optional Tools
+        run: |
+          choco install cppcheck -y
+          choco install opencppcoverage -y
+        continue-on-error: true
+
+      - name: Run Comprehensive Test
+        run: python run_automated_workflow.py comprehensive
+
+      - name: Upload Comprehensive Reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: comprehensive-test-reports
+          path: |
+            ci_artifacts/
+            automation_reports/
+            coverage_reports/
+            static_analysis_reports/
+          retention-days: 14
+
+      - name: Check for Regressions
+        if: always()
+        run: |
+          if (Test-Path "regression_report.md") {
+            Get-Content "regression_report.md"
+            if (Select-String -Path "regression_report.md" -Pattern "⚠️ 发现回归问题") {
+              Write-Error "检测到回归问题"
+              exit 1
+            }
+          }
+        shell: pwsh
+
+  code-coverage:
+    name: Code Coverage Analysis
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Install OpenCppCoverage
+        run: choco install opencppcoverage -y
+
+      - name: Run Coverage Analysis
+        run: python -c "from coverage_analyzer import CoverageAnalyzer; ca = CoverageAnalyzer(); ca.run_coverage_analysis('AutoTest/bin/Debug/AutoTest.exe')"
+
+      - name: Upload Coverage Reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-reports
+          path: coverage_reports/
+          retention-days: 14
+
+      - name: Generate Coverage Badge
+        if: always()
+        run: |
+          $coverage = (Get-Content coverage_reports/coverage_summary.json | ConvertFrom-Json).line_coverage
+          $color = if ($coverage -ge 80) { "brightgreen" } elseif ($coverage -ge 60) { "yellow" } else { "red" }
+          Write-Output "COVERAGE=$coverage" >> $env:GITHUB_ENV
+          Write-Output "COVERAGE_COLOR=$color" >> $env:GITHUB_ENV
+        shell: pwsh

@@ -1,0 +1,192 @@
+name: Nightly Build
+
+on:
+  schedule:
+    # 每天UTC时间 2:00 (北京时间 10:00) 执行
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  nightly-build:
+    name: Nightly Complete Build
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Install Analysis Tools
+        run: |
+          choco install cppcheck -y
+          choco install opencppcoverage -y
+        continue-on-error: true
+
+      - name: Run Nightly Build
+        run: python ci_cd_integration.py nightly
+
+      - name: Upload Nightly Artifacts
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: nightly-build-${{ github.run_number }}
+          path: |
+            ci_artifacts/
+            automation_reports/
+            coverage_reports/
+            static_analysis_reports/
+            bin/Debug/
+          retention-days: 30
+
+      - name: Create Nightly Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: nightly-${{ github.run_number }}
+          name: Nightly Build ${{ github.run_number }}
+          body_path: ci_artifacts/nightly_report_${{ steps.date.outputs.date }}.md
+          files: |
+            bin/Debug/PortMaster.exe
+            ci_artifacts/nightly_build.json
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get Current Date
+        id: date
+        run: echo "date=$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+        shell: bash
+
+      - name: Send Notification on Failure
+        if: failure()
+        uses: actions/github-script@v6
+        with:
+          script: |
+            github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `🚨 夜间构建失败 - ${new Date().toISOString().split('T')[0]}`,
+              body: `夜间构建执行失败，请检查构建日志。\n\n[查看工作流运行](${context.payload.repository.html_url}/actions/runs/${context.runId})`,
+              labels: ['build-failure', 'automated']
+            });
+
+  regression-baseline:
+    name: Create Regression Baseline
+    runs-on: windows-latest
+    needs: nightly-build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Create Baseline
+        run: |
+          $version = "nightly-$(Get-Date -Format 'yyyyMMdd')"
+          python -c "from autotest_integration import AutoTestIntegration; at = AutoTestIntegration(); at.create_baseline('$version')"
+        shell: pwsh
+
+      - name: Upload Baseline
+        uses: actions/upload-artifact@v3
+        with:
+          name: regression-baseline
+          path: AutoTest/baselines/
+          retention-days: 90
+
+      - name: Commit Baseline to Repo
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add AutoTest/baselines/
+          git commit -m "chore: 添加夜间构建回归基线 $(Get-Date -Format 'yyyy-MM-dd')" || echo "无变更"
+          git push || echo "推送失败或无变更"
+        shell: pwsh
+
+  performance-benchmark:
+    name: Performance Benchmark
+    runs-on: windows-latest
+    needs: nightly-build
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v1.3
+
+      - name: Run Performance Benchmark
+        run: |
+          AutoTest.exe --performance --report performance_benchmark.json
+
+      - name: Analyze Performance Trends
+        run: |
+          # 比较历史性能数据
+          if (Test-Path "performance_history.json") {
+            python -c "
+import json
+from pathlib import Path
+
+current = json.loads(Path('performance_benchmark.json').read_text())
+history = json.loads(Path('performance_history.json').read_text())
+
+# 检测性能退化
+for test in current['tests']:
+    test_name = test['name']
+    current_value = test['metrics']['throughput']
+
+    historical = next((h for h in history if h['name'] == test_name), None)
+    if historical:
+        historical_value = historical['metrics']['throughput']
+        degradation = (historical_value - current_value) / historical_value * 100
+
+        if degradation > 10:
+            print(f'⚠️ 性能退化: {test_name} 下降 {degradation:.1f}%')
+            exit(1)
+            "
+          }
+        shell: pwsh
+
+      - name: Update Performance History
+        run: |
+          # 将当前性能数据添加到历史记录
+          $date = Get-Date -Format "yyyy-MM-dd"
+          $perf = Get-Content performance_benchmark.json | ConvertFrom-Json
+          $perf | Add-Member -NotePropertyName "date" -NotePropertyValue $date
+
+          $history = if (Test-Path performance_history.json) {
+            Get-Content performance_history.json | ConvertFrom-Json
+          } else {
+            @()
+          }
+
+          $history += $perf
+          $history | ConvertTo-Json -Depth 10 | Set-Content performance_history.json
+        shell: pwsh
+
+      - name: Upload Performance Reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: performance-benchmark
+          path: |
+            performance_benchmark.json
+            performance_history.json
+          retention-days: 90

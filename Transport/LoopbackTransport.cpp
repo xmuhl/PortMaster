@@ -602,6 +602,14 @@ void LoopbackTransport::ProcessSendQueue()
         m_receiveCondition.notify_one();
     }
 
+    // 【P1修复最终版】记录回路轮次统计
+    // 简单方案：直接更新，虽有锁开销但逻辑正确且性能可接受
+    // 对于测试场景（数百到数千packet），mutex开销可忽略
+    {
+        std::lock_guard<std::mutex> statsLock(m_statsMutex);
+        m_stats.loopbackRounds++;
+    }
+
     // 触发异步回调
     if (m_dataReceivedCallback)
     {

@@ -1,351 +1,238 @@
-// 自动化测试工具 - 严格按照指定流程执行
+#pragma execution_character_set("utf-8")
+
+// AutoTest v2.0 - 增强版自动化测试工具
+// 集成测试框架，支持错误恢复、性能基准、压力和稳定性测试
+
+#include "TestFramework.h"
+#include "ErrorRecoveryTests.h"
+#include "PerformanceTests.h"
+#include "StressTests.h"
+#include "TransportUnitTests.h"
+#include "ProtocolUnitTests.h"
+#include "IntegrationTests.h"
+#include "RegressionTestFramework.h"
+
 #include <iostream>
-#include <fstream>
-#include <vector>
 #include <string>
-#include <thread>
-#include <chrono>
-#include <atomic>
-#include <memory>
 #include <Windows.h>
 
-#include "Transport/LoopbackTransport.h"
-#include "Protocol/ReliableChannel.h"
-#include "Protocol/FrameCodec.h"
-
-using namespace std;
-
-// 全局状态
-atomic<bool> g_completed(false);
-atomic<bool> g_failed(false);
-string g_errorMsg;
-
-// 回调函数
-void OnError(const string& msg)
-{
-    cerr << "[ERROR] " << msg << endl;
-    g_errorMsg = msg;
-    g_failed = true;
+void PrintUsage() {
+    std::cout << "AutoTest v2.0 - Enhanced Automated Testing Tool" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Usage:" << std::endl;
+    std::cout << "  AutoTest.exe [options]" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Options:" << std::endl;
+    std::cout << "  --all              Run all test suites (default)" << std::endl;
+    std::cout << "  --unit-tests       Run unit tests (Transport + Protocol)" << std::endl;
+    std::cout << "  --integration      Run integration tests" << std::endl;
+    std::cout << "  --error-recovery   Run error recovery tests only" << std::endl;
+    std::cout << "  --performance      Run performance tests only" << std::endl;
+    std::cout << "  --stress           Run stress tests only" << std::endl;
+    std::cout << "  --report <file>    Generate JSON report (default: test_report.json)" << std::endl;
+    std::cout << std::endl;
+    std::cout << "Regression Testing:" << std::endl;
+    std::cout << "  --create-baseline <version>    Create regression baseline" << std::endl;
+    std::cout << "  --regression <version>         Run regression test against baseline" << std::endl;
+    std::cout << "  --auto-regression <version>    Auto regression against latest baseline" << std::endl;
+    std::cout << "  --list-baselines               List all baseline versions" << std::endl;
+    std::cout << std::endl;
+    std::cout << "  --help             Show this help message" << std::endl;
+    std::cout << std::endl;
 }
 
-void OnSendProgress(int64_t current, int64_t total)
-{
-    static int64_t last = 0;
-    if (current - last >= 50000 || current == total)
-    {
-        printf("[SEND] %lld / %lld (%.1f%%)\r", current, total, current * 100.0 / total);
-        last = current;
-        if (current == total) printf("\n");
-    }
-}
+int main(int argc, char* argv[]) {
+    // 设置控制台代码页为UTF-8
+    SetConsoleOutputCP(CP_UTF8);
 
-void OnRecvProgress(int64_t current, int64_t total)
-{
-    static int64_t last = 0;
-    if (current - last >= 50000 || current == total)
-    {
-        printf("[RECV] %lld / %lld (%.1f%%)\r", current, total, current * 100.0 / total);
-        last = current;
-        if (current == total) printf("\n");
-    }
-}
+    // 解析命令行参数
+    std::string mode = "all";
+    std::string reportFile = "test_report.json";
+    std::string regressionMode = "";
+    std::string baselineVersion = "";
+    std::string currentVersion = "";
 
-void OnStateChanged(bool connected)
-{
-    if (!connected && !g_failed)
-    {
-        cout << "[INFO] Transmission completed" << endl;
-        g_completed = true;
-    }
-}
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
 
-// 使用Windows API读取文件（完全绕过C++标准库的编码问题）
-bool ReadFileW(const wstring& widePath, vector<uint8_t>& data)
-{
-    HANDLE hFile = CreateFileW(
-        widePath.c_str(),
-        GENERIC_READ,
-        FILE_SHARE_READ,
-        NULL,
-        OPEN_EXISTING,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
-
-    if (hFile == INVALID_HANDLE_VALUE)
-    {
-        cerr << "[ERROR] Cannot open file (Error: " << GetLastError() << ")" << endl;
-        return false;
-    }
-
-    DWORD fileSize = GetFileSize(hFile, NULL);
-    if (fileSize == INVALID_FILE_SIZE)
-    {
-        cerr << "[ERROR] Cannot get file size" << endl;
-        CloseHandle(hFile);
-        return false;
-    }
-
-    data.resize(fileSize);
-    DWORD bytesRead = 0;
-    if (!::ReadFile(hFile, data.data(), fileSize, &bytesRead, NULL))
-    {
-        cerr << "[ERROR] Cannot read file" << endl;
-        CloseHandle(hFile);
-        return false;
-    }
-
-    CloseHandle(hFile);
-    cout << "[OK] Read file: " << fileSize << " bytes" << endl;
-    return true;
-}
-
-bool ReadFile(const string& path, vector<uint8_t>& data)
-{
-    // 转换为宽字符串
-    int wideSize = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, NULL, 0);
-    wstring widePath(wideSize, 0);
-    MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, &widePath[0], wideSize);
-    widePath.resize(wideSize - 1);
-
-    return ReadFileW(widePath, data);
-}
-
-// 使用Windows API写入文件
-bool WriteFileW(const wstring& widePath, const vector<uint8_t>& data)
-{
-    HANDLE hFile = CreateFileW(
-        widePath.c_str(),
-        GENERIC_WRITE,
-        0,
-        NULL,
-        CREATE_ALWAYS,
-        FILE_ATTRIBUTE_NORMAL,
-        NULL
-    );
-
-    if (hFile == INVALID_HANDLE_VALUE)
-    {
-        cerr << "[ERROR] Cannot create file (Error: " << GetLastError() << ")" << endl;
-        return false;
-    }
-
-    DWORD bytesWritten = 0;
-    if (!::WriteFile(hFile, data.data(), (DWORD)data.size(), &bytesWritten, NULL))
-    {
-        cerr << "[ERROR] Cannot write file" << endl;
-        CloseHandle(hFile);
-        return false;
-    }
-
-    CloseHandle(hFile);
-    cout << "[OK] Saved file: " << data.size() << " bytes" << endl;
-    return true;
-}
-
-bool WriteFile(const string& path, const vector<uint8_t>& data)
-{
-    // 转换为宽字符串
-    int wideSize = MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, NULL, 0);
-    wstring widePath(wideSize, 0);
-    MultiByteToWideChar(CP_ACP, 0, path.c_str(), -1, &widePath[0], wideSize);
-    widePath.resize(wideSize - 1);
-
-    return WriteFileW(widePath, data);
-}
-
-int main()
-{
-    cout << "======================================" << endl;
-    cout << "Automated Reliable Transmission Test" << endl;
-    cout << "======================================" << endl;
-    cout << endl;
-
-    // 测试配置 - 使用ASCII文件名避免编码问题
-    wstring inputFileWide = L"test_input.pdf";
-    string outputFile = "test_received.pdf";
-    string tempFile = "test_temp.bin";
-    string inputFileWin_display = "test_input.pdf";
-
-    // 步骤1: 读取测试文件
-    cout << "[STEP 1/8] Reading test file..." << endl;
-    cout << "Input: " << inputFileWin_display << endl;
-
-    vector<uint8_t> originalData;
-    if (!ReadFileW(inputFileWide, originalData))
-    {
-        return 1;
-    }
-    cout << endl;
-
-    // 步骤2: 创建本地回路传输层
-    cout << "[STEP 2/8] Creating Loopback transport..." << endl;
-
-    auto transport = make_shared<LoopbackTransport>();
-
-    TransportConfig transportConfig;
-    if (transport->Open(transportConfig) != TransportError::Success)
-    {
-        cerr << "[ERROR] Failed to open transport" << endl;
-        return 1;
-    }
-
-    cout << "[OK] Loopback transport created" << endl;
-    cout << endl;
-
-    // 步骤3: 创建可靠传输通道（单通道架构）
-    cout << "[STEP 3/8] Creating reliable channel..." << endl;
-
-    auto reliableChannel = make_shared<ReliableChannel>();
-
-    ReliableConfig reliableConfig;
-    reliableConfig.windowSize = 16;  // 增加窗口大小以支持更多并行传输
-    reliableConfig.maxRetries = 10;
-
-    if (!reliableChannel->Initialize(transport, reliableConfig))
-    {
-        cerr << "[ERROR] Failed to initialize channel" << endl;
-        return 1;
-    }
-
-    reliableChannel->SetErrorCallback(OnError);
-    reliableChannel->SetProgressCallback(OnSendProgress);
-
-    cout << "[OK] Reliable channel configured" << endl;
-    cout << endl;
-
-    // 步骤4: 连接通道
-    cout << "[STEP 4/8] Connecting channel..." << endl;
-
-    if (!reliableChannel->Connect())
-    {
-        cerr << "[ERROR] Failed to connect channel" << endl;
-        return 1;
-    }
-
-    cout << "[OK] Channel connected" << endl;
-    cout << endl;
-
-    // 步骤5: 启动接收线程（必须在发送前启动）
-    cout << "[STEP 5/8] Starting receive thread..." << endl;
-
-    atomic<bool> recvStarted(false);
-    atomic<bool> recvCompleted(false);
-    atomic<bool> recvFailed(false);
-
-    thread recvThread([&]() {
-        recvStarted = true;
-        cout << "[RECV] Receive thread started" << endl;
-
-        bool result = reliableChannel->ReceiveFile(outputFile, OnRecvProgress);
-
-        if (result)
-        {
-            cout << "[RECV] Receive completed successfully" << endl;
-            recvCompleted = true;
+        if (arg == "--help" || arg == "-h") {
+            PrintUsage();
+            return 0;
         }
-        else
-        {
-            cerr << "[RECV] Receive failed" << endl;
-            recvFailed = true;
+        else if (arg == "--all") {
+            mode = "all";
         }
-    });
-
-    // 等待接收线程启动
-    while (!recvStarted)
-    {
-        this_thread::sleep_for(chrono::milliseconds(100));
-    }
-    cout << "[OK] Receive thread ready" << endl;
-    cout << endl;
-
-    // 步骤6: 发送文件
-    cout << "[STEP 6/8] Sending file..." << endl;
-
-    if (!WriteFile(tempFile, originalData))
-    {
-        return 1;
-    }
-
-    bool sendResult = reliableChannel->SendFile(tempFile, OnSendProgress);
-    DeleteFileA(tempFile.c_str());
-
-    if (!sendResult)
-    {
-        cerr << "[ERROR] Send failed: " << g_errorMsg << endl;
-        recvThread.join();
-        return 1;
-    }
-
-    cout << "[OK] Send completed" << endl;
-    cout << endl;
-
-    // 步骤7: 等待接收完成
-    cout << "[STEP 7/8] Waiting for receive to complete..." << endl;
-
-    recvThread.join();
-
-    if (recvFailed)
-    {
-        cerr << "[ERROR] Receive failed" << endl;
-        return 1;
-    }
-
-    if (!recvCompleted)
-    {
-        cerr << "[ERROR] Receive not completed" << endl;
-        return 1;
+        else if (arg == "--unit-tests") {
+            mode = "unit-tests";
+        }
+        else if (arg == "--integration") {
+            mode = "integration";
+        }
+        else if (arg == "--error-recovery") {
+            mode = "error-recovery";
+        }
+        else if (arg == "--performance") {
+            mode = "performance";
+        }
+        else if (arg == "--stress") {
+            mode = "stress";
+        }
+        else if (arg == "--report" && i + 1 < argc) {
+            reportFile = argv[++i];
+        }
+        else if (arg == "--create-baseline" && i + 1 < argc) {
+            regressionMode = "create-baseline";
+            baselineVersion = argv[++i];
+        }
+        else if (arg == "--regression" && i + 1 < argc) {
+            regressionMode = "regression";
+            baselineVersion = argv[++i];
+            if (i + 1 < argc && argv[i + 1][0] != '-') {
+                currentVersion = argv[++i];
+            }
+        }
+        else if (arg == "--auto-regression" && i + 1 < argc) {
+            regressionMode = "auto-regression";
+            currentVersion = argv[++i];
+        }
+        else if (arg == "--list-baselines") {
+            regressionMode = "list-baselines";
+        }
+        else {
+            std::cerr << "Unknown option: " << arg << std::endl;
+            PrintUsage();
+            return 1;
+        }
     }
 
-    cout << "[OK] Receive completed" << endl;
-    cout << endl;
+    // 创建测试运行器
+    TestRunner runner;
 
-    // 步骤8: 验证文件
-    cout << "[STEP 8/9] Verifying file..." << endl;
+    // 根据模式注册测试套件
+    if (mode == "all" || mode == "unit-tests") {
+        // Transport层单元测试
+        runner.RegisterSuite(std::make_shared<LoopbackTransportTest>());
+        runner.RegisterSuite(std::make_shared<SerialTransportTest>());
 
-    vector<uint8_t> receivedData;
-    if (!ReadFile(outputFile, receivedData))
-    {
-        return 1;
+        // Protocol层单元测试
+        runner.RegisterSuite(std::make_shared<FrameCodecTest>());
+        runner.RegisterSuite(std::make_shared<ReliableChannelTest>());
     }
 
-    cout << "Original size: " << originalData.size() << " bytes" << endl;
-    cout << "Received size: " << receivedData.size() << " bytes" << endl;
-
-    if (receivedData.size() != originalData.size())
-    {
-        cerr << "[FAIL] Size mismatch!" << endl;
-        return 1;
+    if (mode == "all" || mode == "integration") {
+        // 集成测试
+        runner.RegisterSuite(std::make_shared<TransportProtocolIntegrationTest>());
+        runner.RegisterSuite(std::make_shared<FileTransferIntegrationTest>());
     }
 
-    if (receivedData != originalData)
-    {
-        cerr << "[FAIL] Content mismatch!" << endl;
-        return 1;
+    if (mode == "all" || mode == "error-recovery") {
+        runner.RegisterSuite(std::make_shared<PacketLossTest>());
+        runner.RegisterSuite(std::make_shared<TimeoutTest>());
+        runner.RegisterSuite(std::make_shared<CRCFailureTest>());
     }
 
-    cout << "[OK] File verified - perfect match" << endl;
-    cout << endl;
+    if (mode == "all" || mode == "performance") {
+        runner.RegisterSuite(std::make_shared<ThroughputTest>());
+        runner.RegisterSuite(std::make_shared<WindowSizeImpactTest>());
+        runner.RegisterSuite(std::make_shared<LatencyTest>());
+    }
 
-    // 步骤9: 显示统计
-    cout << "[STEP 9/9] Statistics..." << endl;
+    if (mode == "all" || mode == "stress") {
+        runner.RegisterSuite(std::make_shared<StressTest>());
+        runner.RegisterSuite(std::make_shared<LongRunningTest>());
+        runner.RegisterSuite(std::make_shared<ConcurrentTest>());
+    }
 
-    ReliableStats stats = reliableChannel->GetStats();
+    // 处理回归测试模式
+    if (!regressionMode.empty()) {
+        RegressionTestManager regressionManager;
 
-    cout << "Packets sent:         " << stats.packetsSent << endl;
-    cout << "Packets retransmitted:" << stats.packetsRetransmitted << endl;
-    cout << "Packets received:     " << stats.packetsReceived << endl;
-    cout << "Total errors:         " << stats.errors << endl;
-    cout << endl;
+        if (regressionMode == "list-baselines") {
+            auto versions = regressionManager.ListBaselineVersions();
+            std::cout << "Available baseline versions:" << std::endl;
+            for (const auto& version : versions) {
+                std::cout << "  - " << version << std::endl;
+            }
+            return 0;
+        }
+        else if (regressionMode == "create-baseline") {
+            AutomatedRegressionRunner autoRunner(runner, regressionManager);
+            bool success = autoRunner.RunAndCreateBaseline(baselineVersion);
 
-    // 清理
-    reliableChannel->Disconnect();
-    reliableChannel->Shutdown();
-    transport->Close();
+            if (success) {
+                std::cout << "Baseline created successfully: " << baselineVersion << std::endl;
+                runner.GenerateJsonReport(reportFile);
+                return 0;
+            }
+            else {
+                std::cerr << "Failed to create baseline" << std::endl;
+                return 1;
+            }
+        }
+        else if (regressionMode == "regression") {
+            AutomatedRegressionRunner autoRunner(runner, regressionManager);
+            auto report = autoRunner.RunRegressionTest(baselineVersion,
+                                                      currentVersion.empty() ? "current" : currentVersion);
 
-    cout << "======================================" << endl;
-    cout << "TEST PASSED" << endl;
-    cout << "======================================" << endl;
+            regressionManager.GenerateRegressionReport(report, "regression_report.md");
+            runner.GenerateJsonReport(reportFile);
 
-    return 0;
+            std::cout << std::endl;
+            std::cout << "Regression report saved to: regression_report.md" << std::endl;
+            std::cout << "Test report saved to: " << reportFile << std::endl;
+            std::cout << std::endl;
+
+            if (report.hasRegression) {
+                std::cout << "WARNING: Regression detected!" << std::endl;
+                return 1;
+            }
+            else {
+                std::cout << "No regression detected." << std::endl;
+                return 0;
+            }
+        }
+        else if (regressionMode == "auto-regression") {
+            AutomatedRegressionRunner autoRunner(runner, regressionManager);
+            auto report = autoRunner.AutoRegression(currentVersion);
+
+            regressionManager.GenerateRegressionReport(report, "regression_report.md");
+            runner.GenerateJsonReport(reportFile);
+
+            std::cout << std::endl;
+            std::cout << "Regression report saved to: regression_report.md" << std::endl;
+            std::cout << "Test report saved to: " << reportFile << std::endl;
+            std::cout << std::endl;
+
+            if (report.hasRegression) {
+                std::cout << "WARNING: Regression detected!" << std::endl;
+                return 1;
+            }
+            else {
+                std::cout << "No regression detected." << std::endl;
+                return 0;
+            }
+        }
+    }
+
+    // 运行所有测试
+    runner.RunAll();
+
+    // 生成JSON报告
+    runner.GenerateJsonReport(reportFile);
+
+    // 检查测试结果
+    const auto& results = runner.GetResults();
+    bool allPassed = true;
+    for (const auto& result : results) {
+        if (!result.passed) {
+            allPassed = false;
+            break;
+        }
+    }
+
+    std::cout << std::endl;
+    std::cout << "Test report saved to: " << reportFile << std::endl;
+    std::cout << std::endl;
+
+    return allPassed ? 0 : 1;
 }

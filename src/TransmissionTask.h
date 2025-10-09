@@ -107,17 +107,14 @@ protected:
     virtual bool IsTransportReady() const = 0;
     virtual std::string GetTransportDescription() const = 0;
 
-    // 【修复】供子类使用的辅助方法
-    void UpdateProgress(size_t transmitted, size_t total, const std::string& status);
-    void WriteLog(const std::string& message);
-    const std::vector<uint8_t>& GetTransmissionData() const { return m_data; }
-
 private:
     // 后台线程主函数
     void ExecuteTransmission();
 
     // 内部辅助方法
+    void UpdateProgress(size_t transmitted, size_t total, const std::string& status);
     void ReportCompletion(TransmissionTaskState finalState, TransportError errorCode, const std::string& errorMsg = "");
+    void WriteLog(const std::string& message);
     bool CheckPauseAndCancel();
 
 private:
@@ -154,7 +151,7 @@ class ReliableTransmissionTask : public TransmissionTask
 {
 public:
     explicit ReliableTransmissionTask(std::shared_ptr<ReliableChannel> reliableChannel);
-    virtual ~ReliableTransmissionTask();
+    virtual ~ReliableTransmissionTask() = default;
 
 protected:
     TransportError DoSendChunk(const uint8_t* data, size_t size) override;
@@ -162,14 +159,7 @@ protected:
     std::string GetTransportDescription() const override;
 
 private:
-    // 【重构】使用SendFile完整协议的实现
-    bool ExecuteFileTransmission();
-    bool CreateTempFileFromData(const std::vector<uint8_t>& data, std::string& tempFilePath);
-    void CleanupTempFile();
-    
     std::shared_ptr<ReliableChannel> m_reliableChannel;
-    std::string m_tempFilePath; // 临时文件路径
-    bool m_useFileProtocol;     // 是否使用完整文件协议
 };
 
 // 原始传输任务实现类

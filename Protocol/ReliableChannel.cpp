@@ -27,22 +27,9 @@ void ReliableChannel::WriteLog(const std::string &message)
     }
 }
 
-// 【P0修复】检测是否使用本地回路传输
-bool ReliableChannel::IsLoopbackTransport() const
-{
-    if (!m_transport)
-    {
-        return false;
-    }
-
-    // 通过端口名称判断：LoopbackTransport的portName为"LOOPBACK"
-    std::string portName = m_transport->GetPortName();
-    return (portName.find("LOOPBACK") != std::string::npos);
-}
-
 // 构造函数
 ReliableChannel::ReliableChannel()
-    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_sendFileSize(0), m_sendFileProgress(0), m_sendFileActive(false), m_recvFileSize(0), m_recvFileProgress(0), m_recvFileActive(false), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
+    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileName(), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_transferStartTime(std::chrono::steady_clock::now()), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
 {
     m_lastActivity = std::chrono::steady_clock::now();
     WriteLog("ReliableChannel constructor called");
@@ -272,14 +259,6 @@ bool ReliableChannel::Send(const void *data, size_t size)
         return false;
     }
 
-    // 【P0修复】验证输入参数
-    if (size > 10 * 1024 * 1024) // 限制单次发送最大10MB
-    {
-        WriteLog("Send: ERROR - data size too large: " + std::to_string(size) + " bytes");
-        ReportError("发送数据过大，超过单次发送限制");
-        return false;
-    }
-
     std::vector<uint8_t> buffer(size);
     std::memcpy(buffer.data(), data, size);
     return Send(buffer);
@@ -295,36 +274,22 @@ bool ReliableChannel::Receive(std::vector<uint8_t> &data, uint32_t timeout)
 
     std::unique_lock<std::mutex> lock(m_receiveMutex);
 
-    // 【P0修复】等待数据可用
-    auto startTime = std::chrono::steady_clock::now();
-
-    while (m_receiveQueue.empty() && m_connected && !m_shutdown)
+    // 等待数据可用
+    if (timeout > 0)
     {
-        if (timeout > 0)
+        auto result = m_receiveCondition.wait_for(lock, std::chrono::milliseconds(timeout),
+                                                  [this]
+                                                  { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
+
+        if (!result)
         {
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - startTime).count();
-
-            if (elapsed >= timeout)
-            {
-                return false; // 超时
-            }
-
-            uint32_t remainingTimeout = timeout - static_cast<uint32_t>(elapsed);
-            auto result = m_receiveCondition.wait_for(lock, std::chrono::milliseconds(remainingTimeout),
-                                                      [this]
-                                                      { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
-
-            if (!result)
-            {
-                return false; // 超时
-            }
+            return false; // 超时
         }
-        else
-        {
-            m_receiveCondition.wait(lock, [this]
-                                    { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
-        }
+    }
+    else
+    {
+        m_receiveCondition.wait(lock, [this]
+                                { return !m_receiveQueue.empty() || !m_connected || m_shutdown; });
     }
 
     if ((!m_connected || m_shutdown) && m_receiveQueue.empty())
@@ -334,75 +299,8 @@ bool ReliableChannel::Receive(std::vector<uint8_t> &data, uint32_t timeout)
 
     if (!m_receiveQueue.empty())
     {
-        // 【P0修复】获取第一个数据块
         data = m_receiveQueue.front();
         m_receiveQueue.pop();
-
-        // 【P0修复】如果是大数据传输，尝试收集更多分片
-        if (data.size() == m_config.maxPayloadSize)
-        {
-            WriteLog("Receive: detected possible fragmented data, collecting more chunks...");
-
-            // 【P0修复】持续收集分片数据，直到队列为空或达到合理大小
-            auto collectStartTime = std::chrono::steady_clock::now();
-            const uint32_t BASE_COLLECT_TIMEOUT = 5000; // 基础5秒收集超时
-            const size_t MAX_EXPECTED_SIZE = 50 * 1024 * 1024; // 最大预期50MB
-
-            size_t lastQueueSize = m_receiveQueue.size();
-            uint32_t noProgressCount = 0;
-            const uint32_t MAX_NO_PROGRESS_COUNT = 50; // 50次无进展后停止
-
-            while (!m_receiveQueue.empty() && data.size() < MAX_EXPECTED_SIZE)
-            {
-                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - collectStartTime).count();
-
-                // 动态调整超时时间：大数据允许更长时间
-                uint32_t dynamicTimeout = BASE_COLLECT_TIMEOUT;
-                if (data.size() > 1024 * 1024) // 如果已收集超过1MB
-                {
-                    dynamicTimeout = BASE_COLLECT_TIMEOUT * 4; // 延长到20秒
-                }
-
-                if (elapsed >= dynamicTimeout)
-                {
-                    WriteLog("Receive: collection timeout after " + std::to_string(elapsed) + "ms");
-                    break;
-                }
-
-                // 获取下一个数据块
-                std::vector<uint8_t> nextChunk = m_receiveQueue.front();
-                m_receiveQueue.pop();
-
-                // 检查是否有数据进展
-                if (nextChunk.size() > 0)
-                {
-                    // 将数据块追加到data后面
-                    data.insert(data.end(), nextChunk.begin(), nextChunk.end());
-                    WriteLog("Receive: collected additional chunk, total size now=" + std::to_string(data.size()));
-
-                    // 重置无进展计数
-                    noProgressCount = 0;
-                    lastQueueSize = m_receiveQueue.size();
-                }
-                else
-                {
-                    noProgressCount++;
-                    if (noProgressCount >= MAX_NO_PROGRESS_COUNT)
-                    {
-                        WriteLog("Receive: no progress for " + std::to_string(MAX_NO_PROGRESS_COUNT) + " iterations, stopping collection");
-                        break;
-                    }
-                }
-
-                // 短暂等待更多数据，但不要太久
-                m_receiveCondition.wait_for(lock, std::chrono::milliseconds(50));
-            }
-
-            WriteLog("Receive: data collection completed, final size=" + std::to_string(data.size()) +
-                     ", queue remaining=" + std::to_string(m_receiveQueue.size()));
-        }
-
         return true;
     }
 
@@ -447,14 +345,14 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
     int64_t fileSize = file.tellg();
     file.seekg(0, std::ios::beg);
 
-    // 设置发送端文件传输状态
+    // 设置文件传输状态
     {
         std::lock_guard<std::mutex> lock(m_receiveMutex);
-        m_sendFileName = filePath;
-        m_sendFileSize = fileSize;
-        m_sendFileProgress = 0;
-        m_sendFileActive = true;
-        m_sendStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+        m_currentFileName = filePath;
+        m_currentFileSize = fileSize;
+        m_currentFileProgress = 0;
+        m_fileTransferActive = true;
+        m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
     }
 
     // 发送开始帧
@@ -466,34 +364,15 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
     if (!SendStart(filePath, fileSize, modifyTime))
     {
         file.close();
-        m_sendFileActive = false;
+        m_fileTransferActive = false;
         WriteLog("SendFile: ERROR - SendStart failed");
         return false;
     }
 
-    // 【P0修复】本地回路模式主动休眠，等待START帧出队处理
-    if (IsLoopbackTransport())
-    {
-        WriteLog("SendFile: 检测到本地回路模式 - 主动休眠100ms等待START帧出队");
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-
-    // 【关键修复+P0优化】等待握手真正完成 - 等待接收端 ACK 响应
+    // 【关键修复】等待握手真正完成 - 等待接收端 ACK 响应
     WriteLog("SendFile: waiting for handshake ACK response");
-
-    // 【P0修复】本地回路模式使用更长的握手超时
-    uint32_t handshakeTimeoutMs;
-    if (IsLoopbackTransport())
-    {
-        // 本地回路需要更长时间让工作线程处理队列
-        handshakeTimeoutMs = m_config.timeoutMax * 10;  // 20000ms (20秒)
-        WriteLog("SendFile: 本地回路模式 - 使用延长握手超时: " + std::to_string(handshakeTimeoutMs) + "ms");
-    }
-    else
-    {
-        handshakeTimeoutMs = m_config.timeoutMax * 2;   // 4000ms (保持原值)
-        WriteLog("SendFile: 标准握手超时: " + std::to_string(handshakeTimeoutMs) + "ms");
-    }
+    uint32_t handshakeTimeoutMs = m_config.timeoutMax * 2; // 握手超时时间(ms)
+    WriteLog("SendFile: handshake timeout set to " + std::to_string(handshakeTimeoutMs) + "ms");
 
     // 使用条件变量和超时等待握手完成
     bool handshakeCompleted = WaitForHandshakeCompletion(handshakeTimeoutMs);
@@ -503,7 +382,7 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         WriteLog("SendFile: ERROR - handshake timeout after " + std::to_string(handshakeTimeoutMs) + "ms");
         ReportError("握手超时，接收端未响应START帧");
         file.close();
-        m_sendFileActive = false;
+        m_fileTransferActive = false;
         return false;
     }
 
@@ -511,200 +390,53 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
     {
         WriteLog("SendFile: ERROR - connection lost during handshake");
         file.close();
-        m_sendFileActive = false;
+        m_fileTransferActive = false;
         return false;
     }
 
     WriteLog("SendFile: handshake completed, starting data transmission");
 
-    // 【P0修复】发送文件数据 - 修复数据分片逻辑
-    const size_t MAX_CHUNK_SIZE = m_config.maxPayloadSize;
-    std::vector<uint8_t> buffer(MAX_CHUNK_SIZE);
+    // 发送文件数据
+    std::vector<uint8_t> buffer(m_config.maxPayloadSize);
     int64_t bytesSent = 0;
-    int64_t totalBytesToRead = fileSize;
 
-    WriteLog("SendFile: starting data transmission, fileSize=" + std::to_string(fileSize) +
-             ", maxChunkSize=" + std::to_string(MAX_CHUNK_SIZE));
-
-    while (bytesSent < totalBytesToRead && m_connected)
+    while (!file.eof() && m_connected)
     {
-        // 【P0修复】精确计算本次要读取的数据大小
-        size_t remainingBytes = static_cast<size_t>(totalBytesToRead - bytesSent);
-        size_t bytesToRead = (remainingBytes < MAX_CHUNK_SIZE) ? remainingBytes : MAX_CHUNK_SIZE;
-
-        WriteLog("SendFile: reading chunk, remaining=" + std::to_string(remainingBytes) +
-                 ", toRead=" + std::to_string(bytesToRead));
-
-        // 精确读取数据块
-        file.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(bytesToRead));
+        file.read(reinterpret_cast<char *>(buffer.data()), static_cast<std::streamsize>(buffer.size()));
         size_t bytesRead = static_cast<size_t>(file.gcount());
 
-        if (bytesRead == 0)
+        if (bytesRead > 0)
         {
-            // 检查是否到达文件末尾
-            if (file.eof())
-            {
-                WriteLog("SendFile: reached EOF, breaking");
-                break;
-            }
-            else
-            {
-                WriteLog("SendFile: read 0 bytes but not EOF, continuing");
-                continue;
-            }
-        }
-
-        if (bytesRead != bytesToRead)
-        {
-            WriteLog("SendFile: WARNING - requested " + std::to_string(bytesToRead) +
-                     ", got " + std::to_string(bytesRead));
-        }
-
-        // 【P0修复】确保数据块大小正确
-        buffer.resize(bytesRead);
-
-        // 【P0修复】增加详细的数据块验证
-        WriteLog("SendFile: sending chunk " + std::to_string(bytesSent / MAX_CHUNK_SIZE + 1) +
-                 ", size=" + std::to_string(bytesRead) +
-                 ", progress=" + std::to_string(bytesSent) + "/" + std::to_string(totalBytesToRead));
-
-        // 【关键修复P0】等待发送窗口有空闲slot，避免覆盖未确认的包
-        while (m_connected)
-        {
-            bool windowAvailable = false;
-            {
-                std::lock_guard<std::mutex> lock(m_windowMutex);
-
-                // 计算窗口中未确认的包数量
-                uint16_t unacknowledged = GetWindowDistance(m_sendBase, m_sendNext);
-
-                if (unacknowledged < m_config.windowSize)
-                {
-                    // 窗口有空闲，可以继续发送
-                    WriteLog("SendFile: window available, unacknowledged=" + std::to_string(unacknowledged) +
-                             "/" + std::to_string(m_config.windowSize));
-                    windowAvailable = true;
-                }
-                else
-                {
-                    // 窗口满，需要等待
-                    WriteLog("SendFile: window full (" + std::to_string(unacknowledged) + "/" +
-                             std::to_string(m_config.windowSize) + "), waiting for ACK...");
-                }
-            }
-
-            if (windowAvailable)
-            {
-                break; // 窗口有空闲，退出等待循环
-            }
-
-            // 释放锁后短暂休眠，等待ACK推进窗口
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-        }
-
-        if (!m_connected)
-        {
-            WriteLog("SendFile: connection lost while waiting for window");
-            break;
-        }
-
-        // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
-        uint16_t sequence = AllocateSequence();
-
-        // 【流控机制】实现Busy状态重试逻辑
-        const int MAX_RETRY_COUNT = 10;        // 最大重试次数
-        const int RETRY_DELAY_MS = 50;         // 每次重试间隔（毫秒）
-
-        int retryCount = 0;
-        TransportError sendError = TransportError::Success;
-
-        while (retryCount < MAX_RETRY_COUNT)
-        {
-            sendError = SendPacket(sequence, buffer);  // 使用同一序列号重试
-
-            if (sendError == TransportError::Success)
-            {
-                WriteLog("SendFile: chunk sent successfully, sequence=" + std::to_string(sequence));
-                break; // 成功，退出重试循环
-            }
-            else if (sendError == TransportError::Busy)
-            {
-                // 传输层繁忙，等待后重试
-                WriteLog("SendFile: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
-                std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-                retryCount++;
-            }
-            else
-            {
-                // 其他错误（如Failed、NotOpen等），立即失败
-                WriteLog("SendFile: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
-                break;
-            }
-        }
-
-        // 检查最终结果
-        if (sendError != TransportError::Success)
-        {
-            if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
-            {
-                ReportError("传输层持续繁忙，重试次数已耗尽");
-            }
-            else
+            buffer.resize(bytesRead);
+            if (!SendPacket(AllocateSequence(), buffer))
             {
                 ReportError("发送文件数据失败");
+                file.close();
+                m_fileTransferActive = false;
+                return false;
             }
-            file.close();
-            m_sendFileActive = false;
-            return false;
+
+            bytesSent += bytesRead;
+            UpdateProgress(bytesSent, fileSize);
+
+            if (progressCallback)
+            {
+                progressCallback(bytesSent, fileSize);
+            }
         }
-
-        // 【P0修复】精确更新已发送字节数
-        bytesSent += bytesRead;
-
-        WriteLog("SendFile: chunk completed, bytesSent=" + std::to_string(bytesSent) +
-                 ", progress=" + std::to_string((bytesSent * 100 / totalBytesToRead)) + "%");
-
-        UpdateProgress(bytesSent, fileSize);
-
-        if (progressCallback)
-        {
-            progressCallback(bytesSent, fileSize);
-        }
-
-        // 【P0修复】恢复缓冲区大小以便下次读取
-        buffer.resize(MAX_CHUNK_SIZE);
-    }
-
-    WriteLog("SendFile: data transmission completed, bytesSent=" + std::to_string(bytesSent) +
-             ", expected=" + std::to_string(totalBytesToRead));
-
-    // 【P0修复】验证数据完整性
-    if (bytesSent != totalBytesToRead)
-    {
-        WriteLog("SendFile: ERROR - data integrity check failed: sent " + std::to_string(bytesSent) +
-                 ", expected " + std::to_string(totalBytesToRead));
-        ReportError("文件传输完整性验证失败：发送字节数不匹配");
-        file.close();
-        m_sendFileActive = false;
-        return false;
     }
 
     file.close();
-
-    // 【修复】直接发送END帧，不等待ACK
-    // 理由：等待ACK的判断条件有缺陷（slot.inUse在ACK后被设为false）
-    // ProcessThread会继续处理重传，END帧本身也需要ACK确认
-    WriteLog("SendFile: all data packets sent, sending END frame");
 
     // 发送结束帧
     if (m_connected && !SendEnd())
     {
         ReportError("发送文件结束帧失败");
-        m_sendFileActive = false;
+        m_fileTransferActive = false;
         return false;
     }
 
-    m_sendFileActive = false;
+    m_fileTransferActive = false;
     return m_connected;
 }
 
@@ -716,98 +448,38 @@ bool ReliableChannel::ReceiveFile(const std::string &filePath, std::function<voi
         return false;
     }
 
-    // 设置接收端文件传输状态
+    // 设置文件传输状态
     {
         std::lock_guard<std::mutex> lock(m_receiveMutex);
-        m_recvFileName = filePath;
-        // 不覆盖m_recvFileSize，它将由ProcessStartFrame设置
-        // 如果之前没有设置过，初始化为0
-        if (m_recvFileSize == 0)
-        {
-            // 首次调用，等待START帧设置文件大小
-        }
-        m_recvFileProgress = 0;
-        m_recvFileActive = true; // 设置为true，表示准备接收
-        m_recvStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+        m_currentFileName = filePath;
+        m_currentFileSize = 0;
+        m_currentFileProgress = 0;
+        m_fileTransferActive = true;
+        m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
     }
 
     std::ofstream file(filePath, std::ios::binary);
     if (!file.is_open())
     {
         ReportError("无法创建文件: " + filePath);
-        m_recvFileActive = false;
+        m_fileTransferActive = false;
         return false;
     }
 
-    WriteLog("ReceiveFile: waiting for file data...");
-
-    // 【修复BUG】从接收队列读取数据并写入文件
-    int64_t bytesWritten = 0;
-
-    while (m_connected)
+    // 等待文件传输完成
+    while (m_fileTransferActive && m_connected)
     {
-        // 从接收队列获取数据
-        std::vector<uint8_t> data;
-        bool transferActive = false;
-        bool queueEmpty = false;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
+        if (progressCallback)
         {
-            std::unique_lock<std::mutex> lock(m_receiveMutex);
-
-            // 等待数据可用或传输结束
-            m_receiveCondition.wait_for(
-                lock,
-                std::chrono::milliseconds(100),
-                [this] { return !m_receiveQueue.empty() || !m_recvFileActive || !m_connected; }
-            );
-
-            if (!m_connected)
-            {
-                WriteLog("ReceiveFile: connection lost");
-                break;
-            }
-
-            transferActive = m_recvFileActive;
-            queueEmpty = m_receiveQueue.empty();
-
-            // 【关键修复】即使传输标记为结束，也要继续排空接收队列
-            if (!m_receiveQueue.empty())
-            {
-                data = m_receiveQueue.front();
-                m_receiveQueue.pop();
-                WriteLog("ReceiveFile: dequeued data chunk, size=" + std::to_string(data.size()) +
-                         ", queue remaining=" + std::to_string(m_receiveQueue.size()));
-            }
-        }
-
-        // 写入数据到文件
-        if (!data.empty())
-        {
-            file.write(reinterpret_cast<const char*>(data.data()), data.size());
-            file.flush(); // 立即刷新到磁盘
-            bytesWritten += data.size();
-
-            WriteLog("ReceiveFile: wrote " + std::to_string(data.size()) + " bytes to file, total=" + std::to_string(bytesWritten));
-
-            // 调用进度回调
-            if (progressCallback)
-            {
-                std::lock_guard<std::mutex> lock(m_receiveMutex);
-                progressCallback(m_recvFileProgress, m_recvFileSize);
-            }
-        }
-        else if (!transferActive && queueEmpty)
-        {
-            // 传输已结束且队列为空，可以退出
-            WriteLog("ReceiveFile: transfer completed and queue empty, exiting");
-            break;
+            std::lock_guard<std::mutex> lock(m_receiveMutex);
+            progressCallback(m_currentFileProgress, m_currentFileSize);
         }
     }
 
     file.close();
-    WriteLog("ReceiveFile: file closed, total bytes written=" + std::to_string(bytesWritten));
-
-    return !m_recvFileActive && m_connected;
+    return !m_fileTransferActive && m_connected;
 }
 
 // 设置配置
@@ -921,8 +593,7 @@ size_t ReliableChannel::GetReceiveQueueSize() const
 // 【可靠模式按钮管控】检查文件传输是否活跃
 bool ReliableChannel::IsFileTransferActive() const
 {
-    // 检查发送端或接收端是否有活跃传输
-    if (!m_sendFileActive && !m_recvFileActive) return false;
+    if (!m_fileTransferActive) return false;
 
     // 检查传输超时（需要非const访问来修改状态）
     if (const_cast<ReliableChannel*>(this)->CheckTransferTimeout()) {
@@ -930,7 +601,7 @@ bool ReliableChannel::IsFileTransferActive() const
     }
 
     // 返回当前文件传输的活跃状态，用于UI层判断保存按钮启用时机
-    return m_sendFileActive || m_recvFileActive;
+    return m_fileTransferActive;
 }
 
 // 处理线程
@@ -1112,147 +783,21 @@ void ReliableChannel::SendThread()
             WriteLog("SendThread: data extracted, size: " + std::to_string(data.size()) + " bytes");
         }
 
-        // 【P0修复】在没有锁的情况下处理发送 - 支持大数据分片
+        // 在没有锁的情况下处理发送
         try
         {
-            WriteLog("SendThread: starting data fragmentation, total size=" + std::to_string(data.size()) + " bytes");
-
-            // 【P0修复】支持大数据分片发送
-            const size_t MAX_FRAME_SIZE = m_config.maxPayloadSize;
-            size_t totalSent = 0;
-            size_t totalSize = data.size();
-            bool allChunksSucceeded = true;
-
-            while (totalSent < totalSize && m_connected)
+            WriteLog("SendThread: allocating sequence number...");
+            // 分配序列号并发送
+            uint16_t sequence = AllocateSequence();
+            WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
+            if (!SendPacket(sequence, data))
             {
-                // 计算当前分片大小
-                size_t remainingSize = totalSize - totalSent;
-                size_t chunkSize = (remainingSize < MAX_FRAME_SIZE) ? remainingSize : MAX_FRAME_SIZE;
-
-                WriteLog("SendThread: sending chunk " + std::to_string(totalSent / MAX_FRAME_SIZE + 1) +
-                         ", offset=" + std::to_string(totalSent) +
-                         ", size=" + std::to_string(chunkSize) +
-                         ", remaining=" + std::to_string(remainingSize));
-
-                // 创建当前分片数据
-                std::vector<uint8_t> chunk(data.begin() + totalSent, data.begin() + totalSent + chunkSize);
-
-                // 【关键修复P0】等待发送窗口有空闲slot，避免覆盖未确认的包
-                while (m_connected)
-                {
-                    bool windowAvailable = false;
-                    {
-                        std::lock_guard<std::mutex> lock(m_windowMutex);
-
-                        // 计算窗口中未确认的包数量
-                        uint16_t unacknowledged = GetWindowDistance(m_sendBase, m_sendNext);
-
-                        if (unacknowledged < m_config.windowSize)
-                        {
-                            // 窗口有空闲，可以继续发送
-                            WriteLog("SendThread: window available, unacknowledged=" +
-                                     std::to_string(unacknowledged) + "/" +
-                                     std::to_string(m_config.windowSize));
-                            windowAvailable = true;
-                        }
-                        else
-                        {
-                            // 窗口满，需要等待
-                            WriteLog("SendThread: window full (" +
-                                     std::to_string(unacknowledged) + "/" +
-                                     std::to_string(m_config.windowSize) +
-                                     "), waiting for ACK...");
-                        }
-                    }
-
-                    if (windowAvailable)
-                    {
-                        break; // 窗口有空闲，退出等待循环
-                    }
-
-                    // 释放锁后短暂休眠，等待ACK推进窗口
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                }
-
-                if (!m_connected)
-                {
-                    WriteLog("SendThread: connection lost while waiting for window");
-                    allChunksSucceeded = false;
-                    break;
-                }
-
-                // 【关键修复】在重试循环外分配序列号，确保重试时使用同一序列号
-                uint16_t sequence = AllocateSequence();
-                WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + " for chunk");
-
-                // 【流控机制】实现Busy状态重试逻辑
-                const int MAX_RETRY_COUNT = 5;   // 队列发送的重试次数较少
-                const int RETRY_DELAY_MS = 20;   // 重试间隔较短
-
-                int retryCount = 0;
-                TransportError sendError = TransportError::Success;
-
-                while (retryCount < MAX_RETRY_COUNT)
-                {
-                    sendError = SendPacket(sequence, chunk);  // 使用同一序列号重试
-
-                    if (sendError == TransportError::Success)
-                    {
-                        WriteLog("SendThread: chunk sent successfully, sequence=" + std::to_string(sequence));
-                        break;
-                    }
-                    else if (sendError == TransportError::Busy)
-                    {
-                        WriteLog("SendThread: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
-                        std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-                        retryCount++;
-                    }
-                    else
-                    {
-                        WriteLog("SendThread: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
-                        break;
-                    }
-                }
-
-                // 检查当前分片发送结果
-                if (sendError != TransportError::Success)
-                {
-                    if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
-                    {
-                        WriteLog("SendThread: chunk send failed due to persistent busy state");
-                        ReportError("传输层持续繁忙，数据分片发送失败");
-                    }
-                    else
-                    {
-                        WriteLog("SendThread: chunk send failed with error=" + std::to_string(static_cast<int>(sendError)));
-                        ReportError("数据分片发送失败");
-                    }
-                    allChunksSucceeded = false;
-                    break;  // 任何一个分片失败都停止发送
-                }
-
-                // 更新已发送字节数
-                totalSent += chunkSize;
-                WriteLog("SendThread: chunk completed, totalSent=" + std::to_string(totalSent) +
-                         "/" + std::to_string(totalSize) + " (" +
-                         std::to_string((totalSent * 100 / totalSize)) + "%)");
-            }
-
-            // 【P0修复】验证所有分片是否都发送成功
-            if (!allChunksSucceeded)
-            {
-                WriteLog("SendThread: ERROR - not all chunks were sent successfully, sent=" +
-                         std::to_string(totalSent) + "/" + std::to_string(totalSize));
-            }
-            else if (totalSent != totalSize)
-            {
-                WriteLog("SendThread: ERROR - data integrity check failed, sent=" +
-                         std::to_string(totalSent) + ", expected=" + std::to_string(totalSize));
-                ReportError("发送数据完整性验证失败：发送字节数不匹配");
+                WriteLog("SendThread: SendPacket failed");
+                ReportError("发送数据包失败");
             }
             else
             {
-                WriteLog("SendThread: all chunks sent successfully, total=" + std::to_string(totalSent) + " bytes");
+                WriteLog("SendThread: SendPacket succeeded");
             }
         }
         catch (const std::exception &e)
@@ -1314,16 +859,6 @@ void ReliableChannel::ReceiveThread()
                             m_receiveQueue.push(slot.packet->data);
                             m_receiveCondition.notify_one();
                             WriteLog("ReceiveThread: data pushed, notifying condition");
-                            
-                            // 【关键修复】更新文件传输进度计数
-                            m_recvFileProgress += slot.packet->data.size();
-                            WriteLog("ReceiveThread: updated file progress to " + std::to_string(m_recvFileProgress) + " bytes");
-
-                            // 更新进度回调
-                            if (m_recvFileSize > 0)
-                            {
-                                UpdateProgress(m_recvFileProgress, m_recvFileSize);
-                            }
                         }
 
                         // 更新接收窗口
@@ -1331,8 +866,7 @@ void ReliableChannel::ReceiveThread()
                         slot.inUse = false;
                         slot.packet.reset();
                         m_receiveBase = (m_receiveBase + 1) % 65536;
-                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase) +
-                                ", file progress=" + std::to_string(m_recvFileProgress) + "/" + std::to_string(m_recvFileSize));
+                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase));
                         found = true;
                         break;
                     }
@@ -1540,11 +1074,6 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             return;
         }
 
-        // 【增强日志】检查槽位当前状态
-        bool slotWasInUse = m_receiveWindow[index].inUse;
-        WriteLog("ProcessDataFrame: slot " + std::to_string(index) + " status - wasInUse=" + std::to_string(slotWasInUse) +
-                 ", hasPacket=" + std::to_string(m_receiveWindow[index].packet != nullptr));
-        
         WriteLog("ProcessDataFrame: setting window slot " + std::to_string(index) + " to inUse=true");
         m_receiveWindow[index].inUse = true;
 
@@ -1553,17 +1082,11 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             WriteLog("ProcessDataFrame: creating new packet for slot " + std::to_string(index));
             m_receiveWindow[index].packet = std::make_shared<Packet>();
         }
-        else if (slotWasInUse)
-        {
-            WriteLog("ProcessDataFrame: WARNING - overwriting existing packet in slot " + std::to_string(index) +
-                     ", old sequence=" + std::to_string(m_receiveWindow[index].packet->sequence));
-        }
 
         m_receiveWindow[index].packet->sequence = frame.sequence;
         m_receiveWindow[index].packet->data = frame.payload;
         WriteLog("ProcessDataFrame: packet data set, sequence=" + std::to_string(m_receiveWindow[index].packet->sequence) +
-                 ", data.size()=" + std::to_string(m_receiveWindow[index].packet->data.size()) +
-                 ", expected_next=" + std::to_string(m_receiveBase));
+                 ", data.size()=" + std::to_string(m_receiveWindow[index].packet->data.size()));
     }
 
     WriteLog("ProcessDataFrame: window update completed, sending ACK");
@@ -1735,14 +1258,14 @@ void ReliableChannel::ProcessStartFrame(const Frame &frame)
                  ", fileSize=" + std::to_string(metadata.fileSize) +
                  ", version=" + std::to_string(metadata.version));
 
-        // 设置接收端文件传输信息
+        // 设置文件传输信息
         {
             std::lock_guard<std::mutex> lock(m_receiveMutex);
-            m_recvFileName = metadata.fileName;
-            m_recvFileSize = metadata.fileSize;
-            m_recvFileProgress = 0;
-            m_recvFileActive = true; // 激活文件传输状态
-            m_recvStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+            m_currentFileName = metadata.fileName;
+            m_currentFileSize = metadata.fileSize;
+            m_currentFileProgress = 0;
+            m_fileTransferActive = true; // 激活文件传输状态
+            m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
         }
 
         // 更新进度显示
@@ -1794,70 +1317,38 @@ void ReliableChannel::ProcessEndFrame(const Frame &frame)
     WriteLog("ProcessEndFrame: 收到END帧，验证传输完整性...");
 
     // 检查是否有预期的文件大小信息
-    if (m_recvFileSize > 0)
+    if (m_currentFileSize > 0)
     {
         // 验证实际接收字节数与预期文件大小是否匹配
-        if (m_recvFileProgress >= m_recvFileSize)
+        if (m_currentFileProgress >= m_currentFileSize)
         {
             WriteLog("ProcessEndFrame: 传输完整性验证通过 - " +
-                     std::to_string(m_recvFileProgress) + "/" +
-                     std::to_string(m_recvFileSize) + " 字节");
-            m_recvFileActive = false;
-            UpdateProgress(m_recvFileSize, m_recvFileSize);
+                     std::to_string(m_currentFileProgress) + "/" +
+                     std::to_string(m_currentFileSize) + " 字节");
+            m_fileTransferActive = false;
+            UpdateProgress(m_currentFileSize, m_currentFileSize);
             WriteLog("ProcessEndFrame: 文件传输正常完成");
         }
         else
         {
-            // 【关键修复】智能完成机制：根据完成度采取不同策略
-            float completionRate = (float)m_recvFileProgress / m_recvFileSize;
             WriteLog("ProcessEndFrame: 传输不完整 - 收到 " +
-                     std::to_string(m_recvFileProgress) + "/" +
-                     std::to_string(m_recvFileSize) + " 字节 (" +
-                     std::to_string(completionRate * 100) + "% 完成)");
-
-            if (completionRate >= 0.95) {
-                // 95%以上完成：可能是轻微数据丢失，强制完成
-                WriteLog("ProcessEndFrame: 传输接近完成(" +
-                         std::to_string(completionRate * 100) + "%)，强制结束");
-                m_recvFileActive = false;
-                UpdateProgress(m_recvFileProgress, m_recvFileSize);
-                ReportWarning("文件传输基本完成，可能有轻微数据丢失 (" +
-                             std::to_string(completionRate * 100) + "% 完成)");
-            }
-            else if (completionRate < 0.1) {
-                // 10%以下完成：严重问题，立即终止
-                WriteLog("ProcessEndFrame: 传输严重不完整(" +
-                         std::to_string(completionRate * 100) + "%)，立即终止");
-                m_recvFileActive = false;
-                ReportError("文件传输严重失败，仅完成 " +
-                           std::to_string(completionRate * 100) + "% (" +
-                           std::to_string(m_recvFileProgress) + "/" +
-                           std::to_string(m_recvFileSize) + " 字节)");
-            }
-            else {
-                // 10%-95%之间：设置短超时，等待可能的补传
-                WriteLog("ProcessEndFrame: 传输部分完成(" +
-                         std::to_string(completionRate * 100) + "%)，设置短超时等待补传");
-
-                // 设置短超时标记（30秒）
-                m_shortTimeoutActive = true;
-                m_shortTimeoutStart = std::chrono::steady_clock::now();
-                m_shortTimeoutDuration = 30; // 30秒
-
-                ReportWarning("文件传输部分完成(" + std::to_string(completionRate * 100) + "%)，等待补传超时");
-                // 暂时不设置 m_recvFileActive = false，但使用短超时机制
-            }
+                     std::to_string(m_currentFileProgress) + "/" +
+                     std::to_string(m_currentFileSize) + " 字节，拒绝结束传输");
+            ReportError("文件传输不完整，预期 " + std::to_string(m_currentFileSize) +
+                       " 字节，实际接收 " + std::to_string(m_currentFileProgress) + " 字节");
+            // 不设置 m_fileTransferActive = false，继续等待数据
+            WriteLog("ProcessEndFrame: 保持传输活跃状态，等待更多数据");
         }
     }
     else
     {
         WriteLog("ProcessEndFrame: 无文件大小信息，使用传统逻辑结束传输");
-        m_recvFileActive = false;
-        UpdateProgress(m_recvFileProgress, m_recvFileProgress);
+        m_fileTransferActive = false;
+        UpdateProgress(m_currentFileProgress, m_currentFileProgress);
         WriteLog("ProcessEndFrame: 传统模式传输结束");
     }
 
-    WriteLog("ProcessEndFrame: 处理完成，当前传输状态 = " + std::string(m_recvFileActive ? "活跃" : "已结束"));
+    WriteLog("ProcessEndFrame: 处理完成，当前传输状态 = " + std::string(m_fileTransferActive ? "活跃" : "已结束"));
 }
 
 // 处理心跳帧
@@ -1867,7 +1358,7 @@ void ReliableChannel::ProcessHeartbeatFrame(const Frame &frame)
 }
 
 // 发送数据包
-TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type)
+bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type)
 {
     WriteLog("SendPacket called: sequence=" + std::to_string(sequence) +
              ", data.size()=" + std::to_string(data.size()) +
@@ -1909,7 +1400,7 @@ TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<
         break;
     default:
         WriteLog("SendPacket: ERROR - unknown frame type " + std::to_string(static_cast<int>(type)));
-        return TransportError::WriteFailed;
+        return false;
     }
 
     WriteLog("SendPacket: frame encoded, frameData.size()=" + std::to_string(frameData.size()));
@@ -1917,19 +1408,10 @@ TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<
     // 发送数据
     WriteLog("SendPacket: writing to transport...");
     size_t written = 0;
-    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
-
-    // 检查写入结果
-    if (error != TransportError::Success)
+    if (m_transport->Write(frameData.data(), frameData.size(), &written) != TransportError::Success || written != frameData.size())
     {
-        WriteLog("SendPacket: transport write returned error=" + std::to_string(static_cast<int>(error)));
-        return error; // 直接返回传输层的错误码（包括Busy状态）
-    }
-
-    if (written != frameData.size())
-    {
-        WriteLog("SendPacket: ERROR - incomplete write: " + std::to_string(written) + "/" + std::to_string(frameData.size()));
-        return TransportError::WriteFailed;
+        WriteLog("SendPacket: ERROR - transport write failed or incomplete");
+        return false;
     }
 
     WriteLog("SendPacket: transport write succeeded, " + std::to_string(written) + " bytes written");
@@ -1954,7 +1436,7 @@ TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<
         {
             WriteLog("SendPacket: ERROR - window not initialized or size is 0");
             ReportError("发送窗口未初始化或大小为0");
-            return TransportError::WriteFailed;
+            return false;
         }
 
         uint16_t index = sequence % m_config.windowSize;
@@ -1967,7 +1449,7 @@ TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<
             WriteLog("SendPacket: ERROR - index out of bounds: " + std::to_string(index) +
                      " >= " + std::to_string(m_sendWindow.size()));
             ReportError("发送窗口索引越界: " + std::to_string(index) + " >= " + std::to_string(m_sendWindow.size()));
-            return TransportError::WriteFailed;
+            return false;
         }
 
         WriteLog("SendPacket: setting window slot " + std::to_string(index) + " to inUse=true");
@@ -1989,7 +1471,7 @@ TransportError ReliableChannel::SendPacket(uint16_t sequence, const std::vector<
     }
 
     WriteLog("SendPacket: completed successfully");
-    return TransportError::Success;
+    return true;
 }
 
 // 发送ACK
@@ -2000,38 +1482,12 @@ bool ReliableChannel::SendAck(uint16_t sequence)
     std::vector<uint8_t> frameData = m_frameCodec->EncodeAckFrame(sequence);
     WriteLog("SendAck: frame encoded, size=" + std::to_string(frameData.size()));
 
-    // 【流控机制】为ACK控制帧添加Busy重试机制
-    const int MAX_RETRY_COUNT = 5;
-    const int RETRY_DELAY_MS = 20;
-
-    int retryCount = 0;
-    TransportError error = TransportError::Success;
-    bool success = false;
-
-    while (retryCount < MAX_RETRY_COUNT)
-    {
-        size_t written = 0;
-        error = m_transport->Write(frameData.data(), frameData.size(), &written);
-
-        if (error == TransportError::Success && written == frameData.size())
-        {
-            success = true;
-            break;
-        }
-        else if (error == TransportError::Busy)
-        {
-            WriteLog("SendAck: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
-            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-            retryCount++;
-        }
-        else
-        {
-            break;
-        }
-    }
+    size_t written = 0;
+    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
+    bool success = (error == TransportError::Success && written == frameData.size());
 
     WriteLog("SendAck: transport write result: error=" + std::to_string(static_cast<int>(error)) +
-             ", retries=" + std::to_string(retryCount) + ", success=" + std::to_string(success));
+             ", written=" + std::to_string(written) + ", success=" + std::to_string(success));
 
     return success;
 }
@@ -2044,38 +1500,12 @@ bool ReliableChannel::SendNak(uint16_t sequence)
     std::vector<uint8_t> frameData = m_frameCodec->EncodeNakFrame(sequence);
     WriteLog("SendNak: frame encoded, size=" + std::to_string(frameData.size()));
 
-    // 【流控机制】为NAK控制帧添加Busy重试机制
-    const int MAX_RETRY_COUNT = 5;
-    const int RETRY_DELAY_MS = 20;
-
-    int retryCount = 0;
-    TransportError error = TransportError::Success;
-    bool success = false;
-
-    while (retryCount < MAX_RETRY_COUNT)
-    {
-        size_t written = 0;
-        error = m_transport->Write(frameData.data(), frameData.size(), &written);
-
-        if (error == TransportError::Success && written == frameData.size())
-        {
-            success = true;
-            break;
-        }
-        else if (error == TransportError::Busy)
-        {
-            WriteLog("SendNak: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
-            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-            retryCount++;
-        }
-        else
-        {
-            break;
-        }
-    }
+    size_t written = 0;
+    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
+    bool success = (error == TransportError::Success && written == frameData.size());
 
     WriteLog("SendNak: transport write result: error=" + std::to_string(static_cast<int>(error)) +
-             ", retries=" + std::to_string(retryCount) + ", success=" + std::to_string(success));
+             ", written=" + std::to_string(written) + ", success=" + std::to_string(success));
 
     return success;
 }
@@ -2149,64 +1579,29 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
         }
     }
 
-    // 【流控机制】为START控制帧添加Busy重试机制
-    WriteLog("SendStart: sending START frame with retry mechanism...");
-    const int MAX_RETRY_COUNT = 10;
-    const int RETRY_DELAY_MS = 50;
+    // 发送帧数据
+    WriteLog("SendStart: sending START frame to transport...");
+    size_t written = 0;
+    TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
+    bool success = (error == TransportError::Success && written == frameData.size());
 
-    int retryCount = 0;
-    TransportError sendError = TransportError::Success;
-    bool success = false;
-
-    while (retryCount < MAX_RETRY_COUNT)
+    if (success)
     {
-        size_t written = 0;
-        sendError = m_transport->Write(frameData.data(), frameData.size(), &written);
+        WriteLog("SendStart: START frame sent successfully, " + std::to_string(written) + " bytes written");
 
-        if (sendError == TransportError::Success && written == frameData.size())
+        // 更新统计
         {
-            WriteLog("SendStart: START frame sent successfully, " + std::to_string(written) + " bytes written, sequence=" + std::to_string(sequence));
-            success = true;
+            std::lock_guard<std::mutex> lock(m_statsMutex);
+            m_stats.packetsSent++;
+            m_stats.bytesSent += frameData.size();
+        }
 
-            // 更新统计
-            {
-                std::lock_guard<std::mutex> lock(m_statsMutex);
-                m_stats.packetsSent++;
-                m_stats.bytesSent += frameData.size();
-            }
-
-            WriteLog("SendStart: START control frame stored in send window for ACK tracking");
-            break;
-        }
-        else if (sendError == TransportError::Busy)
-        {
-            // 传输层繁忙，等待后重试
-            WriteLog("SendStart: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
-            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-            retryCount++;
-        }
-        else
-        {
-            // 其他错误，立即失败
-            WriteLog("SendStart: ERROR - failed to send START frame, error=" +
-                     std::to_string(static_cast<int>(sendError)) + ", written=" + std::to_string(written) +
-                     " for sequence " + std::to_string(sequence));
-            break;
-        }
+        WriteLog("SendStart: START control frame stored in send window for ACK tracking");
     }
-
-    // 处理失败情况
-    if (!success)
+    else
     {
-        if (sendError == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
-        {
-            WriteLog("SendStart: transport busy, retry exhausted for sequence " + std::to_string(sequence));
-            ReportError("传输层持续繁忙，START帧发送失败");
-        }
-        else
-        {
-            ReportError("START帧发送失败");
-        }
+        WriteLog("SendStart: ERROR - failed to send START frame, error=" +
+                 std::to_string(static_cast<int>(error)) + ", written=" + std::to_string(written));
 
         // 发送失败时清理发送窗口
         {
@@ -2218,6 +1613,8 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
                 m_sendWindow[index].packet.reset();
             }
         }
+
+        ReportError("START帧发送失败");
     }
 
     return success;
@@ -2226,48 +1623,8 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
 // 发送结束帧
 bool ReliableChannel::SendEnd()
 {
-    // 【关键修复】在重试循环外分配序列号
     uint16_t sequence = AllocateSequence();
-
-    // 【流控机制】为END控制帧添加Busy重试机制
-    const int MAX_RETRY_COUNT = 10;
-    const int RETRY_DELAY_MS = 50;
-
-    int retryCount = 0;
-    TransportError sendError = TransportError::Success;
-
-    while (retryCount < MAX_RETRY_COUNT)
-    {
-        sendError = SendPacket(sequence, {}, FrameType::FRAME_END);
-
-        if (sendError == TransportError::Success)
-        {
-            WriteLog("SendEnd: END frame sent successfully, sequence=" + std::to_string(sequence));
-            return true;
-        }
-        else if (sendError == TransportError::Busy)
-        {
-            // 传输层繁忙，等待后重试
-            WriteLog("SendEnd: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT) + " for sequence " + std::to_string(sequence));
-            std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-            retryCount++;
-        }
-        else
-        {
-            // 其他错误，立即失败
-            WriteLog("SendEnd: SendPacket failed with error=" + std::to_string(static_cast<int>(sendError)) + " for sequence " + std::to_string(sequence));
-            return false;
-        }
-    }
-
-    // 重试耗尽
-    if (sendError == TransportError::Busy)
-    {
-        WriteLog("SendEnd: transport busy, retry exhausted for sequence " + std::to_string(sequence));
-        ReportError("传输层持续繁忙，END帧发送失败");
-    }
-
-    return false;
+    return SendPacket(sequence, {}, FrameType::FRAME_END);
 }
 
 // 重传数据包（内部版本，假设已持有窗口锁）
@@ -2314,52 +1671,16 @@ void ReliableChannel::RetransmitPacketInternal(uint16_t sequence)
                 sequence, m_sendWindow[index].packet->data);
             WriteLog("RetransmitPacketInternal: frame encoded, size=" + std::to_string(frameData.size()));
 
-            // 【流控机制】为重传添加Busy重试机制
-            const int MAX_RETRY_COUNT = 10;
-            const int RETRY_DELAY_MS = 50;
+            size_t written = 0;
+            WriteLog("RetransmitPacketInternal: writing to transport...");
+            TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
+            WriteLog("RetransmitPacketInternal: transport write completed, written=" + std::to_string(written) +
+                     ", error=" + std::to_string(static_cast<int>(error)));
 
-            int retryCount = 0;
-            TransportError error = TransportError::Success;
-            bool success = false;
-
-            while (retryCount < MAX_RETRY_COUNT)
+            if (error != TransportError::Success)
             {
-                size_t written = 0;
-                WriteLog("RetransmitPacketInternal: writing to transport (retry " + std::to_string(retryCount) + ")...");
-                error = m_transport->Write(frameData.data(), frameData.size(), &written);
-                WriteLog("RetransmitPacketInternal: transport write completed, written=" + std::to_string(written) +
-                         ", error=" + std::to_string(static_cast<int>(error)));
-
-                if (error == TransportError::Success && written == frameData.size())
-                {
-                    WriteLog("RetransmitPacketInternal: retransmission succeeded");
-                    success = true;
-                    break;
-                }
-                else if (error == TransportError::Busy)
-                {
-                    WriteLog("RetransmitPacketInternal: transport busy, retry " + std::to_string(retryCount + 1) + "/" + std::to_string(MAX_RETRY_COUNT));
-                    std::this_thread::sleep_for(std::chrono::milliseconds(RETRY_DELAY_MS));
-                    retryCount++;
-                }
-                else
-                {
-                    WriteLog("RetransmitPacketInternal: ERROR - transport write failed with error: " + std::to_string(static_cast<int>(error)));
-                    break;
-                }
-            }
-
-            if (!success)
-            {
-                if (error == TransportError::Busy && retryCount >= MAX_RETRY_COUNT)
-                {
-                    WriteLog("RetransmitPacketInternal: transport busy, retry exhausted");
-                    ReportError("传输层持续繁忙，重传失败");
-                }
-                else
-                {
-                    ReportError("重传数据包失败，传输错误: " + std::to_string(static_cast<int>(error)));
-                }
+                WriteLog("RetransmitPacketInternal: ERROR - transport write failed with error: " + std::to_string(static_cast<int>(error)));
+                ReportError("重传数据包失败，传输错误: " + std::to_string(static_cast<int>(error)));
                 return;
             }
 
@@ -2438,31 +1759,21 @@ void ReliableChannel::AdvanceSendWindow()
         }
 
         WriteLog("AdvanceSendWindow: checking slot " + std::to_string(index) +
-                 ", inUse=" + std::to_string(m_sendWindow[index].inUse) +
-                 ", hasPacket=" + std::to_string(m_sendWindow[index].packet != nullptr) +
-                 ", acknowledged=" + std::to_string(m_sendWindow[index].packet ? m_sendWindow[index].packet->acknowledged : false));
+                 ", inUse=" + std::to_string(m_sendWindow[index].inUse));
 
-        // 【关键修复P0】修改条件：只要slot有已确认的packet就推进，不要求inUse
-        // ProcessAckFrame已经设置inUse=false，所以这里不能检查inUse
-        if (m_sendWindow[index].packet && m_sendWindow[index].packet->acknowledged)
+        if (m_sendWindow[index].inUse && m_sendWindow[index].packet &&
+            m_sendWindow[index].packet->acknowledged)
         {
             WriteLog("AdvanceSendWindow: advancing window, old sendBase=" + std::to_string(m_sendBase));
-            m_sendWindow[index].inUse = false; // 确保释放
+            m_sendWindow[index].inUse = false;
             m_sendWindow[index].packet.reset();
             m_sendBase = (m_sendBase + 1) % 65536;
             advanceCount++;
             WriteLog("AdvanceSendWindow: new sendBase=" + std::to_string(m_sendBase) + ", advanceCount=" + std::to_string(advanceCount));
         }
-        else if (!m_sendWindow[index].packet)
-        {
-            // slot为空，说明从未使用或已清空，停止推进
-            WriteLog("AdvanceSendWindow: slot empty, stopping advancement");
-            break;
-        }
         else
         {
-            // slot有packet但未确认，停止推进
-            WriteLog("AdvanceSendWindow: slot has unacknowledged packet, stopping advancement");
+            WriteLog("AdvanceSendWindow: no more slots to advance, breaking");
             break;
         }
     }
@@ -2494,22 +1805,9 @@ uint16_t ReliableChannel::AllocateSequence()
         return 0;
     }
 
-    // 【P0修复】检查窗口是否满（防御性编程）
-    uint16_t unacknowledged = GetWindowDistance(m_sendBase, m_sendNext);
-    if (unacknowledged >= m_config.windowSize)
-    {
-        WriteLog("AllocateSequence: WARNING - window full (" + std::to_string(unacknowledged) +
-                 "/" + std::to_string(m_config.windowSize) + "), sequence may overwrite unacknowledged packet");
-        WriteLog("AllocateSequence: sendBase=" + std::to_string(m_sendBase) +
-                 ", sendNext=" + std::to_string(m_sendNext));
-        // 不阻止分配，但记录警告（调用者应该先检查窗口）
-    }
-
     uint16_t sequence = m_sendNext;
     WriteLog("AllocateSequence: returning sequence " + std::to_string(sequence) +
-             ", next will be " + std::to_string((m_sendNext + 1) % 65536) +
-             ", unacknowledged=" + std::to_string(unacknowledged) +
-             "/" + std::to_string(m_config.windowSize));
+             ", next will be " + std::to_string((m_sendNext + 1) % 65536));
     m_sendNext = (m_sendNext + 1) % 65536;
     return sequence;
 }
@@ -2615,22 +1913,6 @@ void ReliableChannel::ReportError(const std::string &error)
     }
 }
 
-// 【新增】报告警告信息（不计入错误统计）
-void ReliableChannel::ReportWarning(const std::string &warning)
-{
-    WriteLog("ReportWarning called: " + warning);
-
-    if (m_errorCallback)
-    {
-        WriteLog("ReportWarning: calling error callback with warning");
-        m_errorCallback("[警告] " + warning);
-    }
-    else
-    {
-        WriteLog("ReportWarning: no error callback set");
-    }
-}
-
 // 更新状态
 void ReliableChannel::UpdateState(bool connected)
 {
@@ -2652,83 +1934,40 @@ void ReliableChannel::UpdateProgress(int64_t current, int64_t total)
 // 检查传输超时
 bool ReliableChannel::CheckTransferTimeout()
 {
-    // 检查发送端或接收端是否活跃
-    if (!m_sendFileActive && !m_recvFileActive) return false;
+    if (!m_fileTransferActive) return false;
 
     auto now = std::chrono::steady_clock::now();
-
-    // 【新增】短超时检查 - 优先级更高
-    if (m_shortTimeoutActive) {
-        auto shortElapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                            now - m_shortTimeoutStart).count();
-
-        if (shortElapsed > m_shortTimeoutDuration) {
-            WriteLog("CheckTransferTimeout: 短超时触发，强制结束不完整传输");
-            WriteLog("CheckTransferTimeout: 短超时时间 " + std::to_string(m_shortTimeoutDuration) +
-                    " 秒，实际等待 " + std::to_string(shortElapsed) + " 秒");
-            WriteLog("CheckTransferTimeout: 接收文件大小 " + std::to_string(m_recvFileSize) +
-                    " 字节，当前进度 " + std::to_string(m_recvFileProgress) + " 字节");
-
-            m_recvFileActive = false;
-            m_shortTimeoutActive = false;
-            ReportError("不完整传输短超时：等待补传超时，传输完成 " +
-                       std::to_string((m_recvFileProgress * 100.0 / m_recvFileSize)) + "%");
-            return true;
-        }
-    }
-
-    // 原有的传输超时逻辑 - 检查发送端或接收端
-    auto sendDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_sendStartTime);
-    auto recvDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_recvStartTime);
+    auto transferDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_transferStartTime);
 
     // 计算合理的传输超时时间
-    // 【修改】调整超时参数：最小5分钟，最大10分钟（原为30分钟）
+    // 基本策略：大文件给更多时间，但设置合理上限
     int64_t maxExpectedSeconds;
-    int64_t currentFileSize = m_sendFileActive ? m_sendFileSize : m_recvFileSize;
-    if (currentFileSize > 0)
+    if (m_currentFileSize > 0)
     {
-        // 按1KB/s的最低速度计算，但至少5分钟，最多10分钟
-        int64_t minSeconds = 300LL;    // 5分钟（原为60秒）
-        int64_t maxSeconds = 600LL;    // 10分钟（原为30分钟）
-        int64_t calculatedSeconds = currentFileSize / 1024;
+        // 按1KB/s的最低速度计算，但至少60秒，最多30分钟
+        int64_t minSeconds = 60LL;
+        int64_t maxSeconds = 1800LL;
+        int64_t calculatedSeconds = m_currentFileSize / 1024;
         maxExpectedSeconds = (calculatedSeconds > minSeconds) ?
                             ((calculatedSeconds < maxSeconds) ? calculatedSeconds : maxSeconds) :
                             minSeconds;
     }
     else
     {
-        // 无文件大小信息时，默认5分钟超时（提高至5分钟）
+        // 无文件大小信息时，默认5分钟超时
         maxExpectedSeconds = 300;
     }
 
-    // 检查发送端超时
-    if (m_sendFileActive && sendDuration.count() > maxExpectedSeconds)
+    if (transferDuration.count() > maxExpectedSeconds)
     {
-        WriteLog("CheckTransferTimeout: 发送超时，强制结束");
+        WriteLog("CheckTransferTimeout: 传输超时，强制结束");
         WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
-                " 秒，实际用时 " + std::to_string(sendDuration.count()) + " 秒");
-        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_sendFileSize) +
-                " 字节，当前进度 " + std::to_string(m_sendFileProgress) + " 字节");
+                " 秒，实际用时 " + std::to_string(transferDuration.count()) + " 秒");
+        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_currentFileSize) +
+                " 字节，当前进度 " + std::to_string(m_currentFileProgress) + " 字节");
 
-        m_sendFileActive = false;
-        m_shortTimeoutActive = false; // 清除短超时状态
-        ReportError("文件发送超时：传输时间 " + std::to_string(sendDuration.count()) +
-                   " 秒超过预期 " + std::to_string(maxExpectedSeconds) + " 秒");
-        return true;
-    }
-
-    // 检查接收端超时
-    if (m_recvFileActive && recvDuration.count() > maxExpectedSeconds)
-    {
-        WriteLog("CheckTransferTimeout: 接收超时，强制结束");
-        WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
-                " 秒，实际用时 " + std::to_string(recvDuration.count()) + " 秒");
-        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_recvFileSize) +
-                " 字节，当前进度 " + std::to_string(m_recvFileProgress) + " 字节");
-
-        m_recvFileActive = false;
-        m_shortTimeoutActive = false; // 清除短超时状态
-        ReportError("文件接收超时：传输时间 " + std::to_string(recvDuration.count()) +
+        m_fileTransferActive = false;
+        ReportError("文件传输超时：传输时间 " + std::to_string(transferDuration.count()) +
                    " 秒超过预期 " + std::to_string(maxExpectedSeconds) + " 秒");
         return true;
     }

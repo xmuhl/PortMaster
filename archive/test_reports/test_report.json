@@ -1,0 +1,124 @@
+{
+  "test_run": {
+    "version": "2.0",
+    "timestamp": "2025-10-03T00:54:55",
+    "duration_seconds": 6.30982,
+    "summary": {
+      "total_suites": 3,
+      "total_tests": 12,
+      "passed": 4,
+      "failed": 8,
+      "success_rate": 33.3333
+    },
+    "results": [
+      {
+        "suite": "ThroughputTest",
+        "test": "Small file throughput (100KB)",
+        "passed": false,
+        "duration": 0.068045,
+        "error": "File size mismatch: expected 102400 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "ThroughputTest",
+        "test": "Medium file throughput (1MB)",
+        "passed": false,
+        "duration": 0.09033,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "ThroughputTest",
+        "test": "Large file throughput (10MB)",
+        "passed": false,
+        "duration": 0.586515,
+        "error": "File size mismatch: expected 10485760 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 1",
+        "passed": false,
+        "duration": 1.02514,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 4",
+        "passed": false,
+        "duration": 1.03048,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 8",
+        "passed": false,
+        "duration": 1.02211,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 16",
+        "passed": false,
+        "duration": 1.01409,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "WindowSizeImpactTest",
+        "test": "Window size 32",
+        "passed": false,
+        "duration": 1.03319,
+        "error": "File size mismatch: expected 1048576 bytes, got 1024 bytes",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "Zero latency",
+        "passed": true,
+        "duration": 0.075597,
+        "error": "",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "10ms latency",
+        "passed": true,
+        "duration": 0.044253,
+        "error": "",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "50ms latency",
+        "passed": true,
+        "duration": 0.105047,
+        "error": "",
+        "metrics": {
+        }
+      },
+      {
+        "suite": "LatencyTest",
+        "test": "100ms latency",
+        "passed": true,
+        "duration": 0.215014,
+        "error": "",
+        "metrics": {
+        }
+      }
+    ]
+  }
+}

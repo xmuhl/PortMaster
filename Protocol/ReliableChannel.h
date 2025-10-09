@@ -138,7 +138,7 @@ private:
     void ProcessEndFrame(const Frame &frame);
     void ProcessHeartbeatFrame(const Frame &frame);
 
-    TransportError SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type = FrameType::FRAME_DATA);
+    bool SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type = FrameType::FRAME_DATA);
     bool SendAck(uint16_t sequence);
     bool SendNak(uint16_t sequence);
     bool SendHeartbeat();
@@ -232,6 +232,13 @@ private:
     int64_t m_recvFileProgress;     // 接收文件进度
     bool m_recvFileActive;          // 接收文件活动状态
     std::chrono::steady_clock::time_point m_recvStartTime; // 接收开始时间
+
+    // 文件传输状态 - 统一状态
+    std::string m_currentFileName;  // 当前传输文件名
+    int64_t m_currentFileSize;      // 当前传输文件大小
+    int64_t m_currentFileProgress;  // 当前传输文件进度
+    bool m_fileTransferActive;      // 文件传输是否活跃
+    std::chrono::steady_clock::time_point m_transferStartTime; // 当前传输开始时间
 
     // 握手状态管理
     std::atomic<bool> m_handshakeCompleted;    // 握手完成标志
