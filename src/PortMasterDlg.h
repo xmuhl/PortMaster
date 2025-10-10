@@ -105,6 +105,7 @@ private:
 	bool m_binaryDataDetected;  // 是否检测到二进制数据
 	CString m_binaryDataPreview;  // 二进制数据预览内容（静态）
 	bool m_updateDisplayInProgress;  // 标志：正在更新显示，防止事件递归
+	bool m_receiveVerboseLogging;    // 是否启用接收数据详细日志
 
 	// 【UI优化】接收窗口更新节流机制
 	bool m_receiveDisplayPending;    // 标志：是否有待处理的接收显示更新
@@ -165,6 +166,9 @@ private:
 	std::atomic<bool> m_transmissionCancelled;  // 新增：传输取消状态
 	std::thread m_receiveThread;
 	std::thread m_transmissionThread;  // 新增：传输线程
+	std::mutex m_reliableSessionMutex;         // 可靠模式进度统计互斥锁
+	int64_t m_reliableExpectedBytes;           // 最新可靠传输预期字节数
+	int64_t m_reliableReceivedBytes;           // 最新可靠传输已接收字节数
 
 	// 【P1修复】传输任务管理 - 实现UI与传输解耦
 	std::unique_ptr<TransmissionTask> m_currentTransmissionTask;
@@ -256,7 +260,7 @@ private:
 	void UpdateSaveButtonStatus();
 	void OnTransportDataReceived(const std::vector<uint8_t> &data);
 	void OnTransportError(const std::string &error);
-	void OnReliableProgress(uint32_t progress);
+	void OnReliableProgress(int64_t current, int64_t total);
 	void OnReliableComplete(bool success);
 	void OnReliableStateChanged(bool connected);
 
@@ -267,6 +271,8 @@ private:
 	std::vector<uint8_t> ReadDataFromTempCache(uint64_t offset, size_t length);
 	std::vector<uint8_t> ReadAllDataFromTempCache();
 	void ClearTempCacheFile();
+	bool WaitForReceiveDataStability(size_t maxChecks, uint32_t intervalMs, uint64_t& stableBytes, uint64_t& stableFileSize);
+	uint64_t GetTempCacheFileSize() const;
 
 	// 【临时文件状态监控与自动恢复】新增机制
 	bool CheckAndRecoverTempCacheFile();
@@ -276,6 +282,12 @@ private:
 	// 【保存完整性误报修复】不加锁的读取版本，用于已持锁的保存流程
 	std::vector<uint8_t> ReadDataFromTempCacheUnlocked(uint64_t offset, size_t length);
 	std::vector<uint8_t> ReadAllDataFromTempCacheUnlocked();
+
+	void BeginReliableReceiveSession();
+	void AppendReliablePayload(const std::vector<uint8_t>& data);
+	std::vector<uint8_t> SnapshotReliablePayload() const;
+	void CompleteReliableReceiveSession();
+	void ResetReliableReceiveSession();
 
 	// 【数据稳定性检测】保存后验证机制
 	bool VerifySavedFileSize(const CString& filePath, size_t expectedSize);

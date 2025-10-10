@@ -82,6 +82,16 @@ public:
     void SetStateChangedCallback(std::function<void(bool)> callback);
     void SetErrorCallback(std::function<void(const std::string &)> callback);
     void SetProgressCallback(std::function<void(int64_t, int64_t)> callback);
+    void SetCompleteCallback(std::function<void(bool)> callback); // 【新增】传输完成回调
+    void SetVerboseLoggingEnabled(bool enabled);
+    bool IsVerboseLoggingEnabled() const;
+
+    int64_t GetCurrentFileSize() const;
+    int64_t GetCurrentFileProgress() const;
+    std::string GetCurrentFileName() const;
+    std::vector<uint8_t> GetCompletedFileBuffer() const;
+    bool HasCompletedFile() const;
+    void ClearCompletedFileBuffer();
 
     // 状态查询
     uint16_t GetLocalSequence() const;
@@ -126,6 +136,7 @@ private:
 
     // 日志函数
     void WriteLog(const std::string &message);
+    void WriteVerbose(const std::string &message);
 
     // 【P0修复】传输类型检测辅助函数
     bool IsLoopbackTransport() const;
@@ -151,6 +162,7 @@ private:
     void UpdateReceiveWindow(uint16_t sequence);
 
     uint16_t AllocateSequence();
+    bool IsSendWindowFullLocked() const;
     bool IsSequenceInWindow(uint16_t sequence, uint16_t base, uint16_t windowSize) const;
     uint16_t GetWindowDistance(uint16_t from, uint16_t to) const;
 
@@ -180,6 +192,7 @@ private:
     bool m_shortTimeoutActive = false;
     std::chrono::steady_clock::time_point m_shortTimeoutStart;
     uint32_t m_shortTimeoutDuration = 30; // 短超时时间（秒）
+    bool m_verboseLoggingEnabled = false;
 
 private:
     // 成员变量
@@ -218,6 +231,7 @@ private:
     mutable std::mutex m_statsMutex;            // 统计锁
     std::condition_variable m_sendCondition;    // 发送条件变量
     std::condition_variable m_receiveCondition; // 接收条件变量
+    std::condition_variable m_windowCondition;  // 发送窗口条件变量
 
     // 文件传输相关 - 发送端状态
     std::string m_sendFileName;     // 发送文件名
@@ -239,6 +253,8 @@ private:
     int64_t m_currentFileProgress;  // 当前传输文件进度
     bool m_fileTransferActive;      // 文件传输是否活跃
     std::chrono::steady_clock::time_point m_transferStartTime; // 当前传输开始时间
+    std::vector<uint8_t> m_completedFileBuffer; // 最近一次完整文件缓冲
+    bool m_hasCompletedFile = false;
 
     // 握手状态管理
     std::atomic<bool> m_handshakeCompleted;    // 握手完成标志
@@ -260,4 +276,5 @@ private:
     std::function<void(bool)> m_stateChangedCallback;
     std::function<void(const std::string &)> m_errorCallback;
     std::function<void(int64_t, int64_t)> m_progressCallback;
+    std::function<void(bool)> m_completeCallback; // 【新增】传输完成回调
 };

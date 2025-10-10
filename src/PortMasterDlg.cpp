@@ -1,6 +1,5 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿// PortMasterDlg.cpp : 实现文件
 //
-
 #include "pch.h"
 #include "framework.h"
 #include "PortMaster.h"
@@ -99,7 +98,28 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 // CPortMasterDlg 对话框
 
 CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
-	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent), m_isConnected(false), m_isTransmitting(false), m_transmissionPaused(false), m_transmissionCancelled(false), m_bytesSent(0), m_bytesReceived(0), m_sendSpeed(0), m_receiveSpeed(0), m_transport(nullptr), m_reliableChannel(nullptr), m_configStore(ConfigStore::GetInstance()), m_binaryDataDetected(false), m_updateDisplayInProgress(false), m_receiveDisplayPending(false), m_lastReceiveDisplayUpdate(0)
+	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent),
+	  m_transport(nullptr),
+	  m_reliableChannel(nullptr),
+	  m_isConnected(false),
+	  m_isTransmitting(false),
+	  m_transmissionPaused(false),
+	  m_transmissionCancelled(false),
+	  m_receiveThread(),
+	  m_transmissionThread(),
+	  m_reliableSessionMutex(),
+	  m_reliableExpectedBytes(0),
+	  m_reliableReceivedBytes(0),
+	  m_bytesSent(0),
+	  m_bytesReceived(0),
+	  m_sendSpeed(0),
+	  m_receiveSpeed(0),
+	  m_configStore(ConfigStore::GetInstance()),
+	  m_binaryDataDetected(false),
+	  m_updateDisplayInProgress(false),
+	  m_receiveVerboseLogging(false),
+	  m_receiveDisplayPending(false),
+	  m_lastReceiveDisplayUpdate(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -2216,24 +2236,32 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 	// 使用接收文件专用互斥锁，确保与保存操作完全互斥
 	std::lock_guard<std::mutex> lock(m_receiveFileMutex);
 
+	auto logReceiveDetail = [&](const std::string& message)
+	{
+		if (m_receiveVerboseLogging)
+		{
+			this->WriteLog(message);
+		}
+	};
+
 	// 增强日志：记录详细的直接落盘过程
-	this->WriteLog("=== ThreadSafeAppendReceiveData 开始（接收线程直接落盘）===");
-	this->WriteLog("接收数据大小: " + std::to_string(data.size()) + " 字节");
-	this->WriteLog("当前接收缓存大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
-	this->WriteLog("总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
+	logReceiveDetail("=== ThreadSafeAppendReceiveData 开始（接收线程直接落盘）===");
+	logReceiveDetail("接收数据大小: " + std::to_string(data.size()) + " 字节");
+	logReceiveDetail("当前接收缓存大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
+	logReceiveDetail("总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
 
 	// 1. 立即更新内存缓存（内存缓存作为备份，保证数据完整性）
 	if (!m_receiveCacheValid || m_receiveDataCache.empty())
 	{
-		this->WriteLog("初始化接收缓存（首次接收）");
+		logReceiveDetail("初始化接收缓存（首次接收）");
 		m_receiveDataCache = data;
 	}
 	else
 	{
-		this->WriteLog("追加数据到接收缓存");
+		logReceiveDetail("追加数据到接收缓存");
 		size_t oldSize = m_receiveDataCache.size();
 		m_receiveDataCache.insert(m_receiveDataCache.end(), data.begin(), data.end());
-		this->WriteLog("缓存追加完成: " + std::to_string(oldSize) + " → " + std::to_string(m_receiveDataCache.size()) + " 字节");
+		logReceiveDetail("缓存追加完成: " + std::to_string(oldSize) + " → " + std::to_string(m_receiveDataCache.size()) + " 字节");
 	}
 	m_receiveCacheValid = true;
 
@@ -2254,7 +2282,7 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 	// 3. 立即同步写入临时文件（强制串行化，确保数据完全落盘）
 	if (m_useTempCacheFile && m_tempCacheFile.is_open())
 	{
-		this->WriteLog("执行强制同步写入临时缓存文件...");
+		logReceiveDetail("执行强制同步写入临时缓存文件...");
 		try
 		{
 			// 写入数据到文件
@@ -2266,11 +2294,14 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 			// 更新总字节数统计
 			m_totalReceivedBytes += data.size();
 
-			this->WriteLog("强制同步写入成功: " + std::to_string(data.size()) + " 字节");
-			this->WriteLog("更新后总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
+			logReceiveDetail("强制同步写入成功: " + std::to_string(data.size()) + " 字节");
+			logReceiveDetail("更新后总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
 
 			// 【修复】数据写入后进行状态诊断
-			LogTempCacheFileStatus("数据写入后状态验证");
+			if (m_receiveVerboseLogging)
+			{
+				LogTempCacheFileStatus("数据写入后状态验证");
+			}
 		}
 		catch (const std::exception& e)
 		{
@@ -2280,13 +2311,13 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 	}
 	else
 	{
-		this->WriteLog("临时缓存文件未启用或未打开，仅更新内存缓存");
+		logReceiveDetail("临时缓存文件未启用或未打开，仅更新内存缓存");
 		// 即使没有临时文件，也要更新总字节数
 		m_totalReceivedBytes += data.size();
-		this->WriteLog("更新总接收字节数（仅内存）: " + std::to_string(m_totalReceivedBytes) + " 字节");
+		logReceiveDetail("更新总接收字节数（仅内存）: " + std::to_string(m_totalReceivedBytes) + " 字节");
 	}
 
-	this->WriteLog("=== ThreadSafeAppendReceiveData 结束（数据已强制落盘）===");
+	logReceiveDetail("=== ThreadSafeAppendReceiveData 结束（数据已强制落盘）===");
 }
 
 void CPortMasterDlg::LogMessage(const CString &message)
@@ -2436,8 +2467,8 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 	// 复制接收数据到剪贴板
 	CString copyData;
 
-	// 优先从临时缓存文件读取原始数据（如果可用）
-	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
+		// 优先从临时缓存文件读取原始数据（如果可用）
+		if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
 	{
 		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
 		if (!cachedData.empty())
@@ -2533,6 +2564,8 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	CString saveData;
 	bool isBinaryMode = false;
 	bool tempFileAvailable = false; // 添加变量声明
+	bool usingReliableBuffer = false;
+	int64_t reliableExpectedSize = 0;
 
 	// 添加调试输出：记录保存操作的详细信息
 	this->WriteLog("=== 保存数据调试信息 ===");
@@ -2541,7 +2574,7 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	this->WriteLog("临时缓存文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
 
 	// 【可靠模式缺陷修复】根据分析报告实施完整性自愈循环和重新读取机制
-	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
+	if (!usingReliableBuffer && m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
 	{
 		this->WriteLog("=== 可靠模式保存流程开始 ===");
 		this->WriteLog("临时缓存文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
@@ -2605,7 +2638,6 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 				this->WriteLog("✅ 临时缓存文件可用，将在用户确认保存后读取最新数据");
 				isBinaryMode = true; // 标记为二进制模式，但不读取数据
 				// 为了通过后续判断，添加一个占位元素
-				binaryData.push_back(0); // 占位数据，将在用户确认后替换为真实数据
 			}
 			else
 			{
@@ -2704,17 +2736,54 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
 						filter);
 
-		if (dlg.DoModal() == IDOK)
-		{
-			// 【关键修复】在用户确认保存后立即读取最新数据，确保数据完整性
-			if (tempFileAvailable)
+			if (dlg.DoModal() == IDOK)
 			{
-				this->WriteLog("用户确认保存，立即读取临时文件最新数据");
-				
-				// 读取最新的完整数据
-				std::vector<uint8_t> latestData;
-				try
+				// 【关键修复】在用户确认保存后立即读取最新数据，确保数据完整性
+				if (usingReliableBuffer)
 				{
+					this->WriteLog("使用可靠模式缓存直接保存数据");
+					SaveBinaryDataToFile(dlg.GetPathName(), binaryData);
+					if (reliableExpectedSize > 0 && static_cast<int64_t>(binaryData.size()) != reliableExpectedSize)
+					{
+						CString warnMessage;
+						warnMessage.Format(_T("⚠ 保存完成，但检测到数据长度与预期不一致\n预期: %lld 字节\n实际: %lld 字节"),
+							reliableExpectedSize,
+							static_cast<long long>(binaryData.size()));
+						MessageBox(warnMessage, _T("数据长度告警"), MB_OK | MB_ICONWARNING);
+					}
+					if (m_reliableChannel)
+					{
+						m_reliableChannel->ClearCompletedFileBuffer();
+					}
+				}
+				else if (tempFileAvailable)
+				{
+					this->WriteLog("用户确认保存，开始执行数据稳定性检测");
+
+					const size_t kMaxStabilityChecks = 5;
+					const uint32_t kStabilityIntervalMs = 80;
+					uint64_t stableBytes = 0;
+					uint64_t stableFileSize = 0;
+
+					CWaitCursor waitCursor;
+					m_btnSaveAll.EnableWindow(FALSE);
+					bool dataStable = WaitForReceiveDataStability(kMaxStabilityChecks, kStabilityIntervalMs, stableBytes, stableFileSize);
+					m_btnSaveAll.EnableWindow(TRUE);
+
+					if (!dataStable)
+					{
+						this->WriteLog("⚠️ 数据稳定性检测未通过，建议用户稍后再试");
+						MessageBox(_T("当前仍有数据写入，请等待片刻后再尝试保存。"),
+								   _T("数据尚未稳定"), MB_OK | MB_ICONINFORMATION);
+						return;
+					}
+
+					this->WriteLog("数据稳定性检测通过，立即读取临时文件最新数据");
+					
+					// 读取最新的完整数据
+					std::vector<uint8_t> latestData;
+					try
+					{
 					std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
 					latestData = ReadAllDataFromTempCacheUnlocked();
 					this->WriteLog("最新数据大小: " + std::to_string(latestData.size()) + " 字节");
@@ -2750,11 +2819,11 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 							this->WriteLog("用户取消保存异常数据");
 							return;
 						}
+						}
 					}
-				}
-				catch (const std::exception& e)
-				{
-					this->WriteLog("❌ 读取最新数据失败: " + std::string(e.what()));
+					catch (const std::exception& e)
+					{
+						this->WriteLog("❌ 读取最新数据失败: " + std::string(e.what()));
 					MessageBox(_T("❌ 数据读取异常\n\n")
 							  _T("无法读取临时文件中的数据：\n") +
 							  CString(e.what()) + _T("\n\n")
@@ -2763,13 +2832,47 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 							  _T("• 磁盘空间是否充足\n")
 							  _T("• 文件权限是否正确"),
 							  _T("读取错误"), MB_OK | MB_ICONERROR);
-					return; // 读取失败时直接返回，不保存错误数据
+						return; // 读取失败时直接返回，不保存错误数据
+					}
+
+					if (stableFileSize > 0 && static_cast<uint64_t>(latestData.size()) != stableFileSize)
+					{
+						this->WriteLog("⚠️ 读取的数据大小与稳定快照不一致，读取值=" +
+							std::to_string(latestData.size()) + "，快照值=" + std::to_string(stableFileSize));
+					}
+
+					SaveBinaryDataToFile(dlg.GetPathName(), latestData);
+
+					// 【修复】三层验证 - Layer 3: 保存后验证文件大小，确保数据完整写入磁盘
+					// Layer 1: 预保存验证（数据稳定性、非空、大小合理）- 已在上方实现
+					// Layer 2: 保存操作（SaveBinaryDataToFile）- 已完成
+					// Layer 3: 保存后验证（重新打开文件检查大小）- 以下实现
+					if (!VerifySavedFileSize(dlg.GetPathName(), latestData.size()))
+					{
+						CString warnMessage;
+						warnMessage.Format(
+							_T("⚠️ 文件保存验证异常\n\n")
+							_T("文件已保存，但验证发现大小与预期不符。\n\n")
+							_T("预期: %lld 字节\n\n")
+							_T("可能原因：\n")
+							_T("• 磁盘空间不足\n")
+							_T("• 文件系统缓存未完全刷新\n")
+							_T("• 文件被其他程序修改\n\n")
+							_T("建议：\n")
+							_T("• 检查保存文件的实际大小\n")
+							_T("• 如不符预期，请重新保存"),
+							static_cast<long long>(latestData.size())
+						);
+						MessageBox(warnMessage, _T("保存验证警告"), MB_OK | MB_ICONWARNING);
+					}
+					else
+					{
+						this->WriteLog("✅ 三层验证全部通过：文件已成功保存并验证，大小 " +
+						              std::to_string(latestData.size()) + " 字节");
+					}
 				}
-				
-				SaveBinaryDataToFile(dlg.GetPathName(), latestData);
-			}
-			else
-			{
+				else
+				{
 				// 【安全处理】临时文件不可用时的错误处理
 				this->WriteLog("❌ 临时文件不可用，无法保存完整数据");
 				MessageBox(_T("❌ 数据源不可用\n\n")
@@ -3069,13 +3172,23 @@ bool CPortMasterDlg::CreateTransport()
 						return false;
 					}
 
+					// 在调试版本启用详细协议日志，方便定位可靠传输问题
+#ifdef _DEBUG
+					m_reliableChannel->SetVerboseLoggingEnabled(true);
+#endif
+
 					// 设置回调函数
 					this->WriteLog("CreateTransport: Setting callbacks...");
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
+														   { OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
+
+					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
+					m_reliableChannel->SetCompleteCallback([this](bool success)
+														   { OnReliableComplete(success); });
+
 					this->WriteLog("CreateTransport: Callbacks set successfully");
 				}
 
@@ -3110,12 +3223,21 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
+					// 在调试版本启用详细协议日志，方便定位可靠传输问题
+#ifdef _DEBUG
+					m_reliableChannel->SetVerboseLoggingEnabled(true);
+#endif
+
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
+														   { OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
+
+					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
+					m_reliableChannel->SetCompleteCallback([this](bool success)
+														   { OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3149,12 +3271,20 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
+#ifdef _DEBUG
+					m_reliableChannel->SetVerboseLoggingEnabled(true);
+#endif
+
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
+														   { OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
+
+					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
+					m_reliableChannel->SetCompleteCallback([this](bool success)
+														   { OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3202,12 +3332,20 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
+#ifdef _DEBUG
+					m_reliableChannel->SetVerboseLoggingEnabled(true);
+#endif
+
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
+														   { OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
+
+					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
+					m_reliableChannel->SetCompleteCallback([this](bool success)
+														   { OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3240,12 +3378,20 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
+#ifdef _DEBUG
+					m_reliableChannel->SetVerboseLoggingEnabled(true);
+#endif
+
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(static_cast<uint32_t>(total > 0 ? (current * 100) / total : 0)); });
+														   { OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
 															   { OnReliableStateChanged(connected); });
+
+					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
+					m_reliableChannel->SetCompleteCallback([this](bool success)
+														   { OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3383,15 +3529,41 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 	{
 		// 在可靠模式下，只有文件传输彻底完成才允许保存
 		bool fileTransferActive = m_reliableChannel->IsFileTransferActive();
+		bool reliableBufferReady = m_reliableChannel->HasCompletedFile();
 
-		if (fileTransferActive)
+		uint64_t cachedBytes = 0;
+		bool hasPendingWrites = false;
+		{
+			std::lock_guard<std::mutex> lock(m_receiveFileMutex);
+			cachedBytes = m_totalReceivedBytes;
+			hasPendingWrites = !m_pendingWrites.empty();
+		}
+
+		// 【修复】状态自愈逻辑：如果传输已完成且有数据可保存，强制启用保存按钮
+		// 避免因临时状态不一致（如协议层与UI层状态同步延迟）导致保存按钮卡死禁用
+		bool hasDataToSave = (cachedBytes > 0) || reliableBufferReady;
+		bool transmissionComplete = !fileTransferActive;
+
+		if (transmissionComplete && hasDataToSave)
+		{
+			// 自愈场景：传输已完成且有数据，强制启用保存按钮（优先级最高）
+			enableSaveButton = true;
+			this->WriteLog("可靠模式【状态自愈】：传输完成且有数据可保存（" +
+			              std::to_string(cachedBytes) + " 字节），强制启用保存按钮");
+		}
+		else if (fileTransferActive)
 		{
 			enableSaveButton = false;
 			this->WriteLog("可靠模式：文件传输进行中，禁用保存按钮");
 		}
+		else if (!reliableBufferReady && (hasPendingWrites || cachedBytes == 0))
+		{
+			enableSaveButton = false;
+			this->WriteLog("可靠模式：等待临时缓存稳定，暂不启用保存按钮");
+		}
 		else
 		{
-			this->WriteLog("可靠模式：文件传输已完成，启用保存按钮");
+			this->WriteLog("可靠模式：缓存数据已稳定，启用保存按钮");
 		}
 	}
 	else if (!isReliableMode)
@@ -3415,8 +3587,16 @@ void CPortMasterDlg::UpdateStatistics()
 void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 {
 	// 【深层修复】根据最新检查报告最优解方案：接收线程直接落盘，避免消息队列异步延迟
-	this->WriteLog("=== OnTransportDataReceived 开始（直接落盘模式）===");
-	this->WriteLog("接收到数据大小: " + std::to_string(data.size()) + " 字节");
+	auto logReceiveDetail = [&](const std::string& message)
+	{
+		if (m_receiveVerboseLogging)
+		{
+			this->WriteLog(message);
+		}
+	};
+
+	logReceiveDetail("=== OnTransportDataReceived 开始（直接落盘模式）===");
+	logReceiveDetail("接收到数据大小: " + std::to_string(data.size()) + " 字节");
 
 	// 记录前64字节的十六进制内容用于调试
 	std::string hexPreview;
@@ -3431,7 +3611,7 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 	{
 		hexPreview += "...";
 	}
-	this->WriteLog("接收数据预览(十六进制): " + hexPreview);
+	logReceiveDetail("接收数据预览(十六进制): " + hexPreview);
 
 	// 记录前64字节的ASCII内容用于调试
 	std::string asciiPreview;
@@ -3451,7 +3631,7 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 	{
 		asciiPreview += "...";
 	}
-	this->WriteLog("接收数据预览(ASCII): " + asciiPreview);
+	logReceiveDetail("接收数据预览(ASCII): " + asciiPreview);
 
 	// 【关键修复】直接调用线程安全落盘函数，立即写入缓存和文件
 	ThreadSafeAppendReceiveData(data);
@@ -3465,7 +3645,7 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 	UIUpdateInfo* updateInfo = new UIUpdateInfo{data.size(), hexPreview, asciiPreview};
 	PostMessage(WM_USER + 1, 0, (LPARAM)updateInfo);
 
-	this->WriteLog("=== OnTransportDataReceived 结束（数据已直接落盘）===");
+	logReceiveDetail("=== OnTransportDataReceived 结束（数据已直接落盘）===");
 }
 
 void CPortMasterDlg::OnTransportError(const std::string &error)
@@ -3475,15 +3655,39 @@ void CPortMasterDlg::OnTransportError(const std::string &error)
 	PostMessage(WM_USER + 2, 0, (LPARAM) new CString(errorMsg));
 }
 
-void CPortMasterDlg::OnReliableProgress(uint32_t progress)
+void CPortMasterDlg::OnReliableProgress(int64_t current, int64_t total)
 {
-	// 更新进度条
-	m_progress.SetPos(progress);
+	uint32_t percent = 0;
+	if (total > 0)
+	{
+		percent = static_cast<uint32_t>((current * 100) / total);
+		if (percent > 100)
+		{
+			percent = 100;
+		}
+	}
+	m_progress.SetPos(percent);
+
+	std::lock_guard<std::mutex> lock(m_reliableSessionMutex);
+	m_reliableExpectedBytes = total;
+	m_reliableReceivedBytes = current;
 }
 
 void CPortMasterDlg::OnReliableComplete(bool success)
 {
 	m_isTransmitting = false;
+
+	// 【修复】传输完成时强制文件同步，确保所有缓冲数据写入磁盘
+	// 解决文件系统多层缓存（C++流缓冲 → OS缓冲 → 页面缓存 → 磁盘）导致的保存不完整问题
+	{
+		std::lock_guard<std::mutex> lock(m_receiveFileMutex);
+		if (m_tempCacheFile.is_open())
+		{
+			// 刷新C++流缓冲到操作系统缓冲区
+			m_tempCacheFile.flush();
+			WriteLog("OnReliableComplete: 强制文件同步完成，刷新C++流缓冲到OS缓冲区");
+		}
+	}
 
 	if (success)
 	{
@@ -4383,6 +4587,86 @@ void CPortMasterDlg::ClearTempCacheFile()
 			WriteLog("临时缓存文件已清空");
 		}
 	}
+}
+
+uint64_t CPortMasterDlg::GetTempCacheFileSize() const
+{
+	if (m_tempCacheFilePath.IsEmpty() || !PathFileExists(m_tempCacheFilePath))
+	{
+		return 0;
+	}
+
+	WIN32_FILE_ATTRIBUTE_DATA fileAttr;
+	if (!GetFileAttributesEx(m_tempCacheFilePath, GetFileExInfoStandard, &fileAttr))
+	{
+		return 0;
+	}
+
+	ULARGE_INTEGER fileSize;
+	fileSize.LowPart = fileAttr.nFileSizeLow;
+	fileSize.HighPart = fileAttr.nFileSizeHigh;
+	return fileSize.QuadPart;
+}
+
+bool CPortMasterDlg::WaitForReceiveDataStability(size_t maxChecks, uint32_t intervalMs, uint64_t& stableBytes, uint64_t& stableFileSize)
+{
+	if (!m_useTempCacheFile || m_tempCacheFilePath.IsEmpty())
+	{
+		stableBytes = m_totalReceivedBytes;
+		stableFileSize = 0;
+		return true;
+	}
+
+	if (maxChecks < 2)
+	{
+		maxChecks = 2;
+	}
+
+	uint64_t previousBytes = 0;
+	uint64_t previousFileSize = 0;
+	bool hasPreviousSample = false;
+
+	for (size_t attempt = 0; attempt < maxChecks; ++attempt)
+	{
+		uint64_t currentBytes = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_receiveFileMutex);
+			currentBytes = m_totalReceivedBytes;
+			if (m_tempCacheFile.is_open())
+			{
+				m_tempCacheFile.flush();
+			}
+		}
+
+		uint64_t currentFileSize = GetTempCacheFileSize();
+
+		this->WriteLog("保存稳定性检测: 第 " + std::to_string(attempt + 1) + "/" + std::to_string(maxChecks) +
+					   " 次采样，统计字节=" + std::to_string(currentBytes) +
+					   "，文件大小=" + std::to_string(currentFileSize));
+
+		if (hasPreviousSample && currentBytes == previousBytes && currentFileSize == previousFileSize)
+		{
+			stableBytes = currentBytes;
+			stableFileSize = currentFileSize;
+			this->WriteLog("保存稳定性检测通过，缓冲与文件大小保持一致");
+			return true;
+		}
+
+		previousBytes = currentBytes;
+		previousFileSize = currentFileSize;
+		hasPreviousSample = true;
+
+		if (attempt + 1 < maxChecks && intervalMs > 0)
+		{
+			this->WriteLog("保存稳定性检测: 数据仍在变化，等待 " + std::to_string(intervalMs) + "ms 后重试");
+			::Sleep(intervalMs);
+		}
+	}
+
+	stableBytes = previousBytes;
+	stableFileSize = previousFileSize;
+	this->WriteLog("保存稳定性检测未达一致，可能仍有数据写入");
+	return false;
 }
 
 // 【临时文件状态监控与自动恢复】新增机制实现

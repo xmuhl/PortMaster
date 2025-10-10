@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "ReliableChannel.h"
 #include "../Common/CommonTypes.h"
 #include <algorithm>
@@ -7,10 +7,106 @@
 #include <iomanip>
 #include <ctime>
 #include <chrono>
+#include <array>
+
+void ReliableChannel::WriteVerbose(const std::string &message)
+{
+    if (!m_verboseLoggingEnabled)
+    {
+        return;
+    }
+    WriteLog(message);
+}
+
+void ReliableChannel::SetVerboseLoggingEnabled(bool enabled)
+{
+    m_verboseLoggingEnabled = enabled;
+}
+
+bool ReliableChannel::IsVerboseLoggingEnabled() const
+{
+    return m_verboseLoggingEnabled;
+}
+
+int64_t ReliableChannel::GetCurrentFileSize() const
+{
+    std::lock_guard<std::mutex> lock(m_receiveMutex);
+    return m_currentFileSize;
+}
+
+int64_t ReliableChannel::GetCurrentFileProgress() const
+{
+    std::lock_guard<std::mutex> lock(m_receiveMutex);
+    return m_currentFileProgress;
+}
+
+std::string ReliableChannel::GetCurrentFileName() const
+{
+    std::lock_guard<std::mutex> lock(m_receiveMutex);
+    return m_currentFileName;
+}
+
+std::vector<uint8_t> ReliableChannel::GetCompletedFileBuffer() const
+{
+    std::lock_guard<std::mutex> lock(m_receiveMutex);
+    return m_completedFileBuffer;
+}
+
+bool ReliableChannel::HasCompletedFile() const
+{
+    std::lock_guard<std::mutex> lock(m_receiveMutex);
+    return m_hasCompletedFile && !m_completedFileBuffer.empty();
+}
+
+void ReliableChannel::ClearCompletedFileBuffer()
+{
+    std::lock_guard<std::mutex> lock(m_receiveMutex);
+    m_completedFileBuffer.clear();
+    m_hasCompletedFile = false;
+}
+
 
 // 日志写入函数
 void ReliableChannel::WriteLog(const std::string &message)
 {
+    if (!m_verboseLoggingEnabled)
+    {
+        static const std::array<std::string, 14> noisyPrefixes = {
+            "ProcessThread",
+            "SendThread",
+            "ReceiveThread",
+            "HeartbeatThread",
+            "ProcessIncomingFrame",
+            "ProcessDataFrame",
+            "ProcessAckFrame",
+            "ProcessNakFrame",
+            "ProcessStartFrame",
+            "ProcessEndFrame",
+            "AdvanceSendWindow",
+            "AllocateSequence",
+            "RetransmitPacket",
+            "EnsureSessionStarted"
+        };
+
+        const bool hasSeverity =
+            message.find("ERROR") != std::string::npos ||
+            message.find("失败") != std::string::npos ||
+            message.find("❌") != std::string::npos ||
+            message.find("⚠") != std::string::npos ||
+            message.find("invalid") != std::string::npos;
+
+        if (!hasSeverity)
+        {
+            for (const auto& prefix : noisyPrefixes)
+            {
+                if (message.rfind(prefix, 0) == 0)
+                {
+                    return;
+                }
+            }
+        }
+    }
+
     try
     {
         // 打开日志文件（追加模式）
@@ -124,6 +220,7 @@ void ReliableChannel::Shutdown()
     // 通知所有等待的线程
     m_sendCondition.notify_all();
     m_receiveCondition.notify_all();
+    m_windowCondition.notify_all();
 
     // 停止所有线程
     if (m_processThread.joinable())
@@ -174,6 +271,7 @@ void ReliableChannel::Shutdown()
             slot.packet.reset();
         }
     }
+    m_windowCondition.notify_all();
 
     m_transport.reset();
     m_initialized = false;
@@ -219,6 +317,7 @@ bool ReliableChannel::Disconnect()
     // 通知所有等待的线程
     m_sendCondition.notify_all();
     m_receiveCondition.notify_all();
+    m_windowCondition.notify_all();
 
     return true;
 }
@@ -564,6 +663,12 @@ void ReliableChannel::SetProgressCallback(std::function<void(int64_t, int64_t)> 
     m_progressCallback = callback;
 }
 
+// 【新增】设置传输完成回调
+void ReliableChannel::SetCompleteCallback(std::function<void(bool)> callback)
+{
+    m_completeCallback = callback;
+}
+
 // 获取本地序列号
 uint16_t ReliableChannel::GetLocalSequence() const
 {
@@ -607,36 +712,36 @@ bool ReliableChannel::IsFileTransferActive() const
 // 处理线程
 void ReliableChannel::ProcessThread()
 {
-    WriteLog("ProcessThread started");
+    WriteVerbose("ProcessThread started");
 
     std::vector<uint8_t> buffer(4096);
 
     while (!m_shutdown)
     {
-        WriteLog("ProcessThread: checking connection status...");
+        WriteVerbose("ProcessThread: checking connection status...");
 
         if (!m_connected)
         {
-            WriteLog("ProcessThread: not connected, sleeping...");
+            WriteVerbose("ProcessThread: not connected, sleeping...");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
-        WriteLog("ProcessThread: reading from transport...");
+        WriteVerbose("ProcessThread: reading from transport...");
 
         // 接收数据
         size_t bytesReceived = 0;
         TransportError error = m_transport->Read(buffer.data(), buffer.size(), &bytesReceived, 100);
-        WriteLog("ProcessThread: transport read result: error=" + std::to_string(static_cast<int>(error)) +
+        WriteVerbose("ProcessThread: transport read result: error=" + std::to_string(static_cast<int>(error)) +
                  ", bytesReceived=" + std::to_string(bytesReceived));
 
         if (error == TransportError::Success && bytesReceived > 0)
         {
-            WriteLog("ProcessThread: received " + std::to_string(bytesReceived) + " bytes, processing...");
+            WriteVerbose("ProcessThread: received " + std::to_string(bytesReceived) + " bytes, processing...");
 
             // 添加到帧编解码器
             std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesReceived);
-            WriteLog("ProcessThread: appending data to frame codec...");
+            WriteVerbose("ProcessThread: appending data to frame codec...");
             m_frameCodec->AppendData(data);
 
             // 处理可用的帧
@@ -645,27 +750,27 @@ void ReliableChannel::ProcessThread()
             while (m_frameCodec->TryGetFrame(frame))
             {
                 frameCount++;
-                WriteLog("ProcessThread: processing frame " + std::to_string(frameCount) +
+                WriteVerbose("ProcessThread: processing frame " + std::to_string(frameCount) +
                          ", type=" + std::to_string(static_cast<int>(frame.type)) +
                          ", sequence=" + std::to_string(frame.sequence));
                 ProcessIncomingFrame(frame);
             }
 
-            WriteLog("ProcessThread: processed " + std::to_string(frameCount) + " frames");
+            WriteVerbose("ProcessThread: processed " + std::to_string(frameCount) + " frames");
 
             // 更新统计
             {
                 std::lock_guard<std::mutex> lock(m_statsMutex);
                 m_stats.bytesReceived += bytesReceived;
-                WriteLog("ProcessThread: updated stats, total bytesReceived=" + std::to_string(m_stats.bytesReceived));
+                WriteVerbose("ProcessThread: updated stats, total bytesReceived=" + std::to_string(m_stats.bytesReceived));
             }
         }
         else if (error != TransportError::Success)
         {
-            WriteLog("ProcessThread: transport read error: " + std::to_string(static_cast<int>(error)));
+            WriteVerbose("ProcessThread: transport read error: " + std::to_string(static_cast<int>(error)));
         }
 
-        WriteLog("ProcessThread: checking for retransmissions...");
+        WriteVerbose("ProcessThread: checking for retransmissions...");
 
         // 处理重传
         {
@@ -681,14 +786,14 @@ void ReliableChannel::ProcessThread()
                                        now - slot.packet->timestamp)
                                        .count();
 
-                    WriteLog("ProcessThread: checking slot sequence=" + std::to_string(slot.packet->sequence) +
+                    WriteVerbose("ProcessThread: checking slot sequence=" + std::to_string(slot.packet->sequence) +
                              ", elapsed=" + std::to_string(elapsed) + "ms, retryCount=" + std::to_string(slot.packet->retryCount));
 
                     if (elapsed > CalculateTimeout())
                     {
                         if (slot.packet->retryCount < m_config.maxRetries)
                         {
-                            WriteLog("ProcessThread: retransmitting packet sequence=" + std::to_string(slot.packet->sequence) +
+                            WriteVerbose("ProcessThread: retransmitting packet sequence=" + std::to_string(slot.packet->sequence) +
                                      ", attempt " + std::to_string(slot.packet->retryCount + 1) + "/" + std::to_string(m_config.maxRetries));
                             m_retransmitting = true; // 设置重传标志
                             RetransmitPacketInternal(slot.packet->sequence); // 使用内部版本，已持有锁
@@ -699,7 +804,7 @@ void ReliableChannel::ProcessThread()
                         {
                             // 【关键修复】超过最大重试次数，标记包为失败并清理
                             uint16_t failedSequence = slot.packet->sequence; // 保存序列号用于后续处理
-                            WriteLog("ProcessThread: packet sequence=" + std::to_string(failedSequence) +
+                            WriteVerbose("ProcessThread: packet sequence=" + std::to_string(failedSequence) +
                                      " exceeded max retries (" + std::to_string(m_config.maxRetries) + "), marking as failed");
 
                             // 更新统计
@@ -717,11 +822,12 @@ void ReliableChannel::ProcessThread()
                             // 清理失败的包
                             slot.inUse = false;
                             slot.packet.reset();
+                            m_windowCondition.notify_all();
 
                             // 推进发送窗口（如果这个包是窗口基）
                             if (shouldAdvanceWindow)
                             {
-                                WriteLog("ProcessThread: advancing send window due to failed packet at base sequence " + std::to_string(failedSequence));
+                                WriteVerbose("ProcessThread: advancing send window due to failed packet at base sequence " + std::to_string(failedSequence));
                                 AdvanceSendWindow();
                             }
                         }
@@ -729,21 +835,21 @@ void ReliableChannel::ProcessThread()
                 }
             }
 
-            WriteLog("ProcessThread: checked retransmissions, count=" + std::to_string(retransmitCount));
+            WriteVerbose("ProcessThread: checked retransmissions, count=" + std::to_string(retransmitCount));
         }
     }
 
-    WriteLog("ProcessThread exiting");
+    WriteVerbose("ProcessThread exiting");
 }
 
 // 发送线程
 void ReliableChannel::SendThread()
 {
-    WriteLog("SendThread started");
+    WriteVerbose("SendThread started");
 
     while (!m_shutdown)
     {
-        WriteLog("SendThread: waiting for data or shutdown...");
+        WriteVerbose("SendThread: waiting for data or shutdown...");
 
         std::vector<uint8_t> data;
 
@@ -752,121 +858,148 @@ void ReliableChannel::SendThread()
             std::unique_lock<std::mutex> lock(m_sendMutex);
 
             // 等待发送数据
-            WriteLog("SendThread: waiting on condition variable...");
+            WriteVerbose("SendThread: waiting on condition variable...");
             m_sendCondition.wait(lock, [this]
                                  { return !m_sendQueue.empty() || !m_connected || m_shutdown; });
 
-            WriteLog("SendThread: condition variable triggered");
+            WriteVerbose("SendThread: condition variable triggered");
 
             if (m_shutdown)
             {
-                WriteLog("SendThread: shutdown detected, exiting");
+                WriteVerbose("SendThread: shutdown detected, exiting");
                 break;
             }
 
             if (!m_connected)
             {
-                WriteLog("SendThread: not connected, continuing");
+                WriteVerbose("SendThread: not connected, continuing");
                 continue;
             }
 
             if (m_sendQueue.empty())
             {
-                WriteLog("SendThread: queue is empty, continuing");
+                WriteVerbose("SendThread: queue is empty, continuing");
                 continue;
             }
 
             // 获取数据并从队列移除
-            WriteLog("SendThread: getting data from queue, queue size: " + std::to_string(m_sendQueue.size()));
+            WriteVerbose("SendThread: getting data from queue, queue size: " + std::to_string(m_sendQueue.size()));
             data = m_sendQueue.front();
             m_sendQueue.pop();
-            WriteLog("SendThread: data extracted, size: " + std::to_string(data.size()) + " bytes");
+            WriteVerbose("SendThread: data extracted, size: " + std::to_string(data.size()) + " bytes");
         }
 
         // 在没有锁的情况下处理发送
         try
         {
-            WriteLog("SendThread: allocating sequence number...");
+            WriteVerbose("SendThread: allocating sequence number...");
             // 分配序列号并发送
             uint16_t sequence = AllocateSequence();
-            WriteLog("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
+            WriteVerbose("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
             if (!SendPacket(sequence, data))
             {
-                WriteLog("SendThread: SendPacket failed");
+                WriteVerbose("SendThread: SendPacket failed");
                 ReportError("发送数据包失败");
             }
             else
             {
-                WriteLog("SendThread: SendPacket succeeded");
+                WriteVerbose("SendThread: SendPacket succeeded");
             }
         }
         catch (const std::exception &e)
         {
-            WriteLog("SendThread: exception caught: " + std::string(e.what()));
+            WriteVerbose("SendThread: exception caught: " + std::string(e.what()));
             ReportError("发送线程异常: " + std::string(e.what()));
         }
         catch (...)
         {
-            WriteLog("SendThread: unknown exception caught");
+            WriteVerbose("SendThread: unknown exception caught");
             ReportError("发送线程未知异常");
         }
     }
 
-    WriteLog("SendThread exiting");
+    WriteVerbose("SendThread exiting");
 }
 
 // 接收线程
 void ReliableChannel::ReceiveThread()
 {
-    WriteLog("ReceiveThread started");
+    WriteVerbose("ReceiveThread started");
 
     while (!m_shutdown)
     {
-        WriteLog("ReceiveThread: checking connection status...");
+        WriteVerbose("ReceiveThread: checking connection status...");
 
         if (!m_connected)
         {
-            WriteLog("ReceiveThread: not connected, sleeping...");
+            WriteVerbose("ReceiveThread: not connected, sleeping...");
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
-        WriteLog("ReceiveThread: checking receive window...");
+        WriteVerbose("ReceiveThread: checking receive window...");
 
         // 检查接收窗口
         {
             std::lock_guard<std::mutex> lock(m_windowMutex);
 
-            WriteLog("ReceiveThread: locked window mutex, checking slots...");
+            WriteVerbose("ReceiveThread: locked window mutex, checking slots...");
 
             while (true)
             {
                 uint16_t expected = m_receiveBase;
                 bool found = false;
 
-                WriteLog("ReceiveThread: looking for sequence " + std::to_string(expected));
+                WriteVerbose("ReceiveThread: looking for sequence " + std::to_string(expected));
 
                 for (auto &slot : m_receiveWindow)
                 {
                     if (slot.inUse && slot.packet && slot.packet->sequence == expected)
                     {
-                        WriteLog("ReceiveThread: found matching packet at slot, sequence=" + std::to_string(slot.packet->sequence));
+                        WriteVerbose("ReceiveThread: found matching packet at slot, sequence=" + std::to_string(slot.packet->sequence));
 
                         // 将数据放入接收队列
+                        int64_t updatedProgress = -1;
+                        int64_t progressTotal = 0;
+                        size_t chunkSize = slot.packet->data.size();
+
                         {
                             std::lock_guard<std::mutex> receiveLock(m_receiveMutex);
-                            WriteLog("ReceiveThread: pushing data to receive queue, size=" + std::to_string(slot.packet->data.size()));
+                            WriteVerbose("ReceiveThread: pushing data to receive queue, size=" + std::to_string(chunkSize));
                             m_receiveQueue.push(slot.packet->data);
+
+                            if (m_fileTransferActive)
+                            {
+                                m_completedFileBuffer.insert(
+                                    m_completedFileBuffer.end(),
+                                    slot.packet->data.begin(),
+                                    slot.packet->data.end());
+
+                                m_currentFileProgress += static_cast<int64_t>(chunkSize);
+                                if (m_currentFileSize > 0 && m_currentFileProgress > m_currentFileSize)
+                                {
+                                    m_currentFileProgress = m_currentFileSize;
+                                }
+
+                                updatedProgress = m_currentFileProgress;
+                                progressTotal = (m_currentFileSize > 0) ? m_currentFileSize : m_currentFileProgress;
+                            }
+
                             m_receiveCondition.notify_one();
-                            WriteLog("ReceiveThread: data pushed, notifying condition");
+                            WriteVerbose("ReceiveThread: data pushed, notifying condition");
+                        }
+
+                        if (updatedProgress >= 0)
+                        {
+                            UpdateProgress(updatedProgress, progressTotal);
                         }
 
                         // 更新接收窗口
-                        WriteLog("ReceiveThread: updating receive window, old base=" + std::to_string(m_receiveBase));
+                        WriteVerbose("ReceiveThread: updating receive window, old base=" + std::to_string(m_receiveBase));
                         slot.inUse = false;
                         slot.packet.reset();
                         m_receiveBase = (m_receiveBase + 1) % 65536;
-                        WriteLog("ReceiveThread: new base=" + std::to_string(m_receiveBase));
+                        WriteVerbose("ReceiveThread: new base=" + std::to_string(m_receiveBase));
                         found = true;
                         break;
                     }
@@ -874,38 +1007,38 @@ void ReliableChannel::ReceiveThread()
 
                 if (!found)
                 {
-                    WriteLog("ReceiveThread: no matching packet found, breaking loop");
+                    WriteVerbose("ReceiveThread: no matching packet found, breaking loop");
                     break;
                 }
             }
         }
 
-        WriteLog("ReceiveThread: sleeping for 10ms...");
+        WriteVerbose("ReceiveThread: sleeping for 10ms...");
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
 
-    WriteLog("ReceiveThread exiting");
+    WriteVerbose("ReceiveThread exiting");
 }
 
 // 心跳线程
 void ReliableChannel::HeartbeatThread()
 {
-    WriteLog("HeartbeatThread started");
+    WriteVerbose("HeartbeatThread started");
 
     while (!m_shutdown)
     {
-        WriteLog("HeartbeatThread: checking connection status...");
+        WriteVerbose("HeartbeatThread: checking connection status...");
 
         if (m_connected)
         {
             // 在重传期间跳过心跳发送，避免序列冲突
             if (m_retransmitting)
             {
-                WriteLog("HeartbeatThread: skipping heartbeat during retransmission");
+                WriteVerbose("HeartbeatThread: skipping heartbeat during retransmission");
             }
             else
             {
-                WriteLog("HeartbeatThread: sending heartbeat...");
+                WriteVerbose("HeartbeatThread: sending heartbeat...");
                 SendHeartbeat();
             }
 
@@ -915,30 +1048,30 @@ void ReliableChannel::HeartbeatThread()
                                now - m_lastActivity)
                                .count();
 
-            WriteLog("HeartbeatThread: elapsed time since last activity: " + std::to_string(elapsed) + "ms");
+            WriteVerbose("HeartbeatThread: elapsed time since last activity: " + std::to_string(elapsed) + "ms");
 
             if (elapsed > m_config.timeoutMax * 3)
             {
-                WriteLog("HeartbeatThread: connection timeout detected, elapsed=" + std::to_string(elapsed) +
+                WriteVerbose("HeartbeatThread: connection timeout detected, elapsed=" + std::to_string(elapsed) +
                          ", timeoutMax=" + std::to_string(m_config.timeoutMax));
                 ReportError("连接超时");
                 Disconnect();
             }
             else
             {
-                WriteLog("HeartbeatThread: connection is healthy");
+                WriteVerbose("HeartbeatThread: connection is healthy");
             }
         }
         else
         {
-            WriteLog("HeartbeatThread: not connected");
+            WriteVerbose("HeartbeatThread: not connected");
         }
 
-        WriteLog("HeartbeatThread: sleeping for " + std::to_string(m_config.heartbeatInterval) + "ms...");
+        WriteVerbose("HeartbeatThread: sleeping for " + std::to_string(m_config.heartbeatInterval) + "ms...");
         std::this_thread::sleep_for(std::chrono::milliseconds(m_config.heartbeatInterval));
     }
 
-    WriteLog("HeartbeatThread exiting");
+    WriteVerbose("HeartbeatThread exiting");
 }
 
 // 处理入站帧
@@ -1040,9 +1173,14 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
 
     if (!inWindow)
     {
-        WriteLog("ProcessDataFrame: sequence outside window, sending NAK");
-        // 发送NAK
-        SendNak(frame.sequence);
+        uint16_t expected = m_receiveBase;
+        uint16_t lastAck = (expected == 0) ? 65535 : static_cast<uint16_t>(expected - 1);
+
+        WriteLog("ProcessDataFrame: sequence outside window, expected=" + std::to_string(expected) +
+                 ", received=" + std::to_string(frame.sequence) + ", sending duplicate ACK");
+
+        // 再次确认最后一次成功的序列，提示对端重发缺失的数据
+        SendAck(lastAck);
         return;
     }
 
@@ -1087,6 +1225,12 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
         m_receiveWindow[index].packet->data = frame.payload;
         WriteLog("ProcessDataFrame: packet data set, sequence=" + std::to_string(m_receiveWindow[index].packet->sequence) +
                  ", data.size()=" + std::to_string(m_receiveWindow[index].packet->data.size()));
+        // 更新文件进度
+        m_currentFileProgress += frame.payload.size();
+        if (m_currentFileSize > 0 && m_currentFileProgress > m_currentFileSize)
+        {
+            m_currentFileProgress = m_currentFileSize;
+        }
     }
 
     WriteLog("ProcessDataFrame: window update completed, sending ACK");
@@ -1146,8 +1290,7 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
 
         // 标记为已确认
         m_sendWindow[index].packet->acknowledged = true;
-        m_sendWindow[index].inUse = false;
-        WriteLog("ProcessAckFrame: packet marked as acknowledged and slot freed");
+        WriteLog("ProcessAckFrame: packet marked as acknowledged");
 
         // 更新RTT
         auto now = std::chrono::steady_clock::now();
@@ -1186,6 +1329,11 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
                  ", hasPacket=" + std::to_string(m_sendWindow[index].packet != nullptr) +
                  ", sequenceMatch=" + std::to_string(m_sendWindow[index].packet && m_sendWindow[index].packet->sequence == sequence) +
                  ", alreadyAcked=" + std::to_string(m_sendWindow[index].packet && m_sendWindow[index].packet->acknowledged));
+        if (m_sendWindow[index].packet)
+        {
+            WriteLog("ProcessAckFrame: slot sequence=" + std::to_string(m_sendWindow[index].packet->sequence) +
+                     ", expected=" + std::to_string(sequence));
+        }
     }
 
     WriteLog("ProcessAckFrame: completed");
@@ -1266,6 +1414,8 @@ void ReliableChannel::ProcessStartFrame(const Frame &frame)
             m_currentFileProgress = 0;
             m_fileTransferActive = true; // 激活文件传输状态
             m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+            m_completedFileBuffer.clear();
+            m_hasCompletedFile = false;
         }
 
         // 更新进度显示
@@ -1319,33 +1469,124 @@ void ReliableChannel::ProcessEndFrame(const Frame &frame)
     // 检查是否有预期的文件大小信息
     if (m_currentFileSize > 0)
     {
-        // 验证实际接收字节数与预期文件大小是否匹配
-        if (m_currentFileProgress >= m_currentFileSize)
+        // 【修复】计算字节差异
+        int64_t byteDifference = static_cast<int64_t>(m_currentFileSize) - static_cast<int64_t>(m_currentFileProgress);
+
+        // 【修复】±1KB 容错范围
+        const int64_t TOLERANCE_BYTES = 1024; // 1KB 容错
+        bool withinTolerance = (byteDifference >= -TOLERANCE_BYTES && byteDifference <= TOLERANCE_BYTES);
+
+        WriteLog("ProcessEndFrame: 字节差异 = " + std::to_string(byteDifference) +
+                 " 字节，容错范围 ±" + std::to_string(TOLERANCE_BYTES) + " 字节");
+
+        // 验证实际接收字节数与预期文件大小是否匹配（带容错）
+        if (withinTolerance)
         {
-            WriteLog("ProcessEndFrame: 传输完整性验证通过 - " +
+            WriteLog("ProcessEndFrame: 传输完整性验证通过（容错范围内） - " +
                      std::to_string(m_currentFileProgress) + "/" +
                      std::to_string(m_currentFileSize) + " 字节");
+
+            // 清除传输活跃状态
             m_fileTransferActive = false;
+
+            // 更新进度到100%
             UpdateProgress(m_currentFileSize, m_currentFileSize);
+            m_hasCompletedFile = true;
+
             WriteLog("ProcessEndFrame: 文件传输正常完成");
+
+            // 【新增】触发传输完成回调
+            if (m_completeCallback)
+            {
+                WriteLog("ProcessEndFrame: 调用完成回调，成功=true");
+                m_completeCallback(true);
+            }
+        }
+        else if (byteDifference > TOLERANCE_BYTES)
+        {
+            // 数据不足，启动短超时机制
+            if (!m_shortTimeoutActive)
+            {
+                WriteLog("ProcessEndFrame: 传输不完整（差 " + std::to_string(byteDifference) +
+                        " 字节），启动30秒短超时等待更多数据");
+                m_shortTimeoutActive = true;
+                m_shortTimeoutStart = std::chrono::steady_clock::now();
+            }
+            else
+            {
+                // 检查短超时是否到期
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_shortTimeoutStart);
+
+                if (elapsed.count() >= m_shortTimeoutDuration)
+                {
+                    WriteLog("ProcessEndFrame: 短超时到期（" + std::to_string(elapsed.count()) +
+                            "秒），强制结束传输，数据差异 " + std::to_string(byteDifference) + " 字节");
+
+                    // 强制结束传输
+                    m_fileTransferActive = false;
+                    m_shortTimeoutActive = false;
+                    m_hasCompletedFile = true;  // 标记为有数据（尽管不完整）
+
+                    ReportError("文件传输不完整（短超时），预期 " + std::to_string(m_currentFileSize) +
+                               " 字节，实际接收 " + std::to_string(m_currentFileProgress) + " 字节");
+
+                    // 【新增】触发传输完成回调（失败）
+                    if (m_completeCallback)
+                    {
+                        WriteLog("ProcessEndFrame: 调用完成回调，成功=false（短超时）");
+                        m_completeCallback(false);
+                    }
+                }
+                else
+                {
+                    WriteLog("ProcessEndFrame: 短超时进行中（" + std::to_string(elapsed.count()) +
+                            "/" + std::to_string(m_shortTimeoutDuration) + "秒），继续等待数据");
+                }
+            }
         }
         else
         {
-            WriteLog("ProcessEndFrame: 传输不完整 - 收到 " +
-                     std::to_string(m_currentFileProgress) + "/" +
-                     std::to_string(m_currentFileSize) + " 字节，拒绝结束传输");
-            ReportError("文件传输不完整，预期 " + std::to_string(m_currentFileSize) +
-                       " 字节，实际接收 " + std::to_string(m_currentFileProgress) + " 字节");
-            // 不设置 m_fileTransferActive = false，继续等待数据
-            WriteLog("ProcessEndFrame: 保持传输活跃状态，等待更多数据");
+            // 数据超过预期（负差异超过容错）
+            WriteLog("ProcessEndFrame: 接收数据超过预期（多 " + std::to_string(-byteDifference) +
+                    " 字节），仍认为传输完成");
+
+            // 清除传输活跃状态
+            m_fileTransferActive = false;
+            m_shortTimeoutActive = false;
+
+            // 更新进度
+            UpdateProgress(m_currentFileProgress, m_currentFileProgress);
+            m_hasCompletedFile = true;
+
+            WriteLog("ProcessEndFrame: 文件传输完成（数据超额）");
+
+            // 【新增】触发传输完成回调
+            if (m_completeCallback)
+            {
+                WriteLog("ProcessEndFrame: 调用完成回调，成功=true（数据超额）");
+                m_completeCallback(true);
+            }
         }
     }
     else
     {
         WriteLog("ProcessEndFrame: 无文件大小信息，使用传统逻辑结束传输");
         m_fileTransferActive = false;
+        m_shortTimeoutActive = false;
         UpdateProgress(m_currentFileProgress, m_currentFileProgress);
+        {
+            std::lock_guard<std::mutex> lock(m_receiveMutex);
+            m_hasCompletedFile = !m_completedFileBuffer.empty();
+        }
         WriteLog("ProcessEndFrame: 传统模式传输结束");
+
+        // 【新增】触发传输完成回调
+        if (m_completeCallback)
+        {
+            WriteLog("ProcessEndFrame: 调用完成回调，成功=true（传统模式）");
+            m_completeCallback(true);
+        }
     }
 
     WriteLog("ProcessEndFrame: 处理完成，当前传输状态 = " + std::string(m_fileTransferActive ? "活跃" : "已结束"));
@@ -1611,6 +1852,7 @@ bool ReliableChannel::SendStart(const std::string &fileName, uint64_t fileSize, 
             {
                 m_sendWindow[index].inUse = false;
                 m_sendWindow[index].packet.reset();
+                m_windowCondition.notify_all();
             }
         }
 
@@ -1779,6 +2021,11 @@ void ReliableChannel::AdvanceSendWindow()
     }
 
     WriteLog("AdvanceSendWindow: completed, advanced " + std::to_string(advanceCount) + " slots");
+
+    if (advanceCount > 0)
+    {
+        m_windowCondition.notify_all();
+    }
 }
 
 // 更新接收窗口
@@ -1788,11 +2035,35 @@ void ReliableChannel::UpdateReceiveWindow(uint16_t sequence)
 }
 
 // 分配序列号
+bool ReliableChannel::IsSendWindowFullLocked() const
+{
+    if (m_config.windowSize == 0 || m_sendWindow.empty())
+    {
+        return false;
+    }
+
+    uint16_t outstanding = GetWindowDistance(m_sendBase, m_sendNext);
+    if (outstanding < m_config.windowSize)
+    {
+        return false;
+    }
+
+    uint16_t index = m_sendNext % m_config.windowSize;
+    if (index >= m_sendWindow.size())
+    {
+        return true;
+    }
+
+    const auto &slot = m_sendWindow[index];
+    bool slotBusy = slot.inUse && (!slot.packet || !slot.packet->acknowledged);
+    return slotBusy;
+}
+
 uint16_t ReliableChannel::AllocateSequence()
 {
     WriteLog("AllocateSequence called");
 
-    std::lock_guard<std::mutex> lock(m_windowMutex);
+    std::unique_lock<std::mutex> lock(m_windowMutex);
 
     WriteLog("AllocateSequence: sendWindow.size()=" + std::to_string(m_sendWindow.size()) +
              ", windowSize=" + std::to_string(m_config.windowSize));
@@ -1803,6 +2074,19 @@ uint16_t ReliableChannel::AllocateSequence()
         WriteLog("AllocateSequence: ERROR - window not initialized or size is 0");
         ReportError("发送窗口未初始化或大小为0");
         return 0;
+    }
+
+    while (!m_shutdown.load() && m_connected.load() && IsSendWindowFullLocked())
+    {
+        WriteLog("AllocateSequence: send window full (sendBase=" + std::to_string(m_sendBase) +
+                 ", sendNext=" + std::to_string(m_sendNext) + "), waiting for availability");
+
+        m_windowCondition.wait(lock, [this]() {
+            return m_shutdown.load() || !m_connected.load() || !IsSendWindowFullLocked();
+        });
+
+        WriteLog("AllocateSequence: wake, current sendBase=" + std::to_string(m_sendBase) +
+                 ", sendNext=" + std::to_string(m_sendNext));
     }
 
     uint16_t sequence = m_sendNext;
@@ -1939,6 +2223,10 @@ bool ReliableChannel::CheckTransferTimeout()
     auto now = std::chrono::steady_clock::now();
     auto transferDuration = std::chrono::duration_cast<std::chrono::seconds>(now - m_transferStartTime);
 
+    // 【新增】日志节流机制：静态变量跟踪上次日志时间，防止日志文件爆炸式增长
+    static std::chrono::steady_clock::time_point lastLogTime;
+    static const auto LOG_THROTTLE_DURATION = std::chrono::seconds(30);
+
     // 计算合理的传输超时时间
     // 基本策略：大文件给更多时间，但设置合理上限
     int64_t maxExpectedSeconds;
@@ -1960,13 +2248,22 @@ bool ReliableChannel::CheckTransferTimeout()
 
     if (transferDuration.count() > maxExpectedSeconds)
     {
-        WriteLog("CheckTransferTimeout: 传输超时，强制结束");
-        WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
-                " 秒，实际用时 " + std::to_string(transferDuration.count()) + " 秒");
-        WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_currentFileSize) +
-                " 字节，当前进度 " + std::to_string(m_currentFileProgress) + " 字节");
+        // 【修复】日志节流：仅在超过节流间隔时记录详细日志（防止每2秒写一次日志导致日志文件爆炸）
+        bool shouldLog = (now - lastLogTime) >= LOG_THROTTLE_DURATION;
+
+        if (shouldLog)
+        {
+            WriteLog("CheckTransferTimeout: 传输超时，强制结束");
+            WriteLog("CheckTransferTimeout: 预期最大时间 " + std::to_string(maxExpectedSeconds) +
+                    " 秒，实际用时 " + std::to_string(transferDuration.count()) + " 秒");
+            WriteLog("CheckTransferTimeout: 文件大小 " + std::to_string(m_currentFileSize) +
+                    " 字节，当前进度 " + std::to_string(m_currentFileProgress) + " 字节");
+            lastLogTime = now; // 更新最后日志时间
+        }
 
         m_fileTransferActive = false;
+
+        // 【保留】错误报告始终执行（不受节流限制），确保UI能及时得到通知
         ReportError("文件传输超时：传输时间 " + std::to_string(transferDuration.count()) +
                    " 秒超过预期 " + std::to_string(maxExpectedSeconds) + " 秒");
         return true;
@@ -2111,6 +2408,7 @@ bool ReliableChannel::EnsureSessionStarted()
             {
                 m_sendWindow[index].inUse = false;
                 m_sendWindow[index].packet.reset();
+                m_windowCondition.notify_all();
             }
         }
         return false;
@@ -2147,6 +2445,7 @@ bool ReliableChannel::EnsureSessionStarted()
             {
                 m_sendWindow[index].inUse = false;
                 m_sendWindow[index].packet.reset();
+                m_windowCondition.notify_all();
             }
         }
     }
