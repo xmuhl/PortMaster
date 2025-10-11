@@ -125,7 +125,7 @@ void ReliableChannel::WriteLog(const std::string &message)
 
 // 构造函数
 ReliableChannel::ReliableChannel()
-    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileName(), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_transferStartTime(std::chrono::steady_clock::now()), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
+    : m_initialized(false), m_connected(false), m_shutdown(false), m_retransmitting(false), m_sendBase(0), m_sendNext(0), m_receiveBase(0), m_receiveNext(0), m_heartbeatSequence(0), m_currentFileName(), m_currentFileSize(0), m_currentFileProgress(0), m_fileTransferActive(false), m_transferStartTime(std::chrono::steady_clock::now()), m_sendBytesAcked(0), m_sendTotalBytes(0), m_handshakeCompleted(false), m_handshakeSequence(0), m_sessionId(0), m_rttMs(100), m_timeoutMs(500), m_frameCodec(std::make_unique<FrameCodec>())
 {
     m_lastActivity = std::chrono::steady_clock::now();
     WriteLog("ReliableChannel constructor called");
@@ -344,6 +344,16 @@ bool ReliableChannel::Send(const std::vector<uint8_t> &data)
     }
 
     std::lock_guard<std::mutex> lock(m_sendMutex);
+
+    // 【P2优化】检查发送队列大小，实现流量控制
+    size_t maxQueueSize = m_config.windowSize * 10;
+    if (m_sendQueue.size() >= maxQueueSize)
+    {
+        WriteLog("Send: 发送队列已满(size=" + std::to_string(m_sendQueue.size()) +
+                 ", max=" + std::to_string(maxQueueSize) + ")，拒绝新数据");
+        return false;  // 返回false，让上层知道需要等待
+    }
+
     m_sendQueue.push(data);
     m_sendCondition.notify_one();
 
@@ -452,6 +462,10 @@ bool ReliableChannel::SendFile(const std::string &filePath, std::function<void(i
         m_currentFileProgress = 0;
         m_fileTransferActive = true;
         m_transferStartTime = std::chrono::steady_clock::now(); // 记录传输开始时间
+
+        // 【P1优化】初始化发送进度跟踪
+        m_sendBytesAcked = 0;
+        m_sendTotalBytes = fileSize;
     }
 
     // 发送开始帧
@@ -1212,6 +1226,19 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             return;
         }
 
+        // 【P0修复】检查窗口slot是否已有该序列号的数据（去重保护）
+        if (m_receiveWindow[index].inUse &&
+            m_receiveWindow[index].packet &&
+            m_receiveWindow[index].packet->sequence == frame.sequence)
+        {
+            // 这是重传数据，已经处理过，只需重新发送ACK
+            WriteLog("ProcessDataFrame: 检测到重传数据seq=" + std::to_string(frame.sequence) +
+                     "，跳过重复处理，仅发送ACK");
+            SendAck(frame.sequence);
+            return;
+        }
+
+        // 【P0修复】只有新数据才更新slot和进度
         WriteLog("ProcessDataFrame: setting window slot " + std::to_string(index) + " to inUse=true");
         m_receiveWindow[index].inUse = true;
 
@@ -1223,14 +1250,18 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
 
         m_receiveWindow[index].packet->sequence = frame.sequence;
         m_receiveWindow[index].packet->data = frame.payload;
-        WriteLog("ProcessDataFrame: packet data set, sequence=" + std::to_string(m_receiveWindow[index].packet->sequence) +
-                 ", data.size()=" + std::to_string(m_receiveWindow[index].packet->data.size()));
-        // 更新文件进度
+
+        // ✅ 只有首次接收才更新进度
         m_currentFileProgress += frame.payload.size();
         if (m_currentFileSize > 0 && m_currentFileProgress > m_currentFileSize)
         {
             m_currentFileProgress = m_currentFileSize;
         }
+
+        WriteLog("ProcessDataFrame: 新数据seq=" + std::to_string(frame.sequence) +
+                 ", size=" + std::to_string(frame.payload.size()) +
+                 ", progress=" + std::to_string(m_currentFileProgress) + "/" +
+                 std::to_string(m_currentFileSize));
     }
 
     WriteLog("ProcessDataFrame: window update completed, sending ACK");
@@ -1299,6 +1330,20 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
                        .count();
         WriteLog("ProcessAckFrame: calculated RTT=" + std::to_string(rtt) + "ms");
         UpdateRTT(static_cast<uint32_t>(rtt));
+
+        // 【P1优化】更新发送进度（基于ACK）
+        size_t dataSize = m_sendWindow[index].packet->data.size();
+        int64_t ackedBytes = m_sendBytesAcked.fetch_add(dataSize) + dataSize;
+
+        // 回调进度更新（仅在文件传输活跃时）
+        if (m_fileTransferActive && m_progressCallback && m_sendTotalBytes > 0)
+        {
+            UpdateProgress(ackedBytes, m_sendTotalBytes);
+            WriteLog("ProcessAckFrame: 发送进度=" +
+                     std::to_string(ackedBytes) + "/" +
+                     std::to_string(m_sendTotalBytes) +
+                     " (" + std::to_string((ackedBytes * 100) / m_sendTotalBytes) + "%)");
+        }
 
         // 【关键修复4】检查是否为握手帧的ACK
         uint16_t handshakeSeq = m_handshakeSequence.load();

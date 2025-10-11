@@ -256,6 +256,10 @@ private:
     std::vector<uint8_t> m_completedFileBuffer; // 最近一次完整文件缓冲
     bool m_hasCompletedFile = false;
 
+    // 【P1优化】发送端真实进度跟踪（基于ACK确认）
+    std::atomic<int64_t> m_sendBytesAcked;  // 已ACK确认的字节数
+    int64_t m_sendTotalBytes;               // 发送总字节数
+
     // 握手状态管理
     std::atomic<bool> m_handshakeCompleted;    // 握手完成标志
     std::atomic<uint16_t> m_handshakeSequence; // 当前握手帧的序列号
