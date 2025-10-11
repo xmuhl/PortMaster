@@ -410,8 +410,9 @@ TransportError ReliableTransmissionTask::DoSendChunk(const uint8_t* data, size_t
     std::vector<uint8_t> chunk(data, data + size);
     bool success = m_reliableChannel->Send(chunk);
 
-    // 【P2优化】返回Busy让上层重试，而不是直接失败
-    return success ? TransportError::Success : TransportError::Busy;
+    // 【回退修复】Send()现在会阻塞等待，只有通道关闭时才返回false
+    // 因此false应该视为失败而非重试
+    return success ? TransportError::Success : TransportError::WriteFailed;
 }
 
 bool ReliableTransmissionTask::IsTransportReady() const

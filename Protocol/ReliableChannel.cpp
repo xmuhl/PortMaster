@@ -343,17 +343,45 @@ bool ReliableChannel::Send(const std::vector<uint8_t> &data)
         return false;
     }
 
-    std::lock_guard<std::mutex> lock(m_sendMutex);
+    std::unique_lock<std::mutex> lock(m_sendMutex);
 
-    // 【P2优化】检查发送队列大小，实现流量控制
+    // 【修复】队列满时阻塞等待，而不是拒绝数据
     size_t maxQueueSize = m_config.windowSize * 10;
-    if (m_sendQueue.size() >= maxQueueSize)
+    while (m_sendQueue.size() >= maxQueueSize)
     {
-        WriteLog("Send: 发送队列已满(size=" + std::to_string(m_sendQueue.size()) +
-                 ", max=" + std::to_string(maxQueueSize) + ")，拒绝新数据");
-        return false;  // 返回false，让上层知道需要等待
+        // 检查通道状态
+        if (m_shutdown || !IsConnected())
+        {
+            WriteLog("Send: 通道已关闭，无法发送数据");
+            return false;
+        }
+
+        // 等待队列空间（超时1秒）
+        WriteLog("Send: 队列已满(size=" + std::to_string(m_sendQueue.size()) +
+                 ", max=" + std::to_string(maxQueueSize) + ")，等待空间...");
+
+        auto status = m_sendCondition.wait_for(
+            lock,
+            std::chrono::milliseconds(1000),
+            [this, maxQueueSize] {
+                return m_sendQueue.size() < maxQueueSize ||
+                       m_shutdown ||
+                       !IsConnected();
+            });
+
+        if (!status)
+        {
+            // 超时，继续等待（除非通道关闭）
+            if (m_shutdown || !IsConnected())
+            {
+                WriteLog("Send: 等待期间通道关闭");
+                return false;
+            }
+            WriteLog("Send: 等待超时，继续等待...");
+        }
     }
 
+    // 队列有空间，添加数据
     m_sendQueue.push(data);
     m_sendCondition.notify_one();
 
@@ -901,6 +929,9 @@ void ReliableChannel::SendThread()
             data = m_sendQueue.front();
             m_sendQueue.pop();
             WriteVerbose("SendThread: data extracted, size: " + std::to_string(data.size()) + " bytes");
+
+            // 【修复】唤醒可能等待队列空间的Send()调用
+            m_sendCondition.notify_all();
         }
 
         // 在没有锁的情况下处理发送
