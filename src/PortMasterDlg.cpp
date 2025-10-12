@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿// PortMasterDlg.cpp : 实现文件
+﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿// PortMasterDlg.cpp : 实现文件
 //
 #include "pch.h"
 #include "framework.h"
@@ -3532,34 +3532,49 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 		bool reliableBufferReady = m_reliableChannel->HasCompletedFile();
 
 		uint64_t cachedBytes = 0;
+		size_t memoryCacheSize = 0;
 		bool hasPendingWrites = false;
 		{
 			std::lock_guard<std::mutex> lock(m_receiveFileMutex);
 			cachedBytes = m_totalReceivedBytes;
+			memoryCacheSize = m_receiveDataCache.size();
 			hasPendingWrites = !m_pendingWrites.empty();
 		}
 
-		// 【修复】状态自愈逻辑：如果传输已完成且有数据可保存，强制启用保存按钮
-		// 避免因临时状态不一致（如协议层与UI层状态同步延迟）导致保存按钮卡死禁用
-		bool hasDataToSave = (cachedBytes > 0) || reliableBufferReady;
+		// 【增强修复】多重数据源检查：文件计数器、内存缓存、协议层缓冲
+		bool hasDataToSave = (cachedBytes > 0) || (memoryCacheSize > 0) || reliableBufferReady;
 		bool transmissionComplete = !fileTransferActive;
 
+		// 【优先级1】传输已完成且有任何数据源，强制启用保存按钮
 		if (transmissionComplete && hasDataToSave)
 		{
-			// 自愈场景：传输已完成且有数据，强制启用保存按钮（优先级最高）
 			enableSaveButton = true;
-			this->WriteLog("可靠模式【状态自愈】：传输完成且有数据可保存（" +
-			              std::to_string(cachedBytes) + " 字节），强制启用保存按钮");
+			std::string dataSource;
+			if (cachedBytes > 0) dataSource += "文件缓存:" + std::to_string(cachedBytes) + "B ";
+			if (memoryCacheSize > 0) dataSource += "内存缓存:" + std::to_string(memoryCacheSize) + "B ";
+			if (reliableBufferReady) dataSource += "协议层缓冲 ";
+
+			this->WriteLog("可靠模式【状态自愈】：传输完成且有数据可保存（" + dataSource + "），强制启用保存按钮");
 		}
+		// 【优先级2】传输进行中，禁用保存
 		else if (fileTransferActive)
 		{
 			enableSaveButton = false;
 			this->WriteLog("可靠模式：文件传输进行中，禁用保存按钮");
 		}
-		else if (!reliableBufferReady && (hasPendingWrites || cachedBytes == 0))
+		// 【优先级3】传输未完成，但有数据，仍允许保存（可能是传输失败的部分数据）
+		else if (!reliableBufferReady && hasDataToSave)
+		{
+			enableSaveButton = true;
+			this->WriteLog("可靠模式【增强保护】：传输未完成但有部分数据（文件:" +
+			              std::to_string(cachedBytes) + "B, 内存:" + std::to_string(memoryCacheSize) +
+			              "B），允许保存部分数据");
+		}
+		// 【优先级4】确实没有数据，禁用保存
+		else if (!hasDataToSave)
 		{
 			enableSaveButton = false;
-			this->WriteLog("可靠模式：等待临时缓存稳定，暂不启用保存按钮");
+			this->WriteLog("可靠模式：无数据可保存，禁用保存按钮");
 		}
 		else
 		{

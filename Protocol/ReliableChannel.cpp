@@ -1,4 +1,4 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include "ReliableChannel.h"
 #include "../Common/CommonTypes.h"
 #include <algorithm>
@@ -1122,25 +1122,25 @@ void ReliableChannel::HeartbeatThread()
 // 处理入站帧
 void ReliableChannel::ProcessIncomingFrame(const Frame &frame)
 {
-    WriteLog("ProcessIncomingFrame called: type=" + std::to_string(static_cast<int>(frame.type)) +
+    WriteVerbose("ProcessIncomingFrame called: type=" + std::to_string(static_cast<int>(frame.type)) +
              ", sequence=" + std::to_string(frame.sequence) +
              ", payload.size()=" + std::to_string(frame.payload.size()) +
              ", valid=" + std::to_string(frame.valid));
 
     if (!frame.valid)
     {
-        WriteLog("ProcessIncomingFrame: frame is invalid, incrementing invalid packet count");
+        WriteVerbose("ProcessIncomingFrame: frame is invalid, incrementing invalid packet count");
 
         // 记录无效帧统计
         {
             std::lock_guard<std::mutex> lock(m_statsMutex);
             m_stats.packetsInvalid++;
-            WriteLog("ProcessIncomingFrame: invalid packet count now " + std::to_string(m_stats.packetsInvalid));
+            WriteVerbose("ProcessIncomingFrame: invalid packet count now " + std::to_string(m_stats.packetsInvalid));
         }
         return;
     }
 
-    WriteLog("ProcessIncomingFrame: frame is valid, updating activity time");
+    WriteVerbose("ProcessIncomingFrame: frame is valid, updating activity time");
 
     // 更新活动时间
     m_lastActivity = std::chrono::steady_clock::now();
@@ -1149,48 +1149,48 @@ void ReliableChannel::ProcessIncomingFrame(const Frame &frame)
     {
         std::lock_guard<std::mutex> lock(m_statsMutex);
         m_stats.packetsReceived++;
-        WriteLog("ProcessIncomingFrame: received packet count now " + std::to_string(m_stats.packetsReceived));
+        WriteVerbose("ProcessIncomingFrame: received packet count now " + std::to_string(m_stats.packetsReceived));
     }
 
-    WriteLog("ProcessIncomingFrame: processing frame type " + std::to_string(static_cast<int>(frame.type)));
+    WriteVerbose("ProcessIncomingFrame: processing frame type " + std::to_string(static_cast<int>(frame.type)));
 
     // 根据帧类型处理
     switch (frame.type)
     {
     case FrameType::FRAME_DATA:
-        WriteLog("ProcessIncomingFrame: calling ProcessDataFrame");
+        WriteVerbose("ProcessIncomingFrame: calling ProcessDataFrame");
         ProcessDataFrame(frame);
-        WriteLog("ProcessIncomingFrame: ProcessDataFrame completed");
+        WriteVerbose("ProcessIncomingFrame: ProcessDataFrame completed");
         break;
 
     case FrameType::FRAME_ACK:
-        WriteLog("ProcessIncomingFrame: calling ProcessAckFrame with sequence " + std::to_string(frame.sequence));
+        WriteVerbose("ProcessIncomingFrame: calling ProcessAckFrame with sequence " + std::to_string(frame.sequence));
         ProcessAckFrame(frame.sequence);
-        WriteLog("ProcessIncomingFrame: ProcessAckFrame completed");
+        WriteVerbose("ProcessIncomingFrame: ProcessAckFrame completed");
         break;
 
     case FrameType::FRAME_NAK:
-        WriteLog("ProcessIncomingFrame: calling ProcessNakFrame with sequence " + std::to_string(frame.sequence));
+        WriteVerbose("ProcessIncomingFrame: calling ProcessNakFrame with sequence " + std::to_string(frame.sequence));
         ProcessNakFrame(frame.sequence);
-        WriteLog("ProcessIncomingFrame: ProcessNakFrame completed");
+        WriteVerbose("ProcessIncomingFrame: ProcessNakFrame completed");
         break;
 
     case FrameType::FRAME_START:
-        WriteLog("ProcessIncomingFrame: calling ProcessStartFrame");
+        WriteVerbose("ProcessIncomingFrame: calling ProcessStartFrame");
         ProcessStartFrame(frame);
-        WriteLog("ProcessIncomingFrame: ProcessStartFrame completed");
+        WriteVerbose("ProcessIncomingFrame: ProcessStartFrame completed");
         break;
 
     case FrameType::FRAME_END:
-        WriteLog("ProcessIncomingFrame: calling ProcessEndFrame");
+        WriteVerbose("ProcessIncomingFrame: calling ProcessEndFrame");
         ProcessEndFrame(frame);
-        WriteLog("ProcessIncomingFrame: ProcessEndFrame completed");
+        WriteVerbose("ProcessIncomingFrame: ProcessEndFrame completed");
         break;
 
     case FrameType::FRAME_HEARTBEAT:
-        WriteLog("ProcessIncomingFrame: calling ProcessHeartbeatFrame");
+        WriteVerbose("ProcessIncomingFrame: calling ProcessHeartbeatFrame");
         ProcessHeartbeatFrame(frame);
-        WriteLog("ProcessIncomingFrame: ProcessHeartbeatFrame completed");
+        WriteVerbose("ProcessIncomingFrame: ProcessHeartbeatFrame completed");
         break;
 
     default:
@@ -1200,20 +1200,20 @@ void ReliableChannel::ProcessIncomingFrame(const Frame &frame)
         break;
     }
 
-    WriteLog("ProcessIncomingFrame: completed processing frame");
+    WriteVerbose("ProcessIncomingFrame: completed processing frame");
 }
 
 // 处理数据帧
 void ReliableChannel::ProcessDataFrame(const Frame &frame)
 {
-    WriteLog("ProcessDataFrame called: sequence=" + std::to_string(frame.sequence) +
+    WriteVerbose("ProcessDataFrame called: sequence=" + std::to_string(frame.sequence) +
              ", payload.size()=" + std::to_string(frame.payload.size()) +
              ", receiveBase=" + std::to_string(m_receiveBase) +
              ", windowSize=" + std::to_string(m_config.windowSize));
 
     // 检查序列号是否在接收窗口内
     bool inWindow = IsSequenceInWindow(frame.sequence, m_receiveBase, m_config.windowSize);
-    WriteLog("ProcessDataFrame: sequence in window check: " + std::to_string(inWindow) +
+    WriteVerbose("ProcessDataFrame: sequence in window check: " + std::to_string(inWindow) +
              ", window range=[" + std::to_string(m_receiveBase) + "," + std::to_string(m_receiveBase + m_config.windowSize) + ")");
 
     if (!inWindow)
@@ -1221,7 +1221,7 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
         uint16_t expected = m_receiveBase;
         uint16_t lastAck = (expected == 0) ? 65535 : static_cast<uint16_t>(expected - 1);
 
-        WriteLog("ProcessDataFrame: sequence outside window, expected=" + std::to_string(expected) +
+        WriteVerbose("ProcessDataFrame: sequence outside window, expected=" + std::to_string(expected) +
                  ", received=" + std::to_string(frame.sequence) + ", sending duplicate ACK");
 
         // 再次确认最后一次成功的序列，提示对端重发缺失的数据
@@ -1229,12 +1229,12 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
         return;
     }
 
-    WriteLog("ProcessDataFrame: sequence in window, processing...");
+    WriteVerbose("ProcessDataFrame: sequence in window, processing...");
 
     // 将数据放入接收窗口
     {
         std::lock_guard<std::mutex> lock(m_windowMutex);
-        WriteLog("ProcessDataFrame: locked window mutex");
+        WriteVerbose("ProcessDataFrame: locked window mutex");
 
         // 确保窗口大小有效
         if (m_config.windowSize == 0 || m_receiveWindow.empty())
@@ -1245,7 +1245,7 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
         }
 
         uint16_t index = frame.sequence % m_config.windowSize;
-        WriteLog("ProcessDataFrame: calculated index=" + std::to_string(index) +
+        WriteVerbose("ProcessDataFrame: calculated index=" + std::to_string(index) +
                  ", receiveWindow.size()=" + std::to_string(m_receiveWindow.size()));
 
         // 边界检查
@@ -1263,19 +1263,19 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             m_receiveWindow[index].packet->sequence == frame.sequence)
         {
             // 这是重传数据，已经处理过，只需重新发送ACK
-            WriteLog("ProcessDataFrame: 检测到重传数据seq=" + std::to_string(frame.sequence) +
+            WriteVerbose("ProcessDataFrame: 检测到重传数据seq=" + std::to_string(frame.sequence) +
                      "，跳过重复处理，仅发送ACK");
             SendAck(frame.sequence);
             return;
         }
 
         // 【P0修复】只有新数据才更新slot和进度
-        WriteLog("ProcessDataFrame: setting window slot " + std::to_string(index) + " to inUse=true");
+        WriteVerbose("ProcessDataFrame: setting window slot " + std::to_string(index) + " to inUse=true");
         m_receiveWindow[index].inUse = true;
 
         if (!m_receiveWindow[index].packet)
         {
-            WriteLog("ProcessDataFrame: creating new packet for slot " + std::to_string(index));
+            WriteVerbose("ProcessDataFrame: creating new packet for slot " + std::to_string(index));
             m_receiveWindow[index].packet = std::make_shared<Packet>();
         }
 
@@ -1289,13 +1289,13 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
             m_currentFileProgress = m_currentFileSize;
         }
 
-        WriteLog("ProcessDataFrame: 新数据seq=" + std::to_string(frame.sequence) +
+        WriteVerbose("ProcessDataFrame: 新数据seq=" + std::to_string(frame.sequence) +
                  ", size=" + std::to_string(frame.payload.size()) +
                  ", progress=" + std::to_string(m_currentFileProgress) + "/" +
                  std::to_string(m_currentFileSize));
     }
 
-    WriteLog("ProcessDataFrame: window update completed, sending ACK");
+    WriteVerbose("ProcessDataFrame: window update completed, sending ACK");
 
     // 发送ACK
     SendAck(frame.sequence);
@@ -1304,21 +1304,21 @@ void ReliableChannel::ProcessDataFrame(const Frame &frame)
     {
         std::lock_guard<std::mutex> lock(m_statsMutex);
         m_stats.bytesReceived += frame.payload.size();
-        WriteLog("ProcessDataFrame: stats updated, bytesReceived=" + std::to_string(m_stats.bytesReceived));
+        WriteVerbose("ProcessDataFrame: stats updated, bytesReceived=" + std::to_string(m_stats.bytesReceived));
     }
 
-    WriteLog("ProcessDataFrame: completed successfully");
+    WriteVerbose("ProcessDataFrame: completed successfully");
 }
 
 // 处理ACK帧
 void ReliableChannel::ProcessAckFrame(uint16_t sequence)
 {
-    WriteLog("ProcessAckFrame called: sequence=" + std::to_string(sequence) +
+    WriteVerbose("ProcessAckFrame called: sequence=" + std::to_string(sequence) +
              ", sendBase=" + std::to_string(m_sendBase) +
              ", windowSize=" + std::to_string(m_config.windowSize));
 
     std::lock_guard<std::mutex> lock(m_windowMutex);
-    WriteLog("ProcessAckFrame: locked window mutex");
+    WriteVerbose("ProcessAckFrame: locked window mutex");
 
     // 确保窗口大小有效
     if (m_config.windowSize == 0 || m_sendWindow.empty())
@@ -1330,7 +1330,7 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
 
     // 在发送窗口中查找对应的包
     uint16_t index = sequence % m_config.windowSize;
-    WriteLog("ProcessAckFrame: calculated index=" + std::to_string(index) +
+    WriteVerbose("ProcessAckFrame: calculated index=" + std::to_string(index) +
              ", sendWindow.size()=" + std::to_string(m_sendWindow.size()));
 
     // 边界检查
@@ -1342,24 +1342,24 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
         return;
     }
 
-    WriteLog("ProcessAckFrame: checking slot " + std::to_string(index) +
+    WriteVerbose("ProcessAckFrame: checking slot " + std::to_string(index) +
              ", inUse=" + std::to_string(m_sendWindow[index].inUse));
 
     if (m_sendWindow[index].inUse && m_sendWindow[index].packet &&
         m_sendWindow[index].packet->sequence == sequence && !m_sendWindow[index].packet->acknowledged)
     {
-        WriteLog("ProcessAckFrame: processing ACK for packet " + std::to_string(sequence));
+        WriteVerbose("ProcessAckFrame: processing ACK for packet " + std::to_string(sequence));
 
         // 标记为已确认
         m_sendWindow[index].packet->acknowledged = true;
-        WriteLog("ProcessAckFrame: packet marked as acknowledged");
+        WriteVerbose("ProcessAckFrame: packet marked as acknowledged");
 
         // 更新RTT
         auto now = std::chrono::steady_clock::now();
         auto rtt = std::chrono::duration_cast<std::chrono::milliseconds>(
                        now - m_sendWindow[index].packet->timestamp)
                        .count();
-        WriteLog("ProcessAckFrame: calculated RTT=" + std::to_string(rtt) + "ms");
+        WriteVerbose("ProcessAckFrame: calculated RTT=" + std::to_string(rtt) + "ms");
         UpdateRTT(static_cast<uint32_t>(rtt));
 
         // 【P1优化】更新发送进度（基于ACK）
@@ -1370,7 +1370,7 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
         if (m_fileTransferActive && m_progressCallback && m_sendTotalBytes > 0)
         {
             UpdateProgress(ackedBytes, m_sendTotalBytes);
-            WriteLog("ProcessAckFrame: 发送进度=" +
+            WriteVerbose("ProcessAckFrame: 发送进度=" +
                      std::to_string(ackedBytes) + "/" +
                      std::to_string(m_sendTotalBytes) +
                      " (" + std::to_string((ackedBytes * 100) / m_sendTotalBytes) + "%)");
@@ -1395,24 +1395,24 @@ void ReliableChannel::ProcessAckFrame(uint16_t sequence)
         }
 
         // 推进发送窗口
-        WriteLog("ProcessAckFrame: calling AdvanceSendWindow");
+        WriteVerbose("ProcessAckFrame: calling AdvanceSendWindow");
         AdvanceSendWindow();
-        WriteLog("ProcessAckFrame: AdvanceSendWindow completed");
+        WriteVerbose("ProcessAckFrame: AdvanceSendWindow completed");
     }
     else
     {
-        WriteLog("ProcessAckFrame: ACK not processed - inUse=" + std::to_string(m_sendWindow[index].inUse) +
+        WriteVerbose("ProcessAckFrame: ACK not processed - inUse=" + std::to_string(m_sendWindow[index].inUse) +
                  ", hasPacket=" + std::to_string(m_sendWindow[index].packet != nullptr) +
                  ", sequenceMatch=" + std::to_string(m_sendWindow[index].packet && m_sendWindow[index].packet->sequence == sequence) +
                  ", alreadyAcked=" + std::to_string(m_sendWindow[index].packet && m_sendWindow[index].packet->acknowledged));
         if (m_sendWindow[index].packet)
         {
-            WriteLog("ProcessAckFrame: slot sequence=" + std::to_string(m_sendWindow[index].packet->sequence) +
+            WriteVerbose("ProcessAckFrame: slot sequence=" + std::to_string(m_sendWindow[index].packet->sequence) +
                      ", expected=" + std::to_string(sequence));
         }
     }
 
-    WriteLog("ProcessAckFrame: completed");
+    WriteVerbose("ProcessAckFrame: completed");
 }
 
 // 处理NAK帧
@@ -1677,7 +1677,7 @@ void ReliableChannel::ProcessHeartbeatFrame(const Frame &frame)
 // 发送数据包
 bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &data, FrameType type)
 {
-    WriteLog("SendPacket called: sequence=" + std::to_string(sequence) +
+    WriteVerbose("SendPacket called: sequence=" + std::to_string(sequence) +
              ", data.size()=" + std::to_string(data.size()) +
              ", type=" + std::to_string(static_cast<int>(type)));
 
@@ -1685,21 +1685,21 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
     std::vector<uint8_t> payload = data;
     if (m_config.enableCompression)
     {
-        WriteLog("SendPacket: compressing data...");
+        WriteVerbose("SendPacket: compressing data...");
         payload = CompressData(data);
-        WriteLog("SendPacket: compression done, payload.size()=" + std::to_string(payload.size()));
+        WriteVerbose("SendPacket: compression done, payload.size()=" + std::to_string(payload.size()));
     }
 
     // 加密数据（如果启用）
     if (m_config.enableEncryption)
     {
-        WriteLog("SendPacket: encrypting data...");
+        WriteVerbose("SendPacket: encrypting data...");
         payload = EncryptData(payload);
-        WriteLog("SendPacket: encryption done, payload.size()=" + std::to_string(payload.size()));
+        WriteVerbose("SendPacket: encryption done, payload.size()=" + std::to_string(payload.size()));
     }
 
     // 编码帧
-    WriteLog("SendPacket: encoding frame...");
+    WriteVerbose("SendPacket: encoding frame...");
     std::vector<uint8_t> frameData;
     switch (type)
     {
@@ -1720,10 +1720,10 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
         return false;
     }
 
-    WriteLog("SendPacket: frame encoded, frameData.size()=" + std::to_string(frameData.size()));
+    WriteVerbose("SendPacket: frame encoded, frameData.size()=" + std::to_string(frameData.size()));
 
     // 发送数据
-    WriteLog("SendPacket: writing to transport...");
+    WriteVerbose("SendPacket: writing to transport...");
     size_t written = 0;
     if (m_transport->Write(frameData.data(), frameData.size(), &written) != TransportError::Success || written != frameData.size())
     {
@@ -1731,21 +1731,21 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
         return false;
     }
 
-    WriteLog("SendPacket: transport write succeeded, " + std::to_string(written) + " bytes written");
+    WriteVerbose("SendPacket: transport write succeeded, " + std::to_string(written) + " bytes written");
 
     // 更新统计
     {
         std::lock_guard<std::mutex> lock(m_statsMutex);
         m_stats.packetsSent++;
         m_stats.bytesSent += frameData.size();
-        WriteLog("SendPacket: stats updated - packetsSent=" + std::to_string(m_stats.packetsSent) +
+        WriteVerbose("SendPacket: stats updated - packetsSent=" + std::to_string(m_stats.packetsSent) +
                  ", bytesSent=" + std::to_string(m_stats.bytesSent));
     }
 
     // 对于数据帧，需要保存到发送窗口
     if (type == FrameType::FRAME_DATA)
     {
-        WriteLog("SendPacket: saving to send window...");
+        WriteVerbose("SendPacket: saving to send window...");
         std::lock_guard<std::mutex> lock(m_windowMutex);
 
         // 确保窗口大小有效
@@ -1757,7 +1757,7 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
         }
 
         uint16_t index = sequence % m_config.windowSize;
-        WriteLog("SendPacket: calculated index=" + std::to_string(index) +
+        WriteVerbose("SendPacket: calculated index=" + std::to_string(index) +
                  ", windowSize=" + std::to_string(m_config.windowSize));
 
         // 边界检查
@@ -1769,12 +1769,12 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
             return false;
         }
 
-        WriteLog("SendPacket: setting window slot " + std::to_string(index) + " to inUse=true");
+        WriteVerbose("SendPacket: setting window slot " + std::to_string(index) + " to inUse=true");
         m_sendWindow[index].inUse = true;
 
         if (!m_sendWindow[index].packet)
         {
-            WriteLog("SendPacket: creating new packet for slot " + std::to_string(index));
+            WriteVerbose("SendPacket: creating new packet for slot " + std::to_string(index));
             m_sendWindow[index].packet = std::make_shared<Packet>();
         }
 
@@ -1784,26 +1784,26 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t> &
         m_sendWindow[index].packet->retryCount = 0;
         m_sendWindow[index].packet->acknowledged = false;
 
-        WriteLog("SendPacket: window slot " + std::to_string(index) + " updated successfully");
+        WriteVerbose("SendPacket: window slot " + std::to_string(index) + " updated successfully");
     }
 
-    WriteLog("SendPacket: completed successfully");
+    WriteVerbose("SendPacket: completed successfully");
     return true;
 }
 
 // 发送ACK
 bool ReliableChannel::SendAck(uint16_t sequence)
 {
-    WriteLog("SendAck called: sequence=" + std::to_string(sequence));
+    WriteVerbose("SendAck called: sequence=" + std::to_string(sequence));
 
     std::vector<uint8_t> frameData = m_frameCodec->EncodeAckFrame(sequence);
-    WriteLog("SendAck: frame encoded, size=" + std::to_string(frameData.size()));
+    WriteVerbose("SendAck: frame encoded, size=" + std::to_string(frameData.size()));
 
     size_t written = 0;
     TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
     bool success = (error == TransportError::Success && written == frameData.size());
 
-    WriteLog("SendAck: transport write result: error=" + std::to_string(static_cast<int>(error)) +
+    WriteVerbose("SendAck: transport write result: error=" + std::to_string(static_cast<int>(error)) +
              ", written=" + std::to_string(written) + ", success=" + std::to_string(success));
 
     return success;
@@ -1812,16 +1812,16 @@ bool ReliableChannel::SendAck(uint16_t sequence)
 // 发送NAK
 bool ReliableChannel::SendNak(uint16_t sequence)
 {
-    WriteLog("SendNak called: sequence=" + std::to_string(sequence));
+    WriteVerbose("SendNak called: sequence=" + std::to_string(sequence));
 
     std::vector<uint8_t> frameData = m_frameCodec->EncodeNakFrame(sequence);
-    WriteLog("SendNak: frame encoded, size=" + std::to_string(frameData.size()));
+    WriteVerbose("SendNak: frame encoded, size=" + std::to_string(frameData.size()));
 
     size_t written = 0;
     TransportError error = m_transport->Write(frameData.data(), frameData.size(), &written);
     bool success = (error == TransportError::Success && written == frameData.size());
 
-    WriteLog("SendNak: transport write result: error=" + std::to_string(static_cast<int>(error)) +
+    WriteVerbose("SendNak: transport write result: error=" + std::to_string(static_cast<int>(error)) +
              ", written=" + std::to_string(written) + ", success=" + std::to_string(success));
 
     return success;
@@ -1832,8 +1832,8 @@ bool ReliableChannel::SendHeartbeat()
 {
     // 使用独立的心跳序列号，不占用数据传输序列号
     uint16_t sequence = m_heartbeatSequence++;
-    WriteLog("SendHeartbeat: using independent heartbeat sequence " + std::to_string(sequence));
-    
+    WriteVerbose("SendHeartbeat: using independent heartbeat sequence " + std::to_string(sequence));
+
     std::vector<uint8_t> frameData = m_frameCodec->EncodeHeartbeatFrame(sequence);
     size_t written = 0;
     return m_transport->Write(frameData.data(), frameData.size(), &written) == TransportError::Success && written == frameData.size();
@@ -2259,17 +2259,17 @@ void ReliableChannel::ReportError(const std::string &error)
     {
         std::lock_guard<std::mutex> lock(m_statsMutex);
         m_stats.errors++;
-        WriteLog("ReportError: error count incremented to " + std::to_string(m_stats.errors));
+        WriteVerbose("ReportError: error count incremented to " + std::to_string(m_stats.errors));
     }
 
     if (m_errorCallback)
     {
-        WriteLog("ReportError: calling error callback");
+        WriteVerbose("ReportError: calling error callback");
         m_errorCallback(error);
     }
     else
     {
-        WriteLog("ReportError: no error callback set");
+        WriteVerbose("ReportError: no error callback set");
     }
 }
 
