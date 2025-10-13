@@ -683,14 +683,11 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	// 更新状态文本
 	CString* statusText = new CString();
 
+	// 【修复状态文本重复】直接使用后台传递的完整状态文本，不再追加重复信息
+	// 后台(TransmissionTask)已生成完整状态："正在传输: X/Y 字节 (P%)"
 	// 【回归修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
-	// progress.statusText是UTF-8编码的std::string，需要显式转换为Unicode
 	CA2W statusTextW(progress.statusText.c_str(), CP_UTF8);
-	statusText->Format(_T("%s: %u/%u 字节 (%d%%)"),
-					   (LPCWSTR)statusTextW,
-					   (unsigned int)progress.bytesTransmitted,
-					   (unsigned int)progress.totalBytes,
-					   progressPercent);
+	*statusText = (LPCWSTR)statusTextW;  // 直接赋值，不再Format追加
 	PostMessage(WM_USER + 12, 0, (LPARAM)statusText);
 
 	// 记录详细进度信息（可选，用于调试）
@@ -2630,7 +2627,8 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 			// 【关键修复】移除重复声明，直接使用外层变量避免变量遮蔽
 			{
 				std::lock_guard<std::mutex> quickLock(m_receiveFileMutex);
-				tempFileAvailable = PathFileExists(m_tempCacheFilePath) && (m_totalReceivedBytes > 0);
+				// 【修复保存误判】改用文件大小判定，避免依赖可能被清空的统计值
+			tempFileAvailable = PathFileExists(m_tempCacheFilePath) && (GetTempCacheFileSize() > 0);
 			}
 			
 			if (tempFileAvailable)
@@ -2761,7 +2759,9 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 					this->WriteLog("用户确认保存，开始执行数据稳定性检测");
 
 					const size_t kMaxStabilityChecks = 5;
-					const uint32_t kStabilityIntervalMs = 80;
+				// 【修复保存延迟】缩短稳定性检测间隔时间以减少保存延迟
+				// 5次检查 × 20ms = 100ms总等待时间（原值：5×80ms=400ms）
+					const uint32_t kStabilityIntervalMs = 20;  // 原值：80
 					uint64_t stableBytes = 0;
 					uint64_t stableFileSize = 0;
 
@@ -3681,7 +3681,10 @@ void CPortMasterDlg::OnReliableProgress(int64_t current, int64_t total)
 			percent = 100;
 		}
 	}
-	m_progress.SetPos(percent);
+
+	// 【修复进度条闪烁】改用消息队列投递进度更新，确保在UI线程执行
+	// 避免非UI线程直接操作控件导致的绘制竞争
+	PostMessage(WM_USER + 11, 0, percent);
 
 	std::lock_guard<std::mutex> lock(m_reliableSessionMutex);
 	m_reliableExpectedBytes = total;
@@ -3714,6 +3717,21 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 
 		// 2秒后恢复连接状态显示，但保持进度条100%状态
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
+
+		// 【修复保存延迟】立即检查临时文件大小，快速启用保存按钮
+		uint64_t tempFileSize = GetTempCacheFileSize();
+		if (tempFileSize > 0)
+		{
+			WriteLog("OnReliableComplete: 检测到临时文件有数据(" +
+					std::to_string(tempFileSize) + "字节)，立即启用保存按钮");
+			m_btnSaveAll.EnableWindow(TRUE);
+		}
+		else
+		{
+			// 文件为空，可能数据尚未落盘，先更新状态
+			WriteLog("OnReliableComplete: 临时文件为空，调用UpdateSaveButtonStatus()");
+			UpdateSaveButtonStatus();
+		}
 	}
 	else
 	{
@@ -3724,11 +3742,10 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		m_progress.SetPos(0);
 
 		MessageBox(_T("传输失败"), _T("错误"), MB_OK | MB_ICONERROR);
-	}
 
-	// 【可靠模式按钮管控】传输完成后立即更新保存按钮状态
-	// 确保在文件传输结束后及时启用保存按钮
-	UpdateSaveButtonStatus();
+		// 失败时也更新保存按钮状态
+		UpdateSaveButtonStatus();
+	}
 }
 
 void CPortMasterDlg::OnReliableStateChanged(bool connected)
@@ -4599,7 +4616,9 @@ void CPortMasterDlg::ClearTempCacheFile()
 		if (m_tempCacheFile.is_open())
 		{
 			m_totalReceivedBytes = 0;
-			WriteLog("临时缓存文件已清空");
+			// 【增强日志】详细记录清空操作，提示可能影响数据判定
+			WriteLog("⚠️ 临时缓存文件已清空，m_totalReceivedBytes已重置为0");
+			WriteLog("   提示：清空操作会删除所有接收数据，此后\"保存\"按钮将基于文件大小判定可用性");
 		}
 	}
 }
