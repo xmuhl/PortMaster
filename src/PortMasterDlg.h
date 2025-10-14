@@ -110,6 +110,7 @@ private:
 	// 【UI优化】接收窗口更新节流机制
 	bool m_receiveDisplayPending;    // 标志：是否有待处理的接收显示更新
 	DWORD m_lastReceiveDisplayUpdate; // 最后一次更新接收显示的时间戳
+	DWORD m_lastUiLogTick;            // 最近一次输出轻量级UI日志的时间戳
 	const DWORD RECEIVE_DISPLAY_THROTTLE_MS = 200; // 接收显示更新节流间隔(ms)
 
 	DECLARE_MESSAGE_MAP()
@@ -200,6 +201,7 @@ private:
 	uint64_t m_bytesReceived;
 	uint32_t m_sendSpeed;
 	uint32_t m_receiveSpeed;
+	uint32_t m_lastProgressPercent;  // 最近一次成功更新的进度百分比（用于单调性保护）
 
 	// 源数据缓存 - 用于确保显示模式切换时数据一致性
 	std::vector<uint8_t> m_sendDataCache;	 // 发送数据的原始字节缓存
@@ -252,6 +254,7 @@ private:
 	void InitializeThreadSafeProgressManager();  // 初始化线程安全进度管理器
 	void OnProgressChanged(const ProgressInfo& progress);  // 进度变化回调
 	void UpdateProgressSafe(uint64_t current, uint64_t total, const std::string& status = "");  // 安全的进度更新
+	void SetProgressPercent(int percent, bool forceReset = false);  // 统一的进度条更新入口
 
 	// 【修复】在控件创建完成后统一初始化所有管理器
 	void InitializeManagersAfterControlsCreated();  // 在控件创建完成后初始化管理器
@@ -263,6 +266,7 @@ private:
 	void OnReliableProgress(int64_t current, int64_t total);
 	void OnReliableComplete(bool success);
 	void OnReliableStateChanged(bool connected);
+	void ConfigureReliableLogging();
 
 	// 临时缓存文件管理方法
 	bool InitializeTempCacheFile();

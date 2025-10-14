@@ -20,6 +20,7 @@ struct ReliableConfig
     uint16_t windowSize = 4;           // 滑动窗口大小
     uint16_t maxRetries = 3;           // 最大重试次数
     uint32_t timeoutBase = 500;        // 基础超时时间(ms)
+    uint32_t timeoutMin = 100;         // 【P0修复】最小超时时间(ms)，避免近零延迟环境下的假超时
     uint32_t timeoutMax = 2000;        // 最大超时时间(ms)
     uint32_t heartbeatInterval = 1000; // 心跳间隔(ms)
     uint32_t maxPayloadSize = 1024;    // 最大负载大小

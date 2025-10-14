@@ -114,12 +114,14 @@ CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
 	  m_bytesReceived(0),
 	  m_sendSpeed(0),
 	  m_receiveSpeed(0),
+	  m_lastProgressPercent(0),
 	  m_configStore(ConfigStore::GetInstance()),
 	  m_binaryDataDetected(false),
 	  m_updateDisplayInProgress(false),
 	  m_receiveVerboseLogging(false),
 	  m_receiveDisplayPending(false),
-	  m_lastReceiveDisplayUpdate(0)
+	  m_lastReceiveDisplayUpdate(0),
+	  m_lastUiLogTick(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -277,7 +279,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 	// 初始化进度条
 	m_progress.SetRange(0, 100);
-	m_progress.SetPos(0);
+	SetProgressPercent(0, true);
 
 	// 显示初始状态
 	LogMessage(_T("程序启动成功"));
@@ -528,7 +530,7 @@ void CPortMasterDlg::StartTransmission()
 	m_transmissionCancelled = false;
 
 	// 重置进度条（仅在开始新传输时重置）
-	m_progress.SetPos(0);
+	SetProgressPercent(0, true);
 
 	// 更新按钮文本和状态栏
 	m_btnSend.SetWindowText(_T("中断"));
@@ -678,7 +680,7 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 {
 	// 使用PostMessage确保线程安全的UI更新
 	int progressPercent = progress.progressPercent;
-	PostMessage(WM_USER + 11, 0, progressPercent);
+	PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
 
 	// 更新状态文本
 	CString* statusText = new CString();
@@ -688,7 +690,7 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	// 【回归修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
 	CA2W statusTextW(progress.statusText.c_str(), CP_UTF8);
 	*statusText = (LPCWSTR)statusTextW;  // 直接赋值，不再Format追加
-	PostMessage(WM_USER + 12, 0, (LPARAM)statusText);
+	PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
 
 	// 记录详细进度信息（可选，用于调试）
 	if (progress.bytesTransmitted % (progress.totalBytes / 10 + 1) == 0 || progress.progressPercent == 100)
@@ -793,7 +795,7 @@ void CPortMasterDlg::OnBnClickedButtonStop()
 			// 更新界面状态
 			m_btnSend.SetWindowText(_T("发送"));
 			m_staticPortStatus.SetWindowText(_T("传输已终止"));
-			m_progress.SetPos(0);
+			SetProgressPercent(0, true);
 
 			// 记录日志
 			this->WriteLog("用户手动终止传输，已清除所有缓存数据");
@@ -3172,10 +3174,8 @@ bool CPortMasterDlg::CreateTransport()
 						return false;
 					}
 
-					// 在调试版本启用详细协议日志，方便定位可靠传输问题
-#ifdef _DEBUG
-					m_reliableChannel->SetVerboseLoggingEnabled(true);
-#endif
+					// 根据配置动态控制可靠协议日志，避免无谓的日志增长
+					ConfigureReliableLogging();
 
 					// 设置回调函数
 					this->WriteLog("CreateTransport: Setting callbacks...");
@@ -3223,10 +3223,7 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
-					// 在调试版本启用详细协议日志，方便定位可靠传输问题
-#ifdef _DEBUG
-					m_reliableChannel->SetVerboseLoggingEnabled(true);
-#endif
+					ConfigureReliableLogging();
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
@@ -3271,9 +3268,7 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
-#ifdef _DEBUG
-					m_reliableChannel->SetVerboseLoggingEnabled(true);
-#endif
+					ConfigureReliableLogging();
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
@@ -3332,9 +3327,7 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
-#ifdef _DEBUG
-					m_reliableChannel->SetVerboseLoggingEnabled(true);
-#endif
+					ConfigureReliableLogging();
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
@@ -3378,9 +3371,7 @@ bool CPortMasterDlg::CreateTransport()
 					m_reliableChannel = std::make_unique<ReliableChannel>();
 					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
 
-#ifdef _DEBUG
-					m_reliableChannel->SetVerboseLoggingEnabled(true);
-#endif
+					ConfigureReliableLogging();
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
@@ -3522,72 +3513,76 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 {
 	bool enableSaveButton = true; // 默认启用保存按钮
 
-	// 检查是否处于可靠模式
 	bool isReliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+	uint64_t tempFileSize = GetTempCacheFileSize();
+	bool hasTempFileData = (tempFileSize > 0);
 
-	if (isReliableMode && m_reliableChannel && m_isConnected)
+	uint64_t cachedBytes = 0;
+	size_t memoryCacheSize = 0;
+	bool hasPendingWrites = false;
 	{
-		// 在可靠模式下，只有文件传输彻底完成才允许保存
+		std::lock_guard<std::mutex> lock(m_receiveFileMutex);
+		cachedBytes = m_totalReceivedBytes;
+		memoryCacheSize = m_receiveDataCache.size();
+		hasPendingWrites = !m_pendingWrites.empty();
+	}
+
+	if (isReliableMode && m_reliableChannel)
+	{
 		bool fileTransferActive = m_reliableChannel->IsFileTransferActive();
 		bool reliableBufferReady = m_reliableChannel->HasCompletedFile();
 
-		uint64_t cachedBytes = 0;
-		size_t memoryCacheSize = 0;
-		bool hasPendingWrites = false;
-		{
-			std::lock_guard<std::mutex> lock(m_receiveFileMutex);
-			cachedBytes = m_totalReceivedBytes;
-			memoryCacheSize = m_receiveDataCache.size();
-			hasPendingWrites = !m_pendingWrites.empty();
-		}
+		bool hasDataToSave = hasTempFileData ||
+							 cachedBytes > 0 ||
+							 memoryCacheSize > 0 ||
+							 reliableBufferReady ||
+							 hasPendingWrites;
 
-		// 【增强修复】多重数据源检查：文件计数器、内存缓存、协议层缓冲
-		bool hasDataToSave = (cachedBytes > 0) || (memoryCacheSize > 0) || reliableBufferReady;
-		bool transmissionComplete = !fileTransferActive;
-
-		// 【优先级1】传输已完成且有任何数据源，强制启用保存按钮
-		if (transmissionComplete && hasDataToSave)
-		{
-			enableSaveButton = true;
-			std::string dataSource;
-			if (cachedBytes > 0) dataSource += "文件缓存:" + std::to_string(cachedBytes) + "B ";
-			if (memoryCacheSize > 0) dataSource += "内存缓存:" + std::to_string(memoryCacheSize) + "B ";
-			if (reliableBufferReady) dataSource += "协议层缓冲 ";
-
-			this->WriteLog("可靠模式【状态自愈】：传输完成且有数据可保存（" + dataSource + "），强制启用保存按钮");
-		}
-		// 【优先级2】传输进行中，禁用保存
-		else if (fileTransferActive)
+		if (fileTransferActive)
 		{
 			enableSaveButton = false;
 			this->WriteLog("可靠模式：文件传输进行中，禁用保存按钮");
 		}
-		// 【优先级3】传输未完成，但有数据，仍允许保存（可能是传输失败的部分数据）
-		else if (!reliableBufferReady && hasDataToSave)
+		else if (hasDataToSave)
 		{
 			enableSaveButton = true;
-			this->WriteLog("可靠模式【增强保护】：传输未完成但有部分数据（文件:" +
-			              std::to_string(cachedBytes) + "B, 内存:" + std::to_string(memoryCacheSize) +
-			              "B），允许保存部分数据");
-		}
-		// 【优先级4】确实没有数据，禁用保存
-		else if (!hasDataToSave)
-		{
-			enableSaveButton = false;
-			this->WriteLog("可靠模式：无数据可保存，禁用保存按钮");
+			std::string dataSource = "可靠模式：检测到可保存数据，来源[";
+			if (hasTempFileData)
+			{
+				dataSource += "临时文件:" + std::to_string(tempFileSize) + "B ";
+			}
+			if (cachedBytes > 0)
+			{
+				dataSource += "累计统计:" + std::to_string(cachedBytes) + "B ";
+			}
+			if (memoryCacheSize > 0)
+			{
+				dataSource += "内存缓存:" + std::to_string(memoryCacheSize) + "B ";
+			}
+			if (reliableBufferReady)
+			{
+				dataSource += "协议缓冲 ";
+			}
+			if (hasPendingWrites)
+			{
+				dataSource += "待写入队列 ";
+			}
+			dataSource += "]";
+			this->WriteLog(dataSource);
 		}
 		else
 		{
-			this->WriteLog("可靠模式：缓存数据已稳定，启用保存按钮");
+			enableSaveButton = false;
+			this->WriteLog("可靠模式：所有数据源为空，禁用保存按钮");
 		}
 	}
-	else if (!isReliableMode)
+	else
 	{
-		// 直通模式：保持原有逻辑，正常启用保存按钮
-		this->WriteLog("直通模式：正常启用保存按钮");
+		// 直通模式：保持原有逻辑，确保用户仍可快速保存当前显示内容
+		enableSaveButton = true;
+		this->WriteLog("直通模式：保持保存按钮可用状态");
 	}
 
-	// 更新保存按钮状态
 	m_btnSaveAll.EnableWindow(enableSaveButton ? TRUE : FALSE);
 }
 
@@ -3666,8 +3661,23 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 void CPortMasterDlg::OnTransportError(const std::string &error)
 {
 	// 在主线程中显示错误
-	CString errorMsg(error.c_str());
+CString errorMsg(error.c_str());
 	PostMessage(WM_USER + 2, 0, (LPARAM) new CString(errorMsg));
+}
+
+void CPortMasterDlg::ConfigureReliableLogging()
+{
+	if (!m_reliableChannel)
+	{
+		return;
+	}
+
+	const AppConfig& appConfig = m_configStore.GetAppConfig();
+	bool enableVerbose = (appConfig.logLevel >= 3);
+	m_reliableChannel->SetVerboseLoggingEnabled(enableVerbose);
+
+	this->WriteLog(std::string("ReliableChannel 日志级别调整：") +
+				   (enableVerbose ? "开启 Verbose 输出" : "关闭 Verbose 输出"));
 }
 
 void CPortMasterDlg::OnReliableProgress(int64_t current, int64_t total)
@@ -3684,7 +3694,7 @@ void CPortMasterDlg::OnReliableProgress(int64_t current, int64_t total)
 
 	// 【修复进度条闪烁】改用消息队列投递进度更新，确保在UI线程执行
 	// 避免非UI线程直接操作控件导致的绘制竞争
-	PostMessage(WM_USER + 11, 0, percent);
+	PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(percent));
 
 	std::lock_guard<std::mutex> lock(m_reliableSessionMutex);
 	m_reliableExpectedBytes = total;
@@ -3713,7 +3723,7 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		CString completeStatus;
 		completeStatus.Format(_T("传输完成"));
 		m_staticPortStatus.SetWindowText(completeStatus);
-		m_progress.SetPos(100);
+		SetProgressPercent(100);
 
 		// 2秒后恢复连接状态显示，但保持进度条100%状态
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
@@ -3739,7 +3749,7 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		CString errorStatus;
 		errorStatus.Format(_T("传输失败"));
 		m_staticPortStatus.SetWindowText(errorStatus);
-		m_progress.SetPos(0);
+		SetProgressPercent(0, true);
 
 		MessageBox(_T("传输失败"), _T("错误"), MB_OK | MB_ICONERROR);
 
@@ -3762,8 +3772,8 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 		// 连接断开 - 更新状态显示
 		CString statusText = _T("连接断开");
 		m_staticPortStatus.SetWindowText(statusText);
-		m_progress.SetPos(0);
-	}
+		SetProgressPercent(0, true);
+}
 }
 
 // 自定义消息处理实现
@@ -3776,11 +3786,31 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 	{
 		try
 		{
-			// 轻量级UI更新：仅处理统计信息和显示预览
-			this->WriteLog("=== 轻量级UI更新信息 ===");
-			this->WriteLog("接收数据大小: " + std::to_string(updateInfo->dataSize) + " 字节");
-			this->WriteLog("十六进制预览: " + updateInfo->hexPreview);
-			this->WriteLog("ASCII预览: " + updateInfo->asciiPreview);
+			const DWORD kUiLogThrottleMs = 1000;  // UI日志默认一秒输出一次
+			DWORD nowTick = ::GetTickCount();
+			bool shouldLog = m_receiveVerboseLogging;
+
+			if (!shouldLog)
+			{
+				// 数据量大或超过节流间隔时输出一次，避免日志持续膨胀
+				if (updateInfo->dataSize >= 64 * 1024)
+				{
+					shouldLog = true;
+				}
+				else if (nowTick - m_lastUiLogTick >= kUiLogThrottleMs)
+				{
+					shouldLog = true;
+				}
+			}
+
+			if (shouldLog)
+			{
+				m_lastUiLogTick = nowTick;
+				this->WriteLog("=== 轻量级UI更新信息 ===");
+				this->WriteLog("接收数据大小: " + std::to_string(updateInfo->dataSize) + " 字节");
+				this->WriteLog("十六进制预览: " + updateInfo->hexPreview);
+				this->WriteLog("ASCII预览: " + updateInfo->asciiPreview);
+			}
 
 			// 更新UI显示的接收统计（与直接落盘的m_totalReceivedBytes区分）
 			m_bytesReceived += updateInfo->dataSize;
@@ -3792,7 +3822,10 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			// 注意：数据已经在ThreadSafeAppendReceiveData中直接落盘和更新内存缓存
 			ThrottledUpdateReceiveDisplay();
 
-			this->WriteLog("=== 轻量级UI更新完成 ===");
+			if (shouldLog)
+			{
+				this->WriteLog("=== 轻量级UI更新完成 ===");
+			}
 		}
 		catch (const std::exception &e)
 		{
@@ -3819,6 +3852,30 @@ LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
+void CPortMasterDlg::SetProgressPercent(int percent, bool forceReset)
+{
+	if (percent < 0)
+	{
+		percent = 0;
+	}
+	else if (percent > 100)
+	{
+		percent = 100;
+	}
+
+	// 【进度守护】默认保持进度单调递增，避免多线程回退覆盖造成闪烁
+	if (!forceReset && percent < static_cast<int>(m_lastProgressPercent))
+	{
+		percent = static_cast<int>(m_lastProgressPercent);
+	}
+	else
+	{
+		m_lastProgressPercent = static_cast<uint32_t>(percent);
+	}
+
+	m_progress.SetPos(percent);
+}
+
 // 新增：传输进度条范围设置消息处理
 LRESULT CPortMasterDlg::OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam)
 {
@@ -3829,7 +3886,7 @@ LRESULT CPortMasterDlg::OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam
 // 新增：传输进度条更新消息处理
 LRESULT CPortMasterDlg::OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lParam)
 {
-	m_progress.SetPos((int)lParam);
+	SetProgressPercent(static_cast<int>(lParam));
 	return 0;
 }
 
@@ -3857,7 +3914,7 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_transmissionPaused = false;
 		m_btnSend.SetWindowText(_T("发送"));
 		m_staticPortStatus.SetWindowText(_T("传输已终止"));
-		m_progress.SetPos(0);
+		SetProgressPercent(0, true);
 	}
 	else if (error != TransportError::Success)
 	{
@@ -3897,7 +3954,7 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		MessageBox(errorMsg, errorTitle, MB_OK | MB_ICONERROR);
 
 		// 重置进度条
-		m_progress.SetPos(0);
+		SetProgressPercent(0, true);
 
 		// 恢复连接状态显示
 		UpdateConnectionStatus();
@@ -3920,7 +3977,7 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		CString completeStatus;
 		completeStatus.Format(_T("传输完成: %u 字节"), data.size());
 		m_staticPortStatus.SetWindowText(completeStatus);
-		m_progress.SetPos(100);
+		SetProgressPercent(100);
 
 		// 添加传输完成提示对话框
 		CString successMsg;
@@ -4680,7 +4737,7 @@ bool CPortMasterDlg::WaitForReceiveDataStability(size_t maxChecks, uint32_t inte
 
 		if (hasPreviousSample && currentBytes == previousBytes && currentFileSize == previousFileSize)
 		{
-			stableBytes = currentBytes;
+			stableBytes = (currentFileSize > 0) ? currentFileSize : currentBytes;
 			stableFileSize = currentFileSize;
 			this->WriteLog("保存稳定性检测通过，缓冲与文件大小保持一致");
 			return true;
@@ -4697,7 +4754,7 @@ bool CPortMasterDlg::WaitForReceiveDataStability(size_t maxChecks, uint32_t inte
 		}
 	}
 
-	stableBytes = previousBytes;
+	stableBytes = (previousFileSize > 0) ? previousFileSize : previousBytes;
 	stableFileSize = previousFileSize;
 	this->WriteLog("保存稳定性检测未达一致，可能仍有数据写入");
 	return false;

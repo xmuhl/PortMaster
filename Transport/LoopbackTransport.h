@@ -19,6 +19,7 @@ struct LoopbackConfig : public TransportConfig
     bool enableJitter = false;          // 启用抖动模拟
     uint32_t jitterMaxMs = 5;           // 最大抖动时间(ms)
     uint32_t maxQueueSize = 50000;      // 【P0修复】扩大队列容量支持大文件传输（原值10000）
+    uint32_t handshakeProtectionCount = 10; // 【P1优化】握手保护包数量，前N个包不丢包保护握手阶段
     bool enableLogging = true;          // 启用详细日志
     
     LoopbackConfig()
@@ -134,6 +135,7 @@ private:
     
     // 序列号管理
     std::atomic<uint32_t> m_sequenceCounter;
+    std::atomic<uint32_t> m_packetsProcessed; // 【P1优化】已处理包计数，用于握手保护
     
     // 回调函数
     DataReceivedCallback m_dataReceivedCallback;

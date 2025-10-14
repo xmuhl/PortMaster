@@ -10,7 +10,7 @@
 
 // 构造函数
 LoopbackTransport::LoopbackTransport()
-    : m_state(TransportState::Closed), m_stopLoopback(false), m_loopbackTestRunning(false), m_sequenceCounter(0), m_randomGenerator(m_randomDevice()), m_percentDistribution(0, 99)
+    : m_state(TransportState::Closed), m_stopLoopback(false), m_loopbackTestRunning(false), m_sequenceCounter(0), m_packetsProcessed(0), m_randomGenerator(m_randomDevice()), m_percentDistribution(0, 99)
 {
     m_stats = LoopbackStats();
     m_lastStatsUpdate = std::chrono::steady_clock::now();
@@ -70,6 +70,9 @@ TransportError LoopbackTransport::Open(const TransportConfig &config)
 
     // 重置统计信息
     ResetStats();
+
+    // 【P1优化】重置握手保护计数器
+    m_packetsProcessed = 0;
 
     // 更新状态
     m_state = TransportState::Opening;
@@ -542,8 +545,13 @@ void LoopbackTransport::LoopbackWorkerThread()
                 WriteAsync(testData.c_str(), testData.length());
             }
 
-            // 短暂休眠，避免过度占用CPU
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // 【P1优化】短暂休眠，避免过度占用CPU - 降低延迟提高响应速度
+            // 在高负载时快速处理，空闲时适度休眠
+            if (m_sendQueue.empty() && m_receiveQueue.empty())
+            {
+                std::this_thread::sleep_for(std::chrono::microseconds(100)); // 空闲时休眠100微秒
+            }
+            // 有数据时不休眠，立即处理下一个包
         }
         catch (const std::exception &e)
         {
@@ -569,15 +577,26 @@ void LoopbackTransport::ProcessSendQueue()
     m_sendQueue.pop();
     sendLock.unlock();
 
-    // 模拟传输延迟
+    // 【P1优化】模拟传输延迟 - 当配置为0延迟时跳过，提高回路响应速度
     uint32_t delay = CalculateDelay();
-    SimulateDelay(delay);
+    if (delay > 0)
+    {
+        SimulateDelay(delay);
+    }
 
-    // 检查是否模拟丢包
-    if (packet.shouldLoss)
+    // 【P1优化】握手保护 - 前N个包不丢包，确保握手成功
+    uint32_t currentPacketIndex = m_packetsProcessed.fetch_add(1);
+    bool inHandshakeProtection = (currentPacketIndex < m_config.handshakeProtectionCount);
+
+    // 检查是否模拟丢包（握手保护期内不丢包）
+    if (!inHandshakeProtection && packet.shouldLoss)
     {
         LogOperation("处理数据包", "数据包 #" + std::to_string(packet.sequenceId) + " 被丢弃（模拟丢包）");
         return;
+    }
+    else if (inHandshakeProtection && packet.shouldLoss)
+    {
+        LogOperation("处理数据包", "数据包 #" + std::to_string(packet.sequenceId) + " 在握手保护期内，跳过丢包");
     }
 
     // 检查是否模拟错误
