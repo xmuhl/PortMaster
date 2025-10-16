@@ -49,6 +49,7 @@ Analysis of project documents (`docs/PortMaster_代码全量分析报告.md`) re
 - Correctly implementing the reliable protocol's handshake and state machine.
 - Fixing hardware-specific timeout and status-checking logic.
 - Ensuring all port configurations are correctly saved and loaded.
+- Follow the restructuring guidance recorded in `docs/PortMasterDlg模块拆分评估.md` before modifying `src/PortMasterDlg.cpp`，并确保该文档保持同步更新。
 
 ## 2. Building and Running
 

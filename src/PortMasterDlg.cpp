@@ -35,7 +35,7 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
-// 对话框数据
+	// 对话框数据
 #ifdef AFX_DESIGN_TIME
 	enum
 	{
@@ -44,7 +44,7 @@ public:
 #endif
 
 protected:
-	virtual void DoDataExchange(CDataExchange *pDX); // DDX/DDV 支持
+	virtual void DoDataExchange(CDataExchange* pDX); // DDX/DDV 支持
 
 	// 实现
 protected:
@@ -55,7 +55,7 @@ CAboutDlg::CAboutDlg() : CDialogEx(IDD_ABOUTBOX)
 {
 }
 
-void CAboutDlg::DoDataExchange(CDataExchange *pDX)
+void CAboutDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
 }
@@ -64,7 +64,7 @@ BEGIN_MESSAGE_MAP(CAboutDlg, CDialogEx)
 END_MESSAGE_MAP()
 
 // 日志写入函数
-void CPortMasterDlg::WriteLog(const std::string &message)
+void CPortMasterDlg::WriteLog(const std::string& message)
 {
 	try
 	{
@@ -79,7 +79,7 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 		// 格式化时间字符串
 		char timeStr[32];
 		sprintf_s(timeStr, sizeof(timeStr), "[%02d:%02d:%02d.%03d] ",
-				  tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(ms.count()));
+			tm.tm_hour, tm.tm_min, tm.tm_sec, static_cast<int>(ms.count()));
 
 		// 打开日志文件（追加模式）
 		std::ofstream logFile("PortMaster_debug.log", std::ios::app);
@@ -97,36 +97,36 @@ void CPortMasterDlg::WriteLog(const std::string &message)
 
 // CPortMasterDlg 对话框
 
-CPortMasterDlg::CPortMasterDlg(CWnd *pParent /*=nullptr*/)
+CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_PORTMASTER_DIALOG, pParent),
-	  m_transport(nullptr),
-	  m_reliableChannel(nullptr),
-	  m_isConnected(false),
-	  m_isTransmitting(false),
-	  m_transmissionPaused(false),
-	  m_transmissionCancelled(false),
-	  m_receiveThread(),
-	  m_transmissionThread(),
-	  m_reliableSessionMutex(),
-	  m_reliableExpectedBytes(0),
-	  m_reliableReceivedBytes(0),
-	  m_bytesSent(0),
-	  m_bytesReceived(0),
-	  m_sendSpeed(0),
-	  m_receiveSpeed(0),
-	  m_lastProgressPercent(0),
-	  m_configStore(ConfigStore::GetInstance()),
-	  m_binaryDataDetected(false),
-	  m_updateDisplayInProgress(false),
-	  m_receiveVerboseLogging(false),
-	  m_receiveDisplayPending(false),
-	  m_lastReceiveDisplayUpdate(0),
-	  m_lastUiLogTick(0)
+	m_transport(nullptr),
+	m_reliableChannel(nullptr),
+	m_isConnected(false),
+	m_isTransmitting(false),
+	m_transmissionPaused(false),
+	m_transmissionCancelled(false),
+	m_receiveThread(),
+	m_transmissionThread(),
+	m_reliableSessionMutex(),
+	m_reliableExpectedBytes(0),
+	m_reliableReceivedBytes(0),
+	m_bytesSent(0),
+	m_bytesReceived(0),
+	m_sendSpeed(0),
+	m_receiveSpeed(0),
+	m_lastProgressPercent(0),
+	m_configStore(ConfigStore::GetInstance()),
+	m_binaryDataDetected(false),
+	m_updateDisplayInProgress(false),
+	m_receiveVerboseLogging(false),
+	m_receiveDisplayPending(false),
+	m_lastReceiveDisplayUpdate(0),
+	m_lastUiLogTick(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
 
-void CPortMasterDlg::DoDataExchange(CDataExchange *pDX)
+void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 {
 	CDialogEx::DoDataExchange(pDX);
 
@@ -173,33 +173,33 @@ void CPortMasterDlg::DoDataExchange(CDataExchange *pDX)
 }
 
 BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
-ON_WM_SYSCOMMAND()
-ON_WM_PAINT()
-ON_WM_QUERYDRAGICON()
-ON_WM_DROPFILES()
-ON_BN_CLICKED(IDC_BUTTON_CONNECT, &CPortMasterDlg::OnBnClickedButtonConnect)
-ON_BN_CLICKED(IDC_BUTTON_DISCONNECT, &CPortMasterDlg::OnBnClickedButtonDisconnect)
-ON_BN_CLICKED(IDC_BUTTON_SEND, &CPortMasterDlg::OnBnClickedButtonSend)
-ON_BN_CLICKED(IDC_BUTTON_STOP, &CPortMasterDlg::OnBnClickedButtonStop)
-ON_BN_CLICKED(IDC_BUTTON_FILE, &CPortMasterDlg::OnBnClickedButtonFile)
-ON_BN_CLICKED(IDC_BUTTON_CLEAR_ALL, &CPortMasterDlg::OnBnClickedButtonClearAll)
-ON_BN_CLICKED(IDC_BUTTON_CLEAR_RECEIVE, &CPortMasterDlg::OnBnClickedButtonClearReceive)
-ON_BN_CLICKED(IDC_BUTTON_COPY_ALL, &CPortMasterDlg::OnBnClickedButtonCopyAll)
-ON_BN_CLICKED(IDC_BUTTON_SAVE_ALL, &CPortMasterDlg::OnBnClickedButtonSaveAll)
-ON_CBN_SELCHANGE(IDC_COMBO_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangeComboPortType)
-ON_BN_CLICKED(IDC_CHECK_HEX, &CPortMasterDlg::OnBnClickedCheckHex)
-ON_BN_CLICKED(IDC_RADIO_RELIABLE, &CPortMasterDlg::OnBnClickedRadioReliable)
-ON_BN_CLICKED(IDC_RADIO_DIRECT, &CPortMasterDlg::OnBnClickedRadioDirect)
-ON_EN_CHANGE(IDC_EDIT_SEND_DATA, &CPortMasterDlg::OnEnChangeEditSendData)
-ON_WM_TIMER()
-ON_MESSAGE(WM_USER + 1, &CPortMasterDlg::OnTransportDataReceivedMessage)
-ON_MESSAGE(WM_USER + 2, &CPortMasterDlg::OnTransportErrorMessage)
-ON_MESSAGE(WM_USER + 10, &CPortMasterDlg::OnTransmissionProgressRange)
-ON_MESSAGE(WM_USER + 11, &CPortMasterDlg::OnTransmissionProgressUpdate)
-ON_MESSAGE(WM_USER + 12, &CPortMasterDlg::OnTransmissionStatusUpdate)
-ON_MESSAGE(WM_USER + 13, &CPortMasterDlg::OnTransmissionComplete)
-ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
-ON_MESSAGE(WM_USER + 15, &CPortMasterDlg::OnCleanupTransmissionTask)
+	ON_WM_SYSCOMMAND()
+	ON_WM_PAINT()
+	ON_WM_QUERYDRAGICON()
+	ON_WM_DROPFILES()
+	ON_BN_CLICKED(IDC_BUTTON_CONNECT, &CPortMasterDlg::OnBnClickedButtonConnect)
+	ON_BN_CLICKED(IDC_BUTTON_DISCONNECT, &CPortMasterDlg::OnBnClickedButtonDisconnect)
+	ON_BN_CLICKED(IDC_BUTTON_SEND, &CPortMasterDlg::OnBnClickedButtonSend)
+	ON_BN_CLICKED(IDC_BUTTON_STOP, &CPortMasterDlg::OnBnClickedButtonStop)
+	ON_BN_CLICKED(IDC_BUTTON_FILE, &CPortMasterDlg::OnBnClickedButtonFile)
+	ON_BN_CLICKED(IDC_BUTTON_CLEAR_ALL, &CPortMasterDlg::OnBnClickedButtonClearAll)
+	ON_BN_CLICKED(IDC_BUTTON_CLEAR_RECEIVE, &CPortMasterDlg::OnBnClickedButtonClearReceive)
+	ON_BN_CLICKED(IDC_BUTTON_COPY_ALL, &CPortMasterDlg::OnBnClickedButtonCopyAll)
+	ON_BN_CLICKED(IDC_BUTTON_SAVE_ALL, &CPortMasterDlg::OnBnClickedButtonSaveAll)
+	ON_CBN_SELCHANGE(IDC_COMBO_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangeComboPortType)
+	ON_BN_CLICKED(IDC_CHECK_HEX, &CPortMasterDlg::OnBnClickedCheckHex)
+	ON_BN_CLICKED(IDC_RADIO_RELIABLE, &CPortMasterDlg::OnBnClickedRadioReliable)
+	ON_BN_CLICKED(IDC_RADIO_DIRECT, &CPortMasterDlg::OnBnClickedRadioDirect)
+	ON_EN_CHANGE(IDC_EDIT_SEND_DATA, &CPortMasterDlg::OnEnChangeEditSendData)
+	ON_WM_TIMER()
+	ON_MESSAGE(WM_USER + 1, &CPortMasterDlg::OnTransportDataReceivedMessage)
+	ON_MESSAGE(WM_USER + 2, &CPortMasterDlg::OnTransportErrorMessage)
+	ON_MESSAGE(WM_USER + 10, &CPortMasterDlg::OnTransmissionProgressRange)
+	ON_MESSAGE(WM_USER + 11, &CPortMasterDlg::OnTransmissionProgressUpdate)
+	ON_MESSAGE(WM_USER + 12, &CPortMasterDlg::OnTransmissionStatusUpdate)
+	ON_MESSAGE(WM_USER + 13, &CPortMasterDlg::OnTransmissionComplete)
+	ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
+	ON_MESSAGE(WM_USER + 15, &CPortMasterDlg::OnCleanupTransmissionTask)
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -214,7 +214,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
 	ASSERT(IDM_ABOUTBOX < 0xF000);
 
-	CMenu *pSysMenu = GetSystemMenu(FALSE);
+	CMenu* pSysMenu = GetSystemMenu(FALSE);
 	if (pSysMenu != nullptr)
 	{
 		BOOL bNameValid;
@@ -241,7 +241,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	m_comboPortType.AddString(_T("USB打印"));
 	m_comboPortType.AddString(_T("网络打印"));
 	m_comboPortType.AddString(_T("回路测试"));
-	m_comboPortType.SetCurSel(0);
+	//m_comboPortType.SetCurSel(0);
+	// 默认选择回路测试
+	m_comboPortType.SetCurSel(4);
 
 	// 初始化端口列表
 	m_comboPort.AddString(_T("COM1"));
@@ -270,9 +272,12 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 初始化超时编辑框
 	SetDlgItemText(IDC_EDIT_TIMEOUT, _T("1000"));
 
-	// 初始化单选按钮 - 默认选择直通模式
-	m_radioReliable.SetCheck(BST_UNCHECKED);
-	m_radioDirect.SetCheck(BST_CHECKED);
+	//// 初始化单选按钮 - 默认选择直通模式
+	//m_radioReliable.SetCheck(BST_UNCHECKED);
+	//m_radioDirect.SetCheck(BST_CHECKED);
+	// 默认选择可靠模式
+	m_radioReliable.SetCheck(BST_CHECKED);
+	m_radioDirect.SetCheck(BST_UNCHECKED);
 
 	// 初始化占用检测复选框 - 默认勾选直通模式
 	m_checkOccupy.SetCheck(BST_CHECKED);
@@ -284,7 +289,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 显示初始状态
 	LogMessage(_T("程序启动成功"));
 	SetDlgItemText(IDC_STATIC_PORT_STATUS, _T("未连接"));
-	SetDlgItemText(IDC_STATIC_MODE, _T("直通")); // 与默认选择的直通模式保持一致
+	//SetDlgItemText(IDC_STATIC_MODE, _T("直通")); // 与默认选择的直通模式保持一致
+	// 获取当前模式选项并更新显示(可靠/直通)
+
 	SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
 	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("手动输入"));
 
@@ -543,7 +550,7 @@ void CPortMasterDlg::StartTransmission()
 	}
 
 	m_transmissionThread = std::thread([this]()
-									   { PerformDataTransmission(); });
+		{ PerformDataTransmission(); });
 }
 
 // 【P1修复】更新传输控制方法 - 使用TransmissionTask实现暂停/恢复
@@ -617,7 +624,7 @@ void CPortMasterDlg::PerformDataTransmission()
 		{
 			this->WriteLog("PerformDataTransmission: 使用可靠传输通道");
 			m_currentTransmissionTask = std::make_unique<ReliableTransmissionTask>(
-				std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*){}));
+				std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*) {}));
 		}
 		else if (m_transport && m_transport->IsOpen())
 		{
@@ -696,8 +703,8 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	if (progress.bytesTransmitted % (progress.totalBytes / 10 + 1) == 0 || progress.progressPercent == 100)
 	{
 		this->WriteLog("传输进度: " + std::to_string(progress.bytesTransmitted) + "/" +
-					   std::to_string(progress.totalBytes) + " 字节 (" +
-					   std::to_string(progress.progressPercent) + "%)");
+			std::to_string(progress.totalBytes) + " 字节 (" +
+			std::to_string(progress.progressPercent) + "%)");
 	}
 }
 
@@ -705,9 +712,9 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 void CPortMasterDlg::OnTransmissionCompleted(const TransmissionResult& result)
 {
 	this->WriteLog("传输任务完成: 状态=" + std::to_string(static_cast<int>(result.finalState)) +
-				   ", 错误码=" + std::to_string(static_cast<int>(result.errorCode)) +
-				   ", 传输字节=" + std::to_string(result.bytesTransmitted) +
-				   ", 耗时=" + std::to_string(result.duration.count()) + "ms");
+		", 错误码=" + std::to_string(static_cast<int>(result.errorCode)) +
+		", 传输字节=" + std::to_string(result.bytesTransmitted) +
+		", 耗时=" + std::to_string(result.duration.count()) + "ms");
 
 	// 【关键修复】不在传输线程中直接析构任务对象，改为PostMessage到UI线程
 	// 原因：当前回调在传输线程中执行，直接reset()会导致线程试图join自己，造成死锁
@@ -770,7 +777,7 @@ void CPortMasterDlg::ClearAllCacheData()
 
 		this->WriteLog("已清除接收缓存数据，发送窗口数据保持不变");
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		this->WriteLog("清除缓存数据时发生异常: " + std::string(e.what()));
 	}
@@ -816,19 +823,19 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 
 	// 无论是否勾选16进制模式，都使用相同的过滤器配置
 	filter = _T("所有文件 (*.*)|*.*|")
-			 _T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
-			 _T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
-			 _T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
-			 _T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
-			 _T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
-			 _T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
-			 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
+		_T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
+		_T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
+		_T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
+		_T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
+		_T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
+		_T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
+		_T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
 	defaultExt = _T("");
 
 	// 文件选择对话框
 	CFileDialog dlg(TRUE, defaultExt, NULL,
-					OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-					filter);
+		OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+		filter);
 
 	if (dlg.DoModal() == IDOK)
 	{
@@ -843,7 +850,7 @@ void CPortMasterDlg::OnBnClickedButtonFile()
 	}
 }
 
-void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
+void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 {
 	CFile file;
 	if (file.Open(filePath, CFile::modeRead))
@@ -851,7 +858,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 		ULONGLONG fileLength = file.GetLength();
 		if (fileLength > 0)
 		{
-			BYTE *fileBuffer = new BYTE[(size_t)fileLength + 2];
+			BYTE* fileBuffer = new BYTE[(size_t)fileLength + 2];
 			file.Read(fileBuffer, (UINT)fileLength);
 			fileBuffer[fileLength] = 0;
 			fileBuffer[fileLength + 1] = 0;
@@ -862,21 +869,21 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 			fileExt.MakeLower();
 
 			bool isBinaryFile = (fileExt == _T("prn") || fileExt == _T("bin") ||
-								 fileExt == _T("dat") || fileExt == _T("exe") ||
-								 fileExt == _T("dll") || fileExt == _T("img") ||
-								 fileExt == _T("zip") || fileExt == _T("rar") ||
-								 fileExt == _T("7z") || fileExt == _T("tar") ||
-								 fileExt == _T("gz") || fileExt == _T("bz2") ||
-								 fileExt == _T("xz") || fileExt == _T("iso") ||
-								 fileExt == _T("pdf") || fileExt == _T("doc") ||
-								 fileExt == _T("docx") || fileExt == _T("xls") ||
-								 fileExt == _T("xlsx") || fileExt == _T("ppt") ||
-								 fileExt == _T("pptx") || fileExt == _T("jpg") ||
-								 fileExt == _T("jpeg") || fileExt == _T("png") ||
-								 fileExt == _T("gif") || fileExt == _T("bmp") ||
-								 fileExt == _T("tiff") || fileExt == _T("mp3") ||
-								 fileExt == _T("mp4") || fileExt == _T("avi") ||
-								 fileExt == _T("mkv") || fileExt == _T("wmv"));
+				fileExt == _T("dat") || fileExt == _T("exe") ||
+				fileExt == _T("dll") || fileExt == _T("img") ||
+				fileExt == _T("zip") || fileExt == _T("rar") ||
+				fileExt == _T("7z") || fileExt == _T("tar") ||
+				fileExt == _T("gz") || fileExt == _T("bz2") ||
+				fileExt == _T("xz") || fileExt == _T("iso") ||
+				fileExt == _T("pdf") || fileExt == _T("doc") ||
+				fileExt == _T("docx") || fileExt == _T("xls") ||
+				fileExt == _T("xlsx") || fileExt == _T("ppt") ||
+				fileExt == _T("pptx") || fileExt == _T("jpg") ||
+				fileExt == _T("jpeg") || fileExt == _T("png") ||
+				fileExt == _T("gif") || fileExt == _T("bmp") ||
+				fileExt == _T("tiff") || fileExt == _T("mp3") ||
+				fileExt == _T("mp4") || fileExt == _T("avi") ||
+				fileExt == _T("mkv") || fileExt == _T("wmv"));
 
 			CString fileContent;
 
@@ -896,7 +903,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 				int wideLen = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)displaySize, NULL, 0);
 				if (wideLen > 0)
 				{
-					wchar_t *wideStr = new wchar_t[wideLen + 1];
+					wchar_t* wideStr = new wchar_t[wideLen + 1];
 					MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)displaySize, wideStr, wideLen);
 					wideStr[wideLen] = 0;
 					fileContent = wideStr;
@@ -945,7 +952,7 @@ void CPortMasterDlg::LoadDataFromFile(const CString &filePath)
 					int fullWideLen = MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)fileLength, NULL, 0);
 					if (fullWideLen > 0)
 					{
-						wchar_t *fullWideStr = new wchar_t[fullWideLen + 1];
+						wchar_t* fullWideStr = new wchar_t[fullWideLen + 1];
 						MultiByteToWideChar(CP_ACP, 0, (LPCSTR)fileBuffer, (int)fileLength, fullWideStr, fullWideLen);
 						fullWideStr[fullWideLen] = 0;
 						fullContent = fullWideStr;
@@ -1009,7 +1016,7 @@ void CPortMasterDlg::UpdatePortParameters()
 	{
 		// 使用SetupAPI枚举实际串口
 		std::vector<std::string> ports = SerialTransport::EnumerateSerialPorts();
-		for (const auto &port : ports)
+		for (const auto& port : ports)
 		{
 			m_comboPort.AddString(CString(port.c_str()));
 		}
@@ -1034,7 +1041,7 @@ void CPortMasterDlg::UpdatePortParameters()
 	{
 		// 枚举并口
 		std::vector<std::string> ports = ParallelTransport::EnumerateParallelPorts();
-		for (const auto &port : ports)
+		for (const auto& port : ports)
 		{
 			m_comboPort.AddString(CString(port.c_str()));
 		}
@@ -1058,7 +1065,7 @@ void CPortMasterDlg::UpdatePortParameters()
 	{
 		// 枚举USB打印端口
 		std::vector<std::string> ports = UsbPrintTransport::EnumerateUsbPorts();
-		for (const auto &port : ports)
+		for (const auto& port : ports)
 		{
 			m_comboPort.AddString(CString(port.c_str()));
 		}
@@ -1169,14 +1176,14 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 	}
 }
 
-CString CPortMasterDlg::StringToHex(const CString &str)
+CString CPortMasterDlg::StringToHex(const CString& str)
 {
 	CString hexStr;
 	CString asciiStr;
 
 	// 将CString转换为UTF-8字节序列以正确处理Unicode字符
 	CT2A utf8Str(str, CP_UTF8);
-	const char *pUtf8 = utf8Str;
+	const char* pUtf8 = utf8Str;
 	int utf8Len = strlen(pUtf8);
 
 	for (int i = 0; i < utf8Len; i++)
@@ -1235,7 +1242,7 @@ CString CPortMasterDlg::StringToHex(const CString &str)
 	return hexStr;
 }
 
-CString CPortMasterDlg::BytesToHex(const BYTE *data, size_t length)
+CString CPortMasterDlg::BytesToHex(const BYTE* data, size_t length)
 {
 	CString hexStr;
 	CString asciiStr;
@@ -1296,7 +1303,7 @@ CString CPortMasterDlg::BytesToHex(const BYTE *data, size_t length)
 	return hexStr;
 }
 
-CString CPortMasterDlg::HexToString(const CString &hex)
+CString CPortMasterDlg::HexToString(const CString& hex)
 {
 	// 从格式化的十六进制文本中提取纯十六进制字节对
 	CString cleanHex;
@@ -1356,7 +1363,7 @@ CString CPortMasterDlg::HexToString(const CString &hex)
 	{
 		// 添加null终止符确保字符串安全
 		bytes.push_back(0);
-		CA2T utf8Result(reinterpret_cast<const char *>(bytes.data()), CP_UTF8);
+		CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
 		return CString(utf8Result);
 	}
 
@@ -1364,7 +1371,7 @@ CString CPortMasterDlg::HexToString(const CString &hex)
 	return CString();
 }
 
-CString CPortMasterDlg::ExtractHexAsciiText(const CString &hex)
+CString CPortMasterDlg::ExtractHexAsciiText(const CString& hex)
 {
 	// 从格式化的十六进制文本中提取ASCII部分
 	CString asciiText;
@@ -1540,8 +1547,8 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 
 				CString charInfo;
 				charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"),
-								(unsigned int)nonPrintableCount,
-								sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
+					(unsigned int)nonPrintableCount,
+					sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
 				displayText += charInfo;
 
 				if (nullByteCount > 0)
@@ -2092,7 +2099,7 @@ void CPortMasterDlg::ThrottledUpdateReceiveDisplay()
 	}
 }
 
-void CPortMasterDlg::UpdateSendCache(const CString &data)
+void CPortMasterDlg::UpdateSendCache(const CString& data)
 {
 	// 将CString转换为字节序列并缓存
 	m_sendDataCache.clear();
@@ -2117,7 +2124,7 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 		{
 			// 对于非ASCII字符，使用WideCharToMultiByte进行转换
 			wchar_t wch = ch;
-			char utf8Buf[4] = {0};
+			char utf8Buf[4] = { 0 };
 			int utf8Len = WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8Buf, 4, NULL, NULL);
 
 			for (int j = 0; j < utf8Len; j++)
@@ -2131,7 +2138,7 @@ void CPortMasterDlg::UpdateSendCache(const CString &data)
 	m_sendCacheValid = true;
 }
 
-void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE *data, size_t length)
+void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE* data, size_t length)
 {
 	// 直接从字节数据更新缓存，避免任何编码转换
 	m_sendDataCache.clear();
@@ -2147,7 +2154,7 @@ void CPortMasterDlg::UpdateSendCacheFromBytes(const BYTE *data, size_t length)
 	m_sendCacheValid = true;
 }
 
-void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
+void CPortMasterDlg::UpdateSendCacheFromHex(const CString& hexData)
 {
 	// 在十六进制模式下，将十六进制字符串解析为字节数据并缓存
 	m_sendDataCache.clear();
@@ -2194,7 +2201,7 @@ void CPortMasterDlg::UpdateSendCacheFromHex(const CString &hexData)
 	m_sendCacheValid = true;
 }
 
-void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
+void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t>& data)
 {
 	// 添加调试输出：记录缓存更新过程
 	this->WriteLog("=== UpdateReceiveCache 开始 ===");
@@ -2230,18 +2237,18 @@ void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t> &data)
 
 // 【深层修复】线程安全的接收数据直接落盘函数
 // 根据最新检查报告最优解方案：接收线程直接落盘，避免消息队列异步延迟导致的数据丢失
-void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &data)
+void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t>& data)
 {
 	// 使用接收文件专用互斥锁，确保与保存操作完全互斥
 	std::lock_guard<std::mutex> lock(m_receiveFileMutex);
 
 	auto logReceiveDetail = [&](const std::string& message)
-	{
-		if (m_receiveVerboseLogging)
 		{
-			this->WriteLog(message);
-		}
-	};
+			if (m_receiveVerboseLogging)
+			{
+				this->WriteLog(message);
+			}
+		};
 
 	// 增强日志：记录详细的直接落盘过程
 	logReceiveDetail("=== ThreadSafeAppendReceiveData 开始（接收线程直接落盘）===");
@@ -2319,22 +2326,22 @@ void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t> &dat
 	logReceiveDetail("=== ThreadSafeAppendReceiveData 结束（数据已强制落盘）===");
 }
 
-void CPortMasterDlg::LogMessage(const CString &message)
+void CPortMasterDlg::LogMessage(const CString& message)
 {
 	// 实现日志消息显示，支持自动换行且仅显示最新一条
 	CString formattedMessage = message;
 
 	// 确保消息适合控件宽度，实现自动换行效果
-	CWnd *pLogWnd = GetDlgItem(IDC_STATIC_LOG);
+	CWnd* pLogWnd = GetDlgItem(IDC_STATIC_LOG);
 	if (pLogWnd != nullptr)
 	{
 		CRect rect;
 		pLogWnd->GetClientRect(&rect);
 
-		CDC *pDC = pLogWnd->GetDC();
+		CDC* pDC = pLogWnd->GetDC();
 		if (pDC != nullptr)
 		{
-			CFont *pOldFont = pDC->SelectObject(pLogWnd->GetFont());
+			CFont* pOldFont = pDC->SelectObject(pLogWnd->GetFont());
 
 			// 计算可用宽度
 			int maxWidth = rect.Width() - 10; // 留一些边距
@@ -2466,8 +2473,8 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 	// 复制接收数据到剪贴板
 	CString copyData;
 
-		// 优先从临时缓存文件读取原始数据（如果可用）
-		if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
+	// 优先从临时缓存文件读取原始数据（如果可用）
+	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
 	{
 		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
 		if (!cachedData.empty())
@@ -2624,15 +2631,15 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		{
 			// 【延后读取策略】先检查数据源可用性，但不即时读取数据
 			this->WriteLog("策略：检查临时缓存文件可用性");
-			
+
 			// 仅检查文件是否存在，不读取内容
 			// 【关键修复】移除重复声明，直接使用外层变量避免变量遮蔽
 			{
 				std::lock_guard<std::mutex> quickLock(m_receiveFileMutex);
 				// 【修复保存误判】改用文件大小判定，避免依赖可能被清空的统计值
-			tempFileAvailable = PathFileExists(m_tempCacheFilePath) && (GetTempCacheFileSize() > 0);
+				tempFileAvailable = PathFileExists(m_tempCacheFilePath) && (GetTempCacheFileSize() > 0);
 			}
-			
+
 			if (tempFileAvailable)
 			{
 				this->WriteLog("✅ 临时缓存文件可用，将在用户确认保存后读取最新数据");
@@ -2642,7 +2649,7 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 			else
 			{
 				this->WriteLog("⚠️ 临时缓存文件不可用，将使用备选数据源");
-				
+
 				// 使用内存缓存作为备选
 				if (m_receiveCacheValid && !m_receiveDataCache.empty())
 				{
@@ -2656,9 +2663,9 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 		{
 			this->WriteLog("❌ 数据检查失败: " + std::string(e.what()));
 			MessageBox(_T("⚠️ 数据检查失败\n\n")
-					  _T("无法检查接收数据，请稍后重试。\n")
-					  _T("如果问题持续存在，请重新启动传输。"),
-					  _T("检查错误"), MB_OK | MB_ICONERROR);
+				_T("无法检查接收数据，请稍后重试。\n")
+				_T("如果问题持续存在，请重新启动传输。"),
+				_T("检查错误"), MB_OK | MB_ICONERROR);
 			return;
 		}
 	}
@@ -2722,70 +2729,70 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 
 		// 无论是否勾选16进制模式，都使用相同的过滤器配置
 		filter = _T("所有文件 (*.*)|*.*|")
-				 _T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
-				 _T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
-				 _T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
-				 _T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
-				 _T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
-				 _T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
-				 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
+			_T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
+			_T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
+			_T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
+			_T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
+			_T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
+			_T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
+			_T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
 		defaultExt = _T("");
 
 		// 提供多种文件格式选择，包括原始编码的文本文件
 		CFileDialog dlg(FALSE, defaultExt, _T("ReceiveData"),
-						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-						filter);
+			OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+			filter);
 
-			if (dlg.DoModal() == IDOK)
+		if (dlg.DoModal() == IDOK)
+		{
+			// 【关键修复】在用户确认保存后立即读取最新数据，确保数据完整性
+			if (usingReliableBuffer)
 			{
-				// 【关键修复】在用户确认保存后立即读取最新数据，确保数据完整性
-				if (usingReliableBuffer)
+				this->WriteLog("使用可靠模式缓存直接保存数据");
+				SaveBinaryDataToFile(dlg.GetPathName(), binaryData);
+				if (reliableExpectedSize > 0 && static_cast<int64_t>(binaryData.size()) != reliableExpectedSize)
 				{
-					this->WriteLog("使用可靠模式缓存直接保存数据");
-					SaveBinaryDataToFile(dlg.GetPathName(), binaryData);
-					if (reliableExpectedSize > 0 && static_cast<int64_t>(binaryData.size()) != reliableExpectedSize)
-					{
-						CString warnMessage;
-						warnMessage.Format(_T("⚠ 保存完成，但检测到数据长度与预期不一致\n预期: %lld 字节\n实际: %lld 字节"),
-							reliableExpectedSize,
-							static_cast<long long>(binaryData.size()));
-						MessageBox(warnMessage, _T("数据长度告警"), MB_OK | MB_ICONWARNING);
-					}
-					if (m_reliableChannel)
-					{
-						m_reliableChannel->ClearCompletedFileBuffer();
-					}
+					CString warnMessage;
+					warnMessage.Format(_T("⚠ 保存完成，但检测到数据长度与预期不一致\n预期: %lld 字节\n实际: %lld 字节"),
+						reliableExpectedSize,
+						static_cast<long long>(binaryData.size()));
+					MessageBox(warnMessage, _T("数据长度告警"), MB_OK | MB_ICONWARNING);
 				}
-				else if (tempFileAvailable)
+				if (m_reliableChannel)
 				{
-					this->WriteLog("用户确认保存，开始执行数据稳定性检测");
+					m_reliableChannel->ClearCompletedFileBuffer();
+				}
+			}
+			else if (tempFileAvailable)
+			{
+				this->WriteLog("用户确认保存，开始执行数据稳定性检测");
 
-					const size_t kMaxStabilityChecks = 5;
+				const size_t kMaxStabilityChecks = 5;
 				// 【修复保存延迟】缩短稳定性检测间隔时间以减少保存延迟
 				// 5次检查 × 20ms = 100ms总等待时间（原值：5×80ms=400ms）
-					const uint32_t kStabilityIntervalMs = 20;  // 原值：80
-					uint64_t stableBytes = 0;
-					uint64_t stableFileSize = 0;
+				const uint32_t kStabilityIntervalMs = 20;  // 原值：80
+				uint64_t stableBytes = 0;
+				uint64_t stableFileSize = 0;
 
-					CWaitCursor waitCursor;
-					m_btnSaveAll.EnableWindow(FALSE);
-					bool dataStable = WaitForReceiveDataStability(kMaxStabilityChecks, kStabilityIntervalMs, stableBytes, stableFileSize);
-					m_btnSaveAll.EnableWindow(TRUE);
+				CWaitCursor waitCursor;
+				m_btnSaveAll.EnableWindow(FALSE);
+				bool dataStable = WaitForReceiveDataStability(kMaxStabilityChecks, kStabilityIntervalMs, stableBytes, stableFileSize);
+				m_btnSaveAll.EnableWindow(TRUE);
 
-					if (!dataStable)
-					{
-						this->WriteLog("⚠️ 数据稳定性检测未通过，建议用户稍后再试");
-						MessageBox(_T("当前仍有数据写入，请等待片刻后再尝试保存。"),
-								   _T("数据尚未稳定"), MB_OK | MB_ICONINFORMATION);
-						return;
-					}
+				if (!dataStable)
+				{
+					this->WriteLog("⚠️ 数据稳定性检测未通过，建议用户稍后再试");
+					MessageBox(_T("当前仍有数据写入，请等待片刻后再尝试保存。"),
+						_T("数据尚未稳定"), MB_OK | MB_ICONINFORMATION);
+					return;
+				}
 
-					this->WriteLog("数据稳定性检测通过，立即读取临时文件最新数据");
-					
-					// 读取最新的完整数据
-					std::vector<uint8_t> latestData;
-					try
-					{
+				this->WriteLog("数据稳定性检测通过，立即读取临时文件最新数据");
+
+				// 读取最新的完整数据
+				std::vector<uint8_t> latestData;
+				try
+				{
 					std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
 					latestData = ReadAllDataFromTempCacheUnlocked();
 					this->WriteLog("最新数据大小: " + std::to_string(latestData.size()) + " 字节");
@@ -2795,12 +2802,12 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 					{
 						this->WriteLog("❌ 致命错误：从临时文件读取到的数据为空");
 						MessageBox(_T("❌ 数据读取失败\n\n")
-								  _T("无法从临时文件中读取到任何数据。\n")
-								  _T("这可能是由于文件损坏或访问冲突造成的。\n\n")
-								  _T("建议：\n")
-								  _T("• 重新启动传输\n")
-								  _T("• 检查磁盘空间是否充足"),
-								  _T("数据读取错误"), MB_OK | MB_ICONERROR);
+							_T("无法从临时文件中读取到任何数据。\n")
+							_T("这可能是由于文件损坏或访问冲突造成的。\n\n")
+							_T("建议：\n")
+							_T("• 重新启动传输\n")
+							_T("• 检查磁盘空间是否充足"),
+							_T("数据读取错误"), MB_OK | MB_ICONERROR);
 						return;
 					}
 					else if (latestData.size() < 100) // 对于大文件传输，数据应该远大于100字节
@@ -2821,73 +2828,73 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 							this->WriteLog("用户取消保存异常数据");
 							return;
 						}
-						}
 					}
-					catch (const std::exception& e)
-					{
-						this->WriteLog("❌ 读取最新数据失败: " + std::string(e.what()));
+				}
+				catch (const std::exception& e)
+				{
+					this->WriteLog("❌ 读取最新数据失败: " + std::string(e.what()));
 					MessageBox(_T("❌ 数据读取异常\n\n")
-							  _T("无法读取临时文件中的数据：\n") +
-							  CString(e.what()) + _T("\n\n")
-							  _T("请检查：\n")
-							  _T("• 临时文件是否被其他程序占用\n")
-							  _T("• 磁盘空间是否充足\n")
-							  _T("• 文件权限是否正确"),
-							  _T("读取错误"), MB_OK | MB_ICONERROR);
-						return; // 读取失败时直接返回，不保存错误数据
-					}
+						_T("无法读取临时文件中的数据：\n") +
+						CString(e.what()) + _T("\n\n")
+						_T("请检查：\n")
+						_T("• 临时文件是否被其他程序占用\n")
+						_T("• 磁盘空间是否充足\n")
+						_T("• 文件权限是否正确"),
+						_T("读取错误"), MB_OK | MB_ICONERROR);
+					return; // 读取失败时直接返回，不保存错误数据
+				}
 
-					if (stableFileSize > 0 && static_cast<uint64_t>(latestData.size()) != stableFileSize)
-					{
-						this->WriteLog("⚠️ 读取的数据大小与稳定快照不一致，读取值=" +
-							std::to_string(latestData.size()) + "，快照值=" + std::to_string(stableFileSize));
-					}
+				if (stableFileSize > 0 && static_cast<uint64_t>(latestData.size()) != stableFileSize)
+				{
+					this->WriteLog("⚠️ 读取的数据大小与稳定快照不一致，读取值=" +
+						std::to_string(latestData.size()) + "，快照值=" + std::to_string(stableFileSize));
+				}
 
-					SaveBinaryDataToFile(dlg.GetPathName(), latestData);
+				SaveBinaryDataToFile(dlg.GetPathName(), latestData);
 
-					// 【修复】三层验证 - Layer 3: 保存后验证文件大小，确保数据完整写入磁盘
-					// Layer 1: 预保存验证（数据稳定性、非空、大小合理）- 已在上方实现
-					// Layer 2: 保存操作（SaveBinaryDataToFile）- 已完成
-					// Layer 3: 保存后验证（重新打开文件检查大小）- 以下实现
-					if (!VerifySavedFileSize(dlg.GetPathName(), latestData.size()))
-					{
-						CString warnMessage;
-						warnMessage.Format(
-							_T("⚠️ 文件保存验证异常\n\n")
-							_T("文件已保存，但验证发现大小与预期不符。\n\n")
-							_T("预期: %lld 字节\n\n")
-							_T("可能原因：\n")
-							_T("• 磁盘空间不足\n")
-							_T("• 文件系统缓存未完全刷新\n")
-							_T("• 文件被其他程序修改\n\n")
-							_T("建议：\n")
-							_T("• 检查保存文件的实际大小\n")
-							_T("• 如不符预期，请重新保存"),
-							static_cast<long long>(latestData.size())
-						);
-						MessageBox(warnMessage, _T("保存验证警告"), MB_OK | MB_ICONWARNING);
-					}
-					else
-					{
-						this->WriteLog("✅ 三层验证全部通过：文件已成功保存并验证，大小 " +
-						              std::to_string(latestData.size()) + " 字节");
-					}
+				// 【修复】三层验证 - Layer 3: 保存后验证文件大小，确保数据完整写入磁盘
+				// Layer 1: 预保存验证（数据稳定性、非空、大小合理）- 已在上方实现
+				// Layer 2: 保存操作（SaveBinaryDataToFile）- 已完成
+				// Layer 3: 保存后验证（重新打开文件检查大小）- 以下实现
+				if (!VerifySavedFileSize(dlg.GetPathName(), latestData.size()))
+				{
+					CString warnMessage;
+					warnMessage.Format(
+						_T("⚠️ 文件保存验证异常\n\n")
+						_T("文件已保存，但验证发现大小与预期不符。\n\n")
+						_T("预期: %lld 字节\n\n")
+						_T("可能原因：\n")
+						_T("• 磁盘空间不足\n")
+						_T("• 文件系统缓存未完全刷新\n")
+						_T("• 文件被其他程序修改\n\n")
+						_T("建议：\n")
+						_T("• 检查保存文件的实际大小\n")
+						_T("• 如不符预期，请重新保存"),
+						static_cast<long long>(latestData.size())
+					);
+					MessageBox(warnMessage, _T("保存验证警告"), MB_OK | MB_ICONWARNING);
 				}
 				else
 				{
+					this->WriteLog("✅ 三层验证全部通过：文件已成功保存并验证，大小 " +
+						std::to_string(latestData.size()) + " 字节");
+				}
+			}
+			else
+			{
 				// 【安全处理】临时文件不可用时的错误处理
 				this->WriteLog("❌ 临时文件不可用，无法保存完整数据");
 				MessageBox(_T("❌ 数据源不可用\n\n")
-						  _T("临时缓存文件不可用，无法保存完整的接收数据。\n\n")
-						  _T("可能的原因：\n")
-						  _T("• 数据尚未完全接收\n")
-						  _T("• 临时文件已被清理\n")
-						  _T("• 文件访问权限问题\n\n")
-						  _T("建议：\n")
-						  _T("• 等待传输完成后再保存\n")
-						  _T("• 重新启动传输\n")
-						  _T("• 切换到内存缓存模式"),
-						  _T("保存失败"), MB_OK | MB_ICONERROR);
+					_T("临时缓存文件不可用，无法保存完整的接收数据。\n\n")
+					_T("可能的原因：\n")
+					_T("• 数据尚未完全接收\n")
+					_T("• 临时文件已被清理\n")
+					_T("• 文件访问权限问题\n\n")
+					_T("建议：\n")
+					_T("• 等待传输完成后再保存\n")
+					_T("• 重新启动传输\n")
+					_T("• 切换到内存缓存模式"),
+					_T("保存失败"), MB_OK | MB_ICONERROR);
 			}
 		}
 	}
@@ -2901,19 +2908,19 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 
 		// 无论是否勾选16进制模式，都使用相同的过滤器配置
 		filter = _T("所有文件 (*.*)|*.*|")
-				 _T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
-				 _T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
-				 _T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
-				 _T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
-				 _T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
-				 _T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
-				 _T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
+			_T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
+			_T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
+			_T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
+			_T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
+			_T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
+			_T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
+			_T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
 		defaultExt = _T("");
 
 		// 文本模式：保存为文本文件
 		CFileDialog dlg(FALSE, defaultExt, _T("ReceiveData"),
-						OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-						filter);
+			OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
+			filter);
 
 		if (dlg.DoModal() == IDOK)
 		{
@@ -2929,7 +2936,7 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 	this->WriteLog("=== 保存数据调试信息结束 ===");
 }
 
-void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data)
+void CPortMasterDlg::SaveDataToFile(const CString& filePath, const CString& data)
 {
 	this->WriteLog("=== SaveDataToFile 开始 ===");
 	this->WriteLog("保存文件路径: " + std::string(CT2A(filePath)));
@@ -2974,13 +2981,13 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 
 				CString message;
 				message.Format(_T("⚠️ 保存完成但验证失败\n\n")
-							  _T("预期大小: %d 字节\n")
-							  _T("文件路径: %s\n\n")
-							  _T("建议检查：\n")
-							  _T("1. 磁盘空间是否充足\n")
-							  _T("2. 文件是否被其他程序占用\n")
-							  _T("3. 重新保存验证"),
-							  utf8Length, filePath.GetString());
+					_T("预期大小: %d 字节\n")
+					_T("文件路径: %s\n\n")
+					_T("建议检查：\n")
+					_T("1. 磁盘空间是否充足\n")
+					_T("2. 文件是否被其他程序占用\n")
+					_T("3. 重新保存验证"),
+					utf8Length, filePath.GetString());
 				MessageBox(message, _T("保存验证异常"), MB_OK | MB_ICONWARNING);
 			}
 
@@ -2998,7 +3005,7 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 			MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 		}
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		this->WriteLog("保存过程异常: " + std::string(e.what()));
 		MessageBox(_T("保存文件异常"), _T("错误"), MB_OK | MB_ICONERROR);
@@ -3012,7 +3019,7 @@ void CPortMasterDlg::SaveDataToFile(const CString &filePath, const CString &data
 	this->WriteLog("=== SaveDataToFile 结束 ===");
 }
 
-void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data)
+void CPortMasterDlg::SaveBinaryDataToFile(const CString& filePath, const std::vector<uint8_t>& data)
 {
 	this->WriteLog("=== SaveBinaryDataToFile 开始 ===");
 	this->WriteLog("保存文件路径: " + std::string(CT2A(filePath)));
@@ -3059,13 +3066,13 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::ve
 
 				CString message;
 				message.Format(_T("⚠️ 保存完成但验证失败\n\n")
-							  _T("预期大小: %zu 字节\n")
-							  _T("文件路径: %s\n\n")
-							  _T("建议检查：\n")
-							  _T("1. 磁盘空间是否充足\n")
-							  _T("2. 文件是否被其他程序占用\n")
-							  _T("3. 重新保存验证"),
-							  data.size(), filePath.GetString());
+					_T("预期大小: %zu 字节\n")
+					_T("文件路径: %s\n\n")
+					_T("建议检查：\n")
+					_T("1. 磁盘空间是否充足\n")
+					_T("2. 文件是否被其他程序占用\n")
+					_T("3. 重新保存验证"),
+					data.size(), filePath.GetString());
 				MessageBox(message, _T("保存验证异常"), MB_OK | MB_ICONWARNING);
 			}
 
@@ -3083,7 +3090,7 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString &filePath, const std::ve
 			MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 		}
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		this->WriteLog("保存过程异常: " + std::string(e.what()));
 		MessageBox(_T("保存文件异常"), _T("错误"), MB_OK | MB_ICONERROR);
@@ -3180,14 +3187,14 @@ bool CPortMasterDlg::CreateTransport()
 					// 设置回调函数
 					this->WriteLog("CreateTransport: Setting callbacks...");
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(current, total); });
+						{ OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-															   { OnReliableStateChanged(connected); });
+						{ OnReliableStateChanged(connected); });
 
 					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
 					m_reliableChannel->SetCompleteCallback([this](bool success)
-														   { OnReliableComplete(success); });
+						{ OnReliableComplete(success); });
 
 					this->WriteLog("CreateTransport: Callbacks set successfully");
 				}
@@ -3227,14 +3234,14 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(current, total); });
+						{ OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-															   { OnReliableStateChanged(connected); });
+						{ OnReliableStateChanged(connected); });
 
 					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
 					m_reliableChannel->SetCompleteCallback([this](bool success)
-														   { OnReliableComplete(success); });
+						{ OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3272,14 +3279,14 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(current, total); });
+						{ OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-															   { OnReliableStateChanged(connected); });
+						{ OnReliableStateChanged(connected); });
 
 					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
 					m_reliableChannel->SetCompleteCallback([this](bool success)
-														   { OnReliableComplete(success); });
+						{ OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3331,14 +3338,14 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(current, total); });
+						{ OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-															   { OnReliableStateChanged(connected); });
+						{ OnReliableStateChanged(connected); });
 
 					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
 					m_reliableChannel->SetCompleteCallback([this](bool success)
-														   { OnReliableComplete(success); });
+						{ OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3375,14 +3382,14 @@ bool CPortMasterDlg::CreateTransport()
 
 					// 设置回调函数
 					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-														   { OnReliableProgress(current, total); });
+						{ OnReliableProgress(current, total); });
 
 					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-															   { OnReliableStateChanged(connected); });
+						{ OnReliableStateChanged(connected); });
 
 					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
 					m_reliableChannel->SetCompleteCallback([this](bool success)
-														   { OnReliableComplete(success); });
+						{ OnReliableComplete(success); });
 				}
 
 				return true;
@@ -3394,7 +3401,7 @@ bool CPortMasterDlg::CreateTransport()
 			return false;
 		}
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		CString errorMsg;
 		errorMsg.Format(_T("创建传输对象失败: %s"), CString(e.what()));
@@ -3435,49 +3442,49 @@ void CPortMasterDlg::StartReceiveThread()
 	}
 
 	m_receiveThread = std::thread([this]()
-								  {
-        std::vector<uint8_t> buffer(4096);
+		{
+			std::vector<uint8_t> buffer(4096);
 
-        while (m_isConnected)
-        {
-            try
-            {
-                if (m_reliableChannel && m_reliableChannel->IsConnected())
-                {
-                    // 使用可靠传输通道接收数据
-                    std::vector<uint8_t> data;
-                    if (m_reliableChannel->Receive(data, 100)) // 100ms超时
-                    {
-                        OnTransportDataReceived(data);
-                    }
-                }
-                else if (m_transport && m_transport->IsOpen())
-                {
-                    // 使用原始传输接收数据
-                    // 每次读取前清零缓冲区，避免旧数据残留
-                    std::fill(buffer.begin(), buffer.end(), 0);
+			while (m_isConnected)
+			{
+				try
+				{
+					if (m_reliableChannel && m_reliableChannel->IsConnected())
+					{
+						// 使用可靠传输通道接收数据
+						std::vector<uint8_t> data;
+						if (m_reliableChannel->Receive(data, 100)) // 100ms超时
+						{
+							OnTransportDataReceived(data);
+						}
+					}
+					else if (m_transport && m_transport->IsOpen())
+					{
+						// 使用原始传输接收数据
+						// 每次读取前清零缓冲区，避免旧数据残留
+						std::fill(buffer.begin(), buffer.end(), 0);
 
-                    size_t bytesRead = 0;
-                    auto result = m_transport->Read(buffer.data(), buffer.size(), &bytesRead, 100);
-                    if (result == TransportError::Success && bytesRead > 0)
-                    {
-                        std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
-                        OnTransportDataReceived(data);
-                    }
-                    // 【新增】处理超时和空数据情况，避免高频轮询
-                    else
-                    {
-                        // 当Read超时或返回0字节时，短暂休眠避免忙等
-                        // 这样可以将轮询频率从~10次/秒降低到~50次/秒
-                        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-                    }
-                }
-            }
-            catch (const std::exception& e)
-            {
-                OnTransportError(e.what());
-            }
-        } });
+						size_t bytesRead = 0;
+						auto result = m_transport->Read(buffer.data(), buffer.size(), &bytesRead, 100);
+						if (result == TransportError::Success && bytesRead > 0)
+						{
+							std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
+							OnTransportDataReceived(data);
+						}
+						// 【新增】处理超时和空数据情况，避免高频轮询
+						else
+						{
+							// 当Read超时或返回0字节时，短暂休眠避免忙等
+							// 这样可以将轮询频率从~10次/秒降低到~50次/秒
+							std::this_thread::sleep_for(std::chrono::milliseconds(20));
+						}
+					}
+				}
+				catch (const std::exception& e)
+				{
+					OnTransportError(e.what());
+				}
+			} });
 }
 
 void CPortMasterDlg::StopReceiveThread()
@@ -3533,10 +3540,10 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 		bool reliableBufferReady = m_reliableChannel->HasCompletedFile();
 
 		bool hasDataToSave = hasTempFileData ||
-							 cachedBytes > 0 ||
-							 memoryCacheSize > 0 ||
-							 reliableBufferReady ||
-							 hasPendingWrites;
+			cachedBytes > 0 ||
+			memoryCacheSize > 0 ||
+			reliableBufferReady ||
+			hasPendingWrites;
 
 		if (fileTransferActive)
 		{
@@ -3594,16 +3601,16 @@ void CPortMasterDlg::UpdateStatistics()
 	m_staticSpeed.SetWindowText(speedText);
 }
 
-void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
+void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
 {
 	// 【深层修复】根据最新检查报告最优解方案：接收线程直接落盘，避免消息队列异步延迟
 	auto logReceiveDetail = [&](const std::string& message)
-	{
-		if (m_receiveVerboseLogging)
 		{
-			this->WriteLog(message);
-		}
-	};
+			if (m_receiveVerboseLogging)
+			{
+				this->WriteLog(message);
+			}
+		};
 
 	logReceiveDetail("=== OnTransportDataReceived 开始（直接落盘模式）===");
 	logReceiveDetail("接收到数据大小: " + std::to_string(data.size()) + " 字节");
@@ -3652,16 +3659,16 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t> &data)
 		std::string hexPreview;
 		std::string asciiPreview;
 	};
-	UIUpdateInfo* updateInfo = new UIUpdateInfo{data.size(), hexPreview, asciiPreview};
+	UIUpdateInfo* updateInfo = new UIUpdateInfo{ data.size(), hexPreview, asciiPreview };
 	PostMessage(WM_USER + 1, 0, (LPARAM)updateInfo);
 
 	logReceiveDetail("=== OnTransportDataReceived 结束（数据已直接落盘）===");
 }
 
-void CPortMasterDlg::OnTransportError(const std::string &error)
+void CPortMasterDlg::OnTransportError(const std::string& error)
 {
 	// 在主线程中显示错误
-CString errorMsg(error.c_str());
+	CString errorMsg(error.c_str());
 	PostMessage(WM_USER + 2, 0, (LPARAM) new CString(errorMsg));
 }
 
@@ -3677,7 +3684,7 @@ void CPortMasterDlg::ConfigureReliableLogging()
 	m_reliableChannel->SetVerboseLoggingEnabled(enableVerbose);
 
 	this->WriteLog(std::string("ReliableChannel 日志级别调整：") +
-				   (enableVerbose ? "开启 Verbose 输出" : "关闭 Verbose 输出"));
+		(enableVerbose ? "开启 Verbose 输出" : "关闭 Verbose 输出"));
 }
 
 void CPortMasterDlg::OnReliableProgress(int64_t current, int64_t total)
@@ -3733,7 +3740,7 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		if (tempFileSize > 0)
 		{
 			WriteLog("OnReliableComplete: 检测到临时文件有数据(" +
-					std::to_string(tempFileSize) + "字节)，立即启用保存按钮");
+				std::to_string(tempFileSize) + "字节)，立即启用保存按钮");
 			m_btnSaveAll.EnableWindow(TRUE);
 		}
 		else
@@ -3773,7 +3780,7 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 		CString statusText = _T("连接断开");
 		m_staticPortStatus.SetWindowText(statusText);
 		SetProgressPercent(0, true);
-}
+	}
 }
 
 // 自定义消息处理实现
@@ -3781,7 +3788,7 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam)
 {
 	// 【深层修复】处理新的轻量级UI更新信息结构
-	UIUpdateInfo *updateInfo = reinterpret_cast<UIUpdateInfo *>(lParam);
+	UIUpdateInfo* updateInfo = reinterpret_cast<UIUpdateInfo*>(lParam);
 	if (updateInfo)
 	{
 		try
@@ -3827,7 +3834,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 				this->WriteLog("=== 轻量级UI更新完成 ===");
 			}
 		}
-		catch (const std::exception &e)
+		catch (const std::exception& e)
 		{
 			CString errorMsg;
 			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), CString(e.what()));
@@ -3842,7 +3849,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 
 LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
 {
-	CString *errorMsg = reinterpret_cast<CString *>(lParam);
+	CString* errorMsg = reinterpret_cast<CString*>(lParam);
 	if (errorMsg)
 	{
 		MessageBox(*errorMsg, _T("传输错误"), MB_OK | MB_ICONERROR);
@@ -3893,7 +3900,7 @@ LRESULT CPortMasterDlg::OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lPara
 // 新增：传输状态更新消息处理
 LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 {
-	CString *statusText = reinterpret_cast<CString *>(lParam);
+	CString* statusText = reinterpret_cast<CString*>(lParam);
 	if (statusText)
 	{
 		m_staticPortStatus.SetWindowText(*statusText);
@@ -3967,7 +3974,7 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_btnSend.SetWindowText(_T("发送"));
 
 		// 更新发送统计
-		const std::vector<uint8_t> &data = m_sendDataCache;
+		const std::vector<uint8_t>& data = m_sendDataCache;
 		m_bytesSent += data.size();
 		CString sentText;
 		sentText.Format(_T("%u"), m_bytesSent);
@@ -4030,7 +4037,7 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 {
 	try
 	{
-		const PortMasterConfig &config = m_configStore.GetConfig();
+		const PortMasterConfig& config = m_configStore.GetConfig();
 
 		// 加载应用程序配置
 		if (config.app.enableLogging)
@@ -4039,7 +4046,7 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		}
 
 		// 加载串口配置
-		const SerialConfig &serialConfig = config.serial;
+		const SerialConfig& serialConfig = config.serial;
 
 		// 设置端口名
 		SetDlgItemText(IDC_COMBO_PORT, CString(serialConfig.portName.c_str()));
@@ -4101,15 +4108,17 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 		timeoutText.Format(_T("%d"), serialConfig.readTimeout);
 		SetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
 
-		// 设置传输模式 - 始终默认选择直通模式，不受配置文件影响
-		m_radioReliable.SetCheck(BST_UNCHECKED);
-		m_radioDirect.SetCheck(BST_CHECKED);
+		//// 设置传输模式 - 始终默认选择直通模式，不受配置文件影响
+		//m_radioReliable.SetCheck(BST_UNCHECKED);
+		//m_radioDirect.SetCheck(BST_CHECKED);
 
 		// 更新状态栏显示为直通模式
-		SetDlgItemText(IDC_STATIC_MODE, _T("直通"));
+		//SetDlgItemText(IDC_STATIC_MODE, _T("直通"));
+		// 获取当前模式选项并更新显示(可靠/直通)
+		
 
 		// 加载UI配置
-		const UIConfig &uiConfig = config.ui;
+		const UIConfig& uiConfig = config.ui;
 
 		// 设置十六进制显示选项
 		m_checkHex.SetCheck(uiConfig.hexDisplay ? BST_CHECKED : BST_UNCHECKED);
@@ -4119,12 +4128,12 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 			uiConfig.windowX != CW_USEDEFAULT && uiConfig.windowY != CW_USEDEFAULT)
 		{
 			SetWindowPos(nullptr,
-						 uiConfig.windowX, uiConfig.windowY,
-						 uiConfig.windowWidth, uiConfig.windowHeight,
-						 SWP_NOZORDER);
+				uiConfig.windowX, uiConfig.windowY,
+				uiConfig.windowWidth, uiConfig.windowHeight,
+				SWP_NOZORDER);
 		}
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		CString errorMsg;
 		errorMsg.Format(_T("加载配置失败: %s"), CString(e.what()));
@@ -4139,7 +4148,7 @@ void CPortMasterDlg::SaveConfigurationToStore()
 		PortMasterConfig config = m_configStore.GetConfig();
 
 		// 保存串口配置
-		SerialConfig &serialConfig = config.serial;
+		SerialConfig& serialConfig = config.serial;
 
 		// 获取端口名
 		CString portName;
@@ -4204,7 +4213,7 @@ void CPortMasterDlg::SaveConfigurationToStore()
 		}
 
 		// 保存UI配置
-		UIConfig &uiConfig = config.ui;
+		UIConfig& uiConfig = config.ui;
 
 		// 保存十六进制显示选项
 		uiConfig.hexDisplay = (m_checkHex.GetCheck() == BST_CHECKED);
@@ -4223,7 +4232,7 @@ void CPortMasterDlg::SaveConfigurationToStore()
 		// 触发配置变更回调
 		OnConfigurationChanged();
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		CString errorMsg;
 		errorMsg.Format(_T("保存配置失败: %s"), CString(e.what()));
@@ -4249,7 +4258,7 @@ void CPortMasterDlg::OnConfigurationChanged()
 			// 为了安全起见，通常建议用户手动重新连接
 		}
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		CString errorMsg;
 		errorMsg.Format(_T("应用配置变更失败: %s"), CString(e.what()));
@@ -4292,7 +4301,7 @@ bool CPortMasterDlg::InitializeTempCacheFile()
 		WriteLog("临时缓存文件已创建: " + std::string(CStringA(m_tempCacheFilePath)));
 		return true;
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		WriteLog("创建临时缓存文件失败: " + std::string(e.what()));
 		return false;
@@ -4319,7 +4328,7 @@ void CPortMasterDlg::CloseTempCacheFile()
 	m_totalSentBytes = 0;
 }
 
-bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t> &data)
+bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t>& data)
 {
 	if (data.empty())
 	{
@@ -4367,7 +4376,7 @@ bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t> &data)
 		WriteLog("成功写入临时缓存文件，大小: " + std::to_string(data.size()) + " 字节，总计: " + std::to_string(m_totalReceivedBytes) + " 字节");
 		return true;
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		WriteLog("写入临时缓存文件异常: " + std::string(e.what()));
 		return false;
@@ -4425,7 +4434,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 		{
 			result.resize(readLength);
 			file.seekg(offset);
-			file.read(reinterpret_cast<char *>(result.data()), readLength);
+			file.read(reinterpret_cast<char*>(result.data()), readLength);
 
 			if (file.fail())
 			{
@@ -4444,7 +4453,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size
 
 		return result;
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		WriteLog("从临时缓存文件读取数据异常: " + std::string(e.what()));
 		return result;
@@ -4549,9 +4558,9 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 						if (totalBytesRead % (10 * 1024 * 1024) == 0 || remainingBytes == 0)
 						{
 							WriteLog("ReadDataFromTempCacheUnlocked: 读取进度 " +
-									std::to_string(totalBytesRead) + "/" +
-									std::to_string(targetReadLength) + " 字节 (" +
-									std::to_string((totalBytesRead * 100) / targetReadLength) + "%)");
+								std::to_string(totalBytesRead) + "/" +
+								std::to_string(targetReadLength) + " 字节 (" +
+								std::to_string((totalBytesRead * 100) / targetReadLength) + "%)");
 						}
 					}
 					else
@@ -4574,13 +4583,13 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 				if (totalBytesRead == targetReadLength)
 				{
 					WriteLog("ReadDataFromTempCacheUnlocked: ✅ 数据读取完整，成功读取 " +
-							std::to_string(totalBytesRead) + " 字节");
+						std::to_string(totalBytesRead) + " 字节");
 				}
 				else
 				{
 					WriteLog("ReadDataFromTempCacheUnlocked: ⚠️ 数据读取不完整 - 预期: " +
-							std::to_string(targetReadLength) + " 字节，实际: " +
-							std::to_string(totalBytesRead) + " 字节");
+						std::to_string(targetReadLength) + " 字节，实际: " +
+						std::to_string(totalBytesRead) + " 字节");
 
 					// 对于不完整读取，仍然返回已读取的数据，但记录警告
 					if (totalBytesRead == 0)
@@ -4617,7 +4626,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offs
 
 		return result;
 	}
-	catch (const std::exception &e)
+	catch (const std::exception& e)
 	{
 		WriteLog("ReadDataFromTempCacheUnlocked: 读取异常 - " + std::string(e.what()));
 		return result;
@@ -4636,7 +4645,7 @@ std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCacheUnlocked()
 bool CPortMasterDlg::VerifySavedFileSize(const CString& filePath, size_t expectedSize)
 {
 	HANDLE hFile = CreateFile(filePath, GENERIC_READ, FILE_SHARE_READ,
-	                         NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+		NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
 	if (hFile == INVALID_HANDLE_VALUE) {
 		this->WriteLog("❌ 保存验证失败：无法打开文件 " + std::string(CT2A(filePath)));
 		return false;
@@ -4650,12 +4659,14 @@ bool CPortMasterDlg::VerifySavedFileSize(const CString& filePath, size_t expecte
 		if (actualSize == expectedSize) {
 			this->WriteLog("✅ 保存验证成功：" + std::to_string(actualSize) + " 字节");
 			success = true;
-		} else {
+		}
+		else {
 			this->WriteLog("❌ 保存验证失败：期望 " + std::to_string(expectedSize) +
-			              " 字节，实际 " + std::to_string(actualSize) + " 字节");
+				" 字节，实际 " + std::to_string(actualSize) + " 字节");
 			success = false;
 		}
-	} else {
+	}
+	else {
 		this->WriteLog("❌ 保存验证失败：无法获取文件大小");
 		success = false;
 	}
@@ -4732,8 +4743,8 @@ bool CPortMasterDlg::WaitForReceiveDataStability(size_t maxChecks, uint32_t inte
 		uint64_t currentFileSize = GetTempCacheFileSize();
 
 		this->WriteLog("保存稳定性检测: 第 " + std::to_string(attempt + 1) + "/" + std::to_string(maxChecks) +
-					   " 次采样，统计字节=" + std::to_string(currentBytes) +
-					   "，文件大小=" + std::to_string(currentFileSize));
+			" 次采样，统计字节=" + std::to_string(currentBytes) +
+			"，文件大小=" + std::to_string(currentFileSize));
 
 		if (hasPreviousSample && currentBytes == previousBytes && currentFileSize == previousFileSize)
 		{

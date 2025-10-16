@@ -11,16 +11,59 @@
 
 std::string DataPresentationService::BytesToHex(const uint8_t* data, size_t length)
 {
-	// 【阶段二实现】字节转十六进制
-	// TODO: 阶段二迁移BytesToHex()完整逻辑
-	std::ostringstream oss;
-	for (size_t i = 0; i < length; ++i)
+	std::ostringstream hexStream;
+	std::ostringstream asciiStream;
+
+	for (size_t i = 0; i < length; i++)
 	{
-		if (i > 0) oss << " ";
-		oss << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
-			<< static_cast<int>(data[i]);
+		uint8_t byte = data[i];
+
+		// 添加偏移地址(每16字节一行)
+		if (i % 16 == 0)
+		{
+			if (i > 0)
+			{
+				// 添加ASCII显示部分
+				hexStream << "  |" << asciiStream.str() << "|\r\n";
+				asciiStream.str("");
+				asciiStream.clear();
+			}
+
+			// 输出地址偏移
+			hexStream << std::uppercase << std::hex << std::setw(8) << std::setfill('0')
+				<< static_cast<unsigned int>(i) << ": ";
+		}
+
+		// 添加十六进制值
+		hexStream << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+			<< static_cast<int>(byte) << " ";
+
+		// 添加可打印字符到ASCII部分
+		if (byte >= 32 && byte <= 126)
+		{
+			asciiStream << static_cast<char>(byte);
+		}
+		else
+		{
+			asciiStream << ".";
+		}
 	}
-	return oss.str();
+
+	// 处理最后一行
+	if (length % 16 != 0)
+	{
+		// 补齐空格
+		size_t remain = 16 - (length % 16);
+		for (size_t i = 0; i < remain; i++)
+		{
+			hexStream << "   ";
+		}
+	}
+
+	// 添加ASCII显示部分
+	hexStream << "  |" << asciiStream.str() << "|";
+
+	return hexStream.str();
 }
 
 std::string DataPresentationService::BytesToHex(const std::vector<uint8_t>& data)
@@ -30,25 +73,51 @@ std::string DataPresentationService::BytesToHex(const std::vector<uint8_t>& data
 
 std::vector<uint8_t> DataPresentationService::HexToBytes(const std::string& hex)
 {
-	// 【阶段二实现】十六进制转字节
-	// TODO: 阶段二迁移HexToString()完整逻辑
 	std::vector<uint8_t> result;
-	std::string cleaned;
+	std::string cleanHex;
+	bool inHexSection = false;
 
-	// 提取十六进制字符
-	for (char c : hex)
+	// 从格式化的十六进制文本中提取纯十六进制字节对
+	for (size_t i = 0; i < hex.length(); i++)
 	{
-		if (std::isxdigit(c))
+		char ch = hex[i];
+
+		// 检测十六进制数据区域(在冒号之后)
+		if (ch == ':')
 		{
-			cleaned += c;
+			inHexSection = true;
+			continue;
+		}
+
+		// 检测ASCII部分开始(在'|'字符处结束十六进制部分)
+		if (ch == '|')
+		{
+			inHexSection = false;
+			continue;
+		}
+
+		// 只在十六进制数据区域内收集字符
+		if (inHexSection)
+		{
+			// 只保留有效的十六进制字符
+			if (std::isxdigit(ch))
+			{
+				cleanHex += ch;
+			}
 		}
 	}
 
+	// 确保字节对数为偶数
+	if (cleanHex.length() % 2 != 0)
+	{
+		cleanHex = cleanHex.substr(0, cleanHex.length() - 1);
+	}
+
 	// 两个字符一组转换
-	for (size_t i = 0; i + 1 < cleaned.size(); i += 2)
+	for (size_t i = 0; i + 1 < cleanHex.size(); i += 2)
 	{
 		uint8_t high, low;
-		if (HexCharToValue(cleaned[i], high) && HexCharToValue(cleaned[i + 1], low))
+		if (HexCharToValue(cleanHex[i], high) && HexCharToValue(cleanHex[i + 1], low))
 		{
 			result.push_back((high << 4) | low);
 		}
@@ -73,8 +142,6 @@ std::vector<uint8_t> DataPresentationService::TextToBytes(const std::string& tex
 
 bool DataPresentationService::IsBinaryData(const uint8_t* data, size_t length, double threshold)
 {
-	// 【阶段二实现】二进制数据检测
-	// TODO: 阶段二迁移二进制检测逻辑
 	if (length == 0) return false;
 
 	size_t unprintableCount = 0;
@@ -94,40 +161,59 @@ bool DataPresentationService::IsBinaryData(const uint8_t* data, size_t length, d
 
 std::string DataPresentationService::FormatHexAscii(const uint8_t* data, size_t length, size_t bytesPerLine)
 {
-	// 【阶段二实现】十六进制+ASCII混合显示
-	// TODO: 阶段二迁移ExtractHexAsciiText()逻辑
-	std::ostringstream oss;
+	std::ostringstream hexStream;
+	std::ostringstream asciiStream;
 
-	for (size_t i = 0; i < length; i += bytesPerLine)
+	for (size_t i = 0; i < length; i++)
 	{
-		// 十六进制部分
-		size_t lineLength = std::min(bytesPerLine, length - i);
-		for (size_t j = 0; j < lineLength; ++j)
+		uint8_t byte = data[i];
+
+		// 添加偏移地址(每bytesPerLine字节一行)
+		if (i % bytesPerLine == 0)
 		{
-			oss << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
-				<< static_cast<int>(data[i + j]) << " ";
+			if (i > 0)
+			{
+				// 添加ASCII显示部分
+				hexStream << "  |" << asciiStream.str() << "|\r\n";
+				asciiStream.str("");
+				asciiStream.clear();
+			}
+
+			// 输出地址偏移
+			hexStream << std::uppercase << std::hex << std::setw(8) << std::setfill('0')
+				<< static_cast<unsigned int>(i) << ": ";
 		}
 
-		// 填充空白（如果最后一行不足）
-		for (size_t j = lineLength; j < bytesPerLine; ++j)
+		// 添加十六进制值
+		hexStream << std::uppercase << std::hex << std::setw(2) << std::setfill('0')
+			<< static_cast<int>(byte) << " ";
+
+		// 添加可打印字符到ASCII部分
+		if (IsPrintable(byte))
 		{
-			oss << "   ";
+			asciiStream << static_cast<char>(byte);
 		}
-
-		// 分隔符
-		oss << "| ";
-
-		// ASCII部分
-		for (size_t j = 0; j < lineLength; ++j)
+		else
 		{
-			uint8_t byte = data[i + j];
-			oss << (IsPrintable(byte) ? static_cast<char>(byte) : '.');
+			asciiStream << ".";
 		}
-
-		oss << "\n";
 	}
 
-	return oss.str();
+	// 处理最后一行
+	if (length % bytesPerLine != 0)
+	{
+		// 补齐空格
+		size_t remain = bytesPerLine - (length % bytesPerLine);
+		for (size_t i = 0; i < remain; i++)
+		{
+			hexStream << "   ";
+		}
+	}
+
+	// 添加ASCII显示部分
+	hexStream << "  |" << asciiStream.str() << "|";
+
+	return hexStream.str();
 }
 
 // ==================== 显示更新准备 ====================
@@ -137,8 +223,6 @@ DataPresentationService::DisplayUpdate DataPresentationService::PrepareDisplay(
 	bool hexMode,
 	size_t maxDisplaySize)
 {
-	// 【阶段二实现】准备显示更新
-	// TODO: 阶段二迁移UpdateSendDisplayFromCache/UpdateReceiveDisplayFromCache逻辑
 	DisplayUpdate update;
 	update.dataSize = cache.size();
 
@@ -147,7 +231,7 @@ DataPresentationService::DisplayUpdate DataPresentationService::PrepareDisplay(
 
 	if (hexMode)
 	{
-		// 十六进制模式
+		// 十六进制模式：使用完整的格式化显示
 		update.content = BytesToHex(cache.data(), displaySize);
 		update.isBinary = false;
 	}
@@ -157,7 +241,7 @@ DataPresentationService::DisplayUpdate DataPresentationService::PrepareDisplay(
 		update.isBinary = IsBinaryData(cache.data(), displaySize);
 		if (update.isBinary)
 		{
-			// 二进制数据使用混合显示
+			// 二进制数据使用混合显示(十六进制+ASCII侧栏)
 			update.content = FormatHexAscii(cache.data(), displaySize);
 		}
 		else

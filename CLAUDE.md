@@ -118,6 +118,10 @@ To add new transport types:
 - Real-time progress reporting via callback mechanisms
 - Splash screen integration during application startup
 
+## 当前专项说明
+
+- `docs/PortMasterDlg模块拆分评估.md` 汇总了 `src/PortMasterDlg.cpp` 的结构分析与拆分规划，执行相关改动前必须先审阅并更新该文档。
+
 ## 跨环境自动执行工作流程
 
 ### 目标设定

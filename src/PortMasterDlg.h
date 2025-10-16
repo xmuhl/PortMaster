@@ -20,7 +20,7 @@
 class CPortMasterDlg : public CDialogEx
 {
 public:
-	CPortMasterDlg(CWnd *pParent = nullptr);
+	CPortMasterDlg(CWnd* pParent = nullptr);
 
 #ifdef AFX_DESIGN_TIME
 	enum
@@ -30,7 +30,7 @@ public:
 #endif
 
 protected:
-	virtual void DoDataExchange(CDataExchange *pDX);
+	virtual void DoDataExchange(CDataExchange* pDX);
 
 protected:
 	HICON m_hIcon;
@@ -47,8 +47,8 @@ protected:
 	afx_msg void OnEnChangeEditTimeout();
 
 	// Logging functionality
-	void LogMessage(const CString &message);
-	void WriteLog(const std::string &message);
+	void LogMessage(const CString& message);
+	void WriteLog(const std::string& message);
 
 	// 端口类型切换处理
 	void UpdatePortParameters();
@@ -57,9 +57,9 @@ protected:
 	void SendData();
 	void ReceiveData();
 	void UpdateDataDisplay();
-	void LoadDataFromFile(const CString &filePath);
-	void SaveDataToFile(const CString &filePath, const CString &data);
-	void SaveBinaryDataToFile(const CString &filePath, const std::vector<uint8_t> &data);
+	void LoadDataFromFile(const CString& filePath);
+	void SaveDataToFile(const CString& filePath, const CString& data);
+	void SaveBinaryDataToFile(const CString& filePath, const std::vector<uint8_t>& data);
 
 	// 传输控制函数
 	void StartTransmission();
@@ -74,22 +74,22 @@ protected:
 	void OnTransmissionLog(const std::string& message);
 
 	// 十六进制转换函数
-	CString StringToHex(const CString &str);
+	CString StringToHex(const CString& str);
 	CString BytesToHex(const BYTE* data, size_t length); // 新增：处理原始字节数据
-	CString HexToString(const CString &hex);
-	CString ExtractHexAsciiText(const CString &hex);
+	CString HexToString(const CString& hex);
+	CString ExtractHexAsciiText(const CString& hex);
 
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
 	void ThrottledUpdateReceiveDisplay();					   // 【UI优化】节流的接收显示更新
-	void UpdateSendCache(const CString &data);				   // 更新发送缓存
+	void UpdateSendCache(const CString& data);				   // 更新发送缓存
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
-	void UpdateSendCacheFromHex(const CString &hexData);	   // 从十六进制字符串更新发送缓存
-	void UpdateReceiveCache(const std::vector<uint8_t> &data); // 更新接收缓存
+	void UpdateSendCacheFromHex(const CString& hexData);	   // 从十六进制字符串更新发送缓存
+	void UpdateReceiveCache(const std::vector<uint8_t>& data); // 更新接收缓存
 
 	// 【深层修复】线程安全的接收数据直接落盘函数
-	void ThreadSafeAppendReceiveData(const std::vector<uint8_t> &data); // 接收线程直接落盘，避免消息队列异步延迟
+	void ThreadSafeAppendReceiveData(const std::vector<uint8_t>& data); // 接收线程直接落盘，避免消息队列异步延迟
 
 	// 【深层修复】轻量级UI更新信息结构
 	struct UIUpdateInfo {
@@ -190,7 +190,7 @@ private:
 	std::unique_ptr<ThreadSafeProgressManager> m_threadSafeProgressManager;
 
 	// 配置管理
-	ConfigStore &m_configStore;
+	ConfigStore& m_configStore;
 
 	// 传输配置
 	TransportConfig m_transportConfig;
@@ -261,8 +261,8 @@ private:
 
 	// 【可靠模式按钮管控】保存按钮状态控制
 	void UpdateSaveButtonStatus();
-	void OnTransportDataReceived(const std::vector<uint8_t> &data);
-	void OnTransportError(const std::string &error);
+	void OnTransportDataReceived(const std::vector<uint8_t>& data);
+	void OnTransportError(const std::string& error);
 	void OnReliableProgress(int64_t current, int64_t total);
 	void OnReliableComplete(bool success);
 	void OnReliableStateChanged(bool connected);

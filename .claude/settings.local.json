@@ -15,7 +15,13 @@
       "Bash(/mnt/c/Users/huangl/Desktop/PortMaster/AutoTest/AutoTest.exe:*)",
       "Bash(grep:*)",
       "Bash(find:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(Common/ReceiveCacheService.h Common/ReceiveCacheService.cpp )",
+      "Bash(Protocol/PortSessionController.h Protocol/PortSessionController.cpp )",
+      "Bash(src/TransmissionCoordinator.h src/TransmissionCoordinator.cpp )",
+      "Bash(src/DialogConfigBinder.h src/DialogConfigBinder.cpp )",
+      "Bash(\"docs/PortMasterDlg模块拆分评估.md\")",
+      "Bash(git remote:*)"
     ],
     "deny": [],
     "ask": []

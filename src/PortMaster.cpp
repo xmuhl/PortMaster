@@ -10,13 +10,11 @@
 #define new DEBUG_NEW
 #endif
 
-
 // CPortMasterApp
 
 BEGIN_MESSAGE_MAP(CPortMasterApp, CWinApp)
 	ON_COMMAND(ID_HELP, &CWinApp::OnHelp)
 END_MESSAGE_MAP()
-
 
 // CPortMasterApp 构造
 
@@ -29,11 +27,9 @@ CPortMasterApp::CPortMasterApp() noexcept
 	// 将所有重要的初始化放置在 InitInstance 中
 }
 
-
 // 唯一的 CPortMasterApp 对象
 
 CPortMasterApp theApp;
-
 
 // CPortMasterApp 初始化
 
@@ -51,12 +47,11 @@ BOOL CPortMasterApp::InitInstance()
 
 	CWinApp::InitInstance();
 
-
 	AfxEnableControlContainer();
 
 	// 创建 shell 管理器，以防对话框包含
 	// 任何 shell 树视图控件或 shell 列表视图控件。
-	CShellManager *pShellManager = new CShellManager;
+	CShellManager* pShellManager = new CShellManager;
 
 	// 激活"Windows Native"视觉管理器，以便在 MFC 控件中启用主题
 	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
