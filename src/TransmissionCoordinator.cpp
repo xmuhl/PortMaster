@@ -26,9 +26,6 @@ bool TransmissionCoordinator::Start(
 	std::shared_ptr<ReliableChannel> reliableChannel,
 	std::shared_ptr<ITransport> transport)
 {
-	// 【阶段二实现】创建并启动传输任务
-	// TODO: 阶段二迁移PerformDataTransmission()完整逻辑
-
 	// 检查是否已有任务在运行
 	if (m_currentTask && !m_currentTask->IsCompleted())
 	{
@@ -70,8 +67,6 @@ bool TransmissionCoordinator::Start(
 
 void TransmissionCoordinator::Pause()
 {
-	// 【阶段二实现】暂停传输任务
-	// TODO: 阶段二迁移PauseTransmission()逻辑
 	if (m_currentTask && m_currentTask->IsRunning())
 	{
 		m_currentTask->Pause();
@@ -80,8 +75,6 @@ void TransmissionCoordinator::Pause()
 
 void TransmissionCoordinator::Resume()
 {
-	// 【阶段二实现】恢复传输任务
-	// TODO: 阶段二迁移ResumeTransmission()逻辑
 	if (m_currentTask && m_currentTask->IsPaused())
 	{
 		m_currentTask->Resume();
@@ -90,7 +83,6 @@ void TransmissionCoordinator::Resume()
 
 void TransmissionCoordinator::Cancel()
 {
-	// 【阶段二实现】取消传输任务
 	if (m_currentTask)
 	{
 		m_currentTask->Cancel();
@@ -165,9 +157,6 @@ std::unique_ptr<TransmissionTask> TransmissionCoordinator::CreateTask(
 	std::shared_ptr<ReliableChannel> reliableChannel,
 	std::shared_ptr<ITransport> transport)
 {
-	// 【阶段二实现】根据可用通道创建任务
-	// TODO: 阶段二迁移PerformDataTransmission()中的任务创建逻辑
-
 	if (reliableChannel && reliableChannel->IsConnected())
 	{
 		// 使用可靠传输
