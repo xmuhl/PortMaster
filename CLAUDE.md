@@ -804,3 +804,216 @@ echo "=== 验证完成 ==="
 ```
 
 ```
+
+## 模块拆分架构（2025-10更新）
+
+### 概述
+
+2025年10月完成了`PortMasterDlg`的模块拆分重构，将原有的~5000行单体类按照分层架构拆分为5个专用服务模块，显著提升了代码可维护性和可测试性。详细的拆分方案和实施记录参见 `docs/PortMasterDlg模块拆分评估.md`。
+
+### 新增服务模块
+
+**1. PortSessionController (`Protocol/PortSessionController.h/.cpp`)**
+
+- **职责**：Transport层连接管理和接收会话控制
+- **关键功能**：
+  - 根据配置创建和管理5种Transport类型（Serial/Parallel/USB/Network/Loopback）
+  - ReliableChannel生命周期管理
+  - 接收线程管理（启动、停止、线程安全数据回调）
+- **接口**：
+  - `Connect(config)` - 建立连接并创建Transport实例
+  - `Disconnect()` - 断开连接并清理资源
+  - `StartReceiveSession()` - 启动接收线程
+  - `StopReceiveSession()` - 优雅关闭接收线程
+- **回调机制**：
+  - `OnDataReceived` - 接收数据事件
+  - `OnError` - 错误事件
+  - `OnLog` - 日志事件
+- **迁移来源**：`PortMasterDlg.cpp:3133~3788`
+
+**2. TransmissionCoordinator (`src/TransmissionCoordinator.h/.cpp`)**
+
+- **职责**：TransmissionTask生命周期管理和传输控制
+- **关键功能**：
+  - 创建并管理传输任务（ReliableTransmissionTask vs RawTransmissionTask）
+  - 自动选择可靠/直接传输模式
+  - 任务控制（启动、暂停、恢复、取消）
+  - 进度和完成事件转发
+- **接口**：
+  - `Start(data, reliableChannel, transport)` - 启动传输任务
+  - `Pause()` - 暂停传输
+  - `Resume()` - 恢复传输
+  - `Cancel()` - 取消传输
+  - `IsActive()` - 查询活跃状态
+- **配置参数**：
+  - `SetChunkSize(size)` - 设置数据块大小
+  - `SetRetrySettings(maxRetries, delayMs)` - 设置重试策略
+  - `SetProgressUpdateInterval(ms)` - 设置进度更新间隔
+- **回调机制**：
+  - `ProgressCallback` - 进度更新回调
+  - `CompletionCallback` - 完成事件回调
+  - `LogCallback` - 日志回调
+- **迁移来源**：`PortMasterDlg.cpp:525~753`
+
+**3. DataPresentationService (`Common/DataPresentationService.h/.cpp`)**
+
+- **职责**：数据格式转换和展示（十六进制/文本/二进制检测）
+- **设计模式**：静态工具类（无状态，纯函数）
+- **关键功能**：
+  - 带地址偏移和ASCII侧边栏的完整十六进制格式化
+  - 解析格式化的十六进制文本
+  - 智能二进制数据检测（识别控制字符和非打印字符）
+- **接口**：
+  - `BytesToHex(data, length)` - 字节数组转十六进制字符串（带格式化）
+  - `HexToBytes(hexStr)` - 十六进制字符串转字节数组
+  - `FormatHexAscii(data, length)` - 混合显示模式
+  - `IsBinaryData(data, length)` - 检测是否为二进制数据
+- **技术亮点**：
+  - 使用`std::ostringstream`替代MFC `CString`，消除MFC依赖
+  - 可在Common层独立使用，适合单元测试
+- **迁移来源**：`PortMasterDlg.cpp:1179~1410`
+
+**4. ReceiveCacheService (`Common/ReceiveCacheService.h/.cpp`)**
+
+- **职责**：线程安全的临时缓存文件操作
+- **关键功能**：
+  - 内存+磁盘双保障机制（数据同时写入内存缓存和临时文件）
+  - 分块循环读取（64KB块大小，避免大文件内存溢出）
+  - 文件完整性验证和自动恢复
+  - 并发访问控制（读写互斥、待写入队列）
+- **接口**：
+  - `Initialize(cacheDir)` - 初始化缓存服务
+  - `Shutdown()` - 关闭并清理资源
+  - `AppendData(data)` - 线程安全地追加数据
+  - `ReadData(offset, length)` - 分块读取数据
+  - `Clear()` - 清空缓存
+  - `GetTotalBytes()` - 获取总字节数
+  - `VerifyIntegrity()` - 验证文件完整性
+  - `CheckAndRecover()` - 检查并恢复损坏的缓存文件
+- **线程安全策略**：
+  - 读写互斥锁（`std::mutex m_mutex`）
+  - 原子计数器（`std::atomic<uint64_t> m_totalReceivedBytes`）
+  - 并发检测与待写入队列（`m_pendingWrites`）
+- **迁移来源**：`PortMasterDlg.cpp:2240~4850`
+
+**5. DialogConfigBinder (`src/DialogConfigBinder.h/.cpp`)**
+
+- **职责**：UI控件与ConfigStore之间的数据绑定
+- **关键功能**：
+  - UI控件 → ConfigStore（保存）
+  - ConfigStore → UI控件（加载）
+  - 配置有效性验证
+- **接口**：
+  - `LoadToUI()` - 从ConfigStore加载配置到UI控件
+  - `SaveFromUI()` - 从UI控件保存配置到ConfigStore
+  - `ValidateConfig()` - 验证配置有效性
+- **支持的配置类型**：
+  - Transport配置（端口类型、串口参数等）
+  - 协议配置（可靠模式、超时、重试等）
+  - UI状态（窗口位置、显示模式等）
+- **迁移来源**：`PortMasterDlg.cpp:4036~4243`
+
+### 架构优势
+
+**职责分离**：
+- UI层（`PortMasterDlg`）：仅负责控件初始化、事件转发、状态展示
+- 协议层（`PortSessionController`）：Transport和ReliableChannel管理
+- 通用层（`DataPresentationService`, `ReceiveCacheService`）：可复用的工具服务
+- UI辅助（`TransmissionCoordinator`, `DialogConfigBinder`）：UI相关的业务逻辑封装
+
+**接口稳定**：
+- 面向接口编程，降低模块间耦合
+- 回调机制实现异步事件通知
+- 配置参数化，便于调整行为
+
+**线程安全**：
+- 服务内部统一管理锁与同步
+- 原子变量用于计数器和状态标志
+- RAII模式确保资源正确释放
+
+**可测试性**：
+- 静态工具类（`DataPresentationService`）可直接单元测试
+- 独立服务（`ReceiveCacheService`, `PortSessionController`）可Mock测试
+- 回调机制便于验证事件流程
+
+### 使用示例
+
+```cpp
+// 1. 使用PortSessionController建立连接
+PortSessionController sessionController;
+sessionController.SetCallbacks(
+    [](const std::vector<uint8_t>& data) { /* 处理接收数据 */ },
+    [](const std::string& error) { /* 处理错误 */ },
+    [](const std::string& log) { /* 处理日志 */ }
+);
+
+TransportConfig config;
+config.portType = PortType::PORT_TYPE_SERIAL;
+config.portName = "COM3";
+config.baudRate = 115200;
+
+if (sessionController.Connect(config)) {
+    sessionController.StartReceiveSession();
+}
+
+// 2. 使用TransmissionCoordinator发送数据
+TransmissionCoordinator coordinator;
+coordinator.SetProgressCallback([](const TransmissionProgress& progress) {
+    // 更新进度条
+});
+coordinator.SetCompletionCallback([](const TransmissionResult& result) {
+    // 处理完成事件
+});
+
+std::vector<uint8_t> dataToSend = { /* ... */ };
+coordinator.Start(dataToSend, reliableChannel, transport);
+
+// 3. 使用DataPresentationService格式化数据
+std::vector<uint8_t> binaryData = { /* ... */ };
+std::string hexDisplay = DataPresentationService::BytesToHex(
+    binaryData.data(), binaryData.size()
+);
+// 输出格式：
+// 00000000: AA 55 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E  |.U..............|
+// 00000010: 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E  |................|
+
+// 4. 使用ReceiveCacheService管理临时数据
+ReceiveCacheService cacheService;
+cacheService.Initialize("C:\\Temp\\PortMaster");
+
+// 接收线程中追加数据
+std::vector<uint8_t> receivedData = { /* ... */ };
+cacheService.AppendData(receivedData);
+
+// 主线程中读取数据
+std::vector<uint8_t> allData = cacheService.ReadAllData();
+uint64_t totalBytes = cacheService.GetTotalBytes();
+
+// 5. 使用DialogConfigBinder管理配置
+DialogConfigBinder configBinder(configStore, uiControls);
+configBinder.LoadToUI();  // 程序启动时加载配置
+// 用户修改UI控件...
+configBinder.SaveFromUI();  // 程序退出时保存配置
+```
+
+### 迁移注意事项
+
+1. **线程安全**：所有服务内部已实现线程安全，外部调用无需额外加锁
+2. **资源管理**：使用RAII模式，确保在异常情况下资源正确释放
+3. **回调时机**：回调函数可能在后台线程中执行，UI更新需使用消息机制
+4. **配置迁移**：旧版本配置文件需手动迁移或通过默认值重新生成
+5. **编码要求**：所有新文件采用UTF-8 with BOM编码，确保中文注释正确显示
+
+### 性能优化
+
+- **ReceiveCacheService**：分块读取避免大文件内存溢出
+- **DataPresentationService**：使用`std::ostringstream`替代字符串拼接，提升格式化性能
+- **PortSessionController**：异步I/O和后台线程，避免阻塞UI
+- **TransmissionCoordinator**：可配置的进度更新间隔，减少UI刷新开销
+
+### 未来扩展
+
+- 为每个服务补充单元测试（阶段四，可选）
+- 引入CLI版本，复用Protocol层和Common层服务
+- 支持更多Transport类型（如WebSocket、Bluetooth等）
+- 实现插件化架构，允许动态加载Transport和Protocol实现

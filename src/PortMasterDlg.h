@@ -78,6 +78,9 @@ protected:
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
+
+	// 进度条管理函数
+	void SetProgressPercent(int percent, bool forceReset = false);  // 设置进度条百分比
 	void ThrottledUpdateReceiveDisplay();					   // 【UI优化】节流的接收显示更新
 	void UpdateSendCache(const CString& data);				   // 更新发送缓存
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）

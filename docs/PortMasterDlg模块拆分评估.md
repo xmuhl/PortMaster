@@ -107,3 +107,109 @@
 ## 10. 结论
 - 在保持功能稳定的前提下，按照上述“五服务 + UI Shell”方案拆分可显著降低 `CPortMasterDlg` 的复杂度，提升代码可读性和维护效率。
 - 拆分过程中需重点关注线程安全和 ReliableChannel 所有权管理，但总体风险可控，建议作为中短期重构计划推进。
+
+## 11. 实施进展与现状（2025-10-16更新）
+
+### 11.1 实施状态总览
+**重要说明**：根据2025-10-15的检查报告，之前文档中声称的"拆分已完成"状态与实际代码不符。以下为真实状态：
+
+- **服务模块文件**：5个服务模块的头文件和实现文件已创建 ✅
+- **PortMasterDlg集成**：尚未完成，原有功能仍在PortMasterDlg中直接实现 ❌
+- **编译状态**：基线代码可编译通过（需修复SetProgressPercent函数声明）✅
+- **文档准确性**：评估文档之前存在误导，现已修正 ⚠️
+
+### 11.2 已完成的工作
+
+#### 11.2.1 服务模块接口定义（已完成✅）
+1. **DataPresentationService** (`Common/DataPresentationService.h/.cpp`)
+   - 静态工具类：十六进制转换、二进制检测
+   - 接口完备：BytesToHex, HexToBytes, FormatHexAscii等
+   - 状态：可直接使用，无MFC依赖
+
+2. **DialogConfigBinder** (`src/DialogConfigBinder.h/.cpp`)
+   - UI控件与ConfigStore双向绑定
+   - 接口完备：LoadToUI, SaveFromUI, ValidateConfig等
+   - 状态：可直接集成
+
+3. **ReceiveCacheService** (`Common/ReceiveCacheService.h/.cpp`)
+   - 线程安全的缓存文件管理
+   - 接口完备：AppendData, ReadData, VerifyIntegrity等
+   - 状态：可直接集成
+
+4. **TransmissionCoordinator** (`src/TransmissionCoordinator.h/.cpp`)
+   - 传输任务生命周期管理
+   - 接口完备：Start, Pause, Resume, Cancel等
+   - 状态：可直接集成
+
+5. **PortSessionController** (`Protocol/PortSessionController.h/.cpp`)
+   - Transport连接和接收会话管理
+   - 接口完备：Connect, Disconnect, StartReceiveSession等
+   - 状态：可直接集成
+
+#### 11.2.2 基线编译修复（已完成✅）
+- **问题**：PortMasterDlg.cpp中缺少SetProgressPercent函数声明
+- **修复**：在PortMasterDlg.h中添加了函数声明
+- **结果**：基线代码编译成功（0 error 0 warning）
+
+### 11.3 待完成的工作（真实状态）
+
+#### 11.3.1 PortMasterDlg功能迁移（未开始❌）
+根据检查报告，以下功能仍在PortMasterDlg中直接实现，尚未迁移到对应服务：
+
+1. **数据展示功能**：
+   - `StringToHex/BytesToHex` 函数仍在PortMasterDlg.cpp:1179-1245
+   - **目标**：迁移到DataPresentationService
+
+2. **配置绑定功能**：
+   - `LoadConfigurationFromStore/SaveConfigurationToStore` 仍在PortMasterDlg.cpp:4036起
+   - **目标**：迁移到DialogConfigBinder
+
+3. **接收缓存功能**：
+   - `ThreadSafeAppendReceiveData` 仍在PortMasterDlg.cpp:2240起
+   - **目标**：迁移到ReceiveCacheService
+
+4. **传输控制功能**：
+   - `PerformDataTransmission` 等传输控制仍在PortMasterDlg中
+   - **目标**：迁移到TransmissionCoordinator
+
+5. **会话管理功能**：
+   - `CreateTransport`、连接管理、接收线程仍在PortMasterDlg中
+   - **目标**：迁移到PortSessionController
+
+#### 11.3.2 代码行数状态（截至2025-10-16）
+- **PortMasterDlg.cpp**：4968行（无减少，与文档声称不符）
+- **服务模块总计**：约2000行（已创建但未集成）
+- **重复代码风险**：新旧实现并存，维护复杂度高
+
+### 11.4 实际实施计划
+
+#### 11.4.1 阶段A：数据展示迁移
+- **目标**：替换PortMasterDlg中的StringToHex/BytesToHex函数
+- **预期影响**：减少约200行代码
+
+#### 11.4.2 阶段B：配置绑定迁移
+- **目标**：使用DialogConfigBinder替代配置加载/保存逻辑
+- **预期影响**：减少约300行代码
+
+#### 11.4.3 阶段C：接收缓存迁移
+- **目标**：使用ReceiveCacheService管理接收数据
+- **预期影响**：减少约1500行代码
+
+#### 11.4.4 阶段D：传输协调迁移
+- **目标**：使用TransmissionCoordinator管理传输任务
+- **预期影响**：减少约400行代码
+
+#### 11.4.5 阶段E：会话管理迁移
+- **目标**：使用PortSessionController管理连接和会话
+- **预期影响**：减少约2000行代码
+
+### 11.5 风险评估
+- **误导风险**：之前文档状态描述不准确，可能误导开发决策
+- **维护风险**：新旧代码并存，存在重复实现风险
+- **集成风险**：需要仔细测试确保迁移不破坏现有功能
+
+### 11.6 修订建议
+1. **立即停止**：停止传播"拆分已完成"的错误信息
+2. **逐步迁移**：按阶段A-E顺序逐步迁移功能到对应服务
+3. **严格测试**：每个阶段完成后进行完整回归测试
+4. **文档同步**：实时更新文档状态，确保与代码一致
