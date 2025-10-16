@@ -95,6 +95,14 @@ public:
 	void UpdateSendSourceDisplay(const CString& source); // 更新发送源显示
 	void LogMessage(const CString& message);       // 输出日志消息
 
+	// 直接控件文本设置方法
+	void SetSendButtonText(const CString& text);    // 设置发送按钮文本
+	void SetStatusText(const CString& text);        // 设置状态栏文本
+	void SetModeText(const CString& text);          // 设置模式文本
+	void SetReceiveDataText(const CString& text);  // 设置接收编辑框文本
+	void SetSendDataText(const CString& text);     // 设置发送编辑框文本
+	void SetStaticText(int controlId, const CString& text); // 设置静态控件文本
+
 	// 进度条控制方法
 	void SetProgressPercent(int percent, bool forceReset = false); // 设置进度条百分比
 	void ResetProgress();                          // 重置进度条
@@ -115,6 +123,8 @@ public:
 	bool IsHexDisplayEnabled() const;              // 是否启用十六进制显示
 	CString GetTimeoutValue() const;               // 获取超时值
 	int GetSelectedPortType() const;               // 获取选择的端口类型索引
+	CString GetSendDataText() const;               // 获取发送编辑框文本
+	CString GetReceiveDataText() const;            // 获取接收编辑框文本
 
 private:
 	UIControlRefs m_controls;                      // 控件引用集合

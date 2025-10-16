@@ -273,9 +273,66 @@ void DialogUiController::UpdateSendSourceDisplay(const CString& source)
 void DialogUiController::LogMessage(const CString& message)
 {
 	if (!IsControlValid(m_controls.staticLog))
+	{
 		return;
+	}
 
-	m_controls.staticLog->SetWindowText(message);
+	CString formattedMessage = message;
+
+	// 自动换行处理，确保日志文本完整显示
+	CRect rect;
+	m_controls.staticLog->GetClientRect(&rect);
+
+	CDC* pDC = m_controls.staticLog->GetDC();
+	if (pDC != nullptr)
+	{
+		CFont* pOldFont = pDC->SelectObject(m_controls.staticLog->GetFont());
+		const int maxWidth = rect.Width() - 10; // 预留边距
+
+		CString wrappedMessage;
+		int startPos = 0;
+		while (startPos < formattedMessage.GetLength())
+		{
+			int chunkEnd = startPos;
+			CSize textSize;
+
+			// 找到本行可以容纳的最大字符数
+			while (chunkEnd < formattedMessage.GetLength())
+			{
+				CString chunk = formattedMessage.Mid(startPos, chunkEnd - startPos + 1);
+				textSize = pDC->GetTextExtent(chunk);
+				if (textSize.cx > maxWidth)
+				{
+					if (chunkEnd > startPos)
+					{
+						chunkEnd--;
+					}
+					break;
+				}
+				chunkEnd++;
+			}
+
+			if (chunkEnd <= startPos)
+			{
+				chunkEnd = startPos + 1; // 至少显示一个字符
+			}
+
+			if (!wrappedMessage.IsEmpty())
+			{
+				wrappedMessage += _T(" ");
+			}
+			wrappedMessage += formattedMessage.Mid(startPos, chunkEnd - startPos);
+
+			startPos = chunkEnd;
+		}
+
+		pDC->SelectObject(pOldFont);
+		m_controls.staticLog->ReleaseDC(pDC);
+
+		formattedMessage = wrappedMessage;
+	}
+
+	m_controls.staticLog->SetWindowText(formattedMessage);
 }
 
 // 设置进度条百分比
@@ -394,6 +451,28 @@ int DialogUiController::GetSelectedPortType() const
 	return m_controls.comboPortType->GetCurSel();
 }
 
+// 获取发送编辑框文本
+CString DialogUiController::GetSendDataText() const
+{
+	if (!IsControlValid(m_controls.editSendData))
+		return _T("");
+
+	CString text;
+	m_controls.editSendData->GetWindowText(text);
+	return text;
+}
+
+// 获取接收编辑框文本
+CString DialogUiController::GetReceiveDataText() const
+{
+	if (!IsControlValid(m_controls.editReceiveData))
+		return _T("");
+
+	CString text;
+	m_controls.editReceiveData->GetWindowText(text);
+	return text;
+}
+
 // 验证控件引用有效性
 void DialogUiController::ValidateControlRefs() const
 {
@@ -408,4 +487,53 @@ void DialogUiController::ValidateControlRefs() const
 bool DialogUiController::IsControlValid(CWnd* control) const
 {
 	return (control != nullptr && control->GetSafeHwnd() != nullptr);
+}
+
+// 直接控件文本设置方法
+void DialogUiController::SetSendButtonText(const CString& text)
+{
+	if (IsControlValid(m_controls.btnSend))
+	{
+		m_controls.btnSend->SetWindowText(text);
+	}
+}
+
+void DialogUiController::SetStatusText(const CString& text)
+{
+	if (IsControlValid(m_controls.staticPortStatus))
+	{
+		m_controls.staticPortStatus->SetWindowText(text);
+	}
+}
+
+void DialogUiController::SetModeText(const CString& text)
+{
+	if (IsControlValid(m_controls.staticMode))
+	{
+		m_controls.staticMode->SetWindowText(text);
+	}
+}
+
+void DialogUiController::SetReceiveDataText(const CString& text)
+{
+	if (IsControlValid(m_controls.editReceiveData))
+	{
+		m_controls.editReceiveData->SetWindowText(text);
+	}
+}
+
+void DialogUiController::SetSendDataText(const CString& text)
+{
+	if (IsControlValid(m_controls.editSendData))
+	{
+		m_controls.editSendData->SetWindowText(text);
+	}
+}
+
+void DialogUiController::SetStaticText(int controlId, const CString& text)
+{
+	if (IsControlValid(m_controls.parentDialog))
+	{
+		m_controls.parentDialog->SetDlgItemText(controlId, text);
+	}
 }

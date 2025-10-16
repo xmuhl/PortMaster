@@ -10,8 +10,8 @@
 #include "DialogUiController.h"
 #include "PortConfigPresenter.h"
 #include "TransmissionCoordinator.h"
-// 【Stage4迁移】移除TransmissionTask，由TransmissionCoordinator管理
-#include "UIStateManager.h"
+#include "PortMasterDialogEvents.h"
+#include "StatusDisplayManager.h"
 #include "../Protocol/PortSessionController.h"
 #include <memory>
 #include <thread>
@@ -49,8 +49,6 @@ protected:
 	afx_msg void OnBnClickedButtonSaveAll();
 	afx_msg void OnEnChangeEditTimeout();
 
-	// Logging functionality
-	void LogMessage(const CString& message);
 	void WriteLog(const std::string& message);
 
 	// 端口类型切换处理
@@ -60,7 +58,6 @@ protected:
 	void SendData();
 	void ReceiveData();
 	void UpdateDataDisplay();
-	void LoadDataFromFile(const CString& filePath);
 	void SaveDataToFile(const CString& filePath, const CString& data);
 	void SaveBinaryDataToFile(const CString& filePath, const std::vector<uint8_t>& data);
 
@@ -174,14 +171,14 @@ private:
 	// 【阶段E迁移】会话管理控制器
 	std::unique_ptr<PortSessionController> m_sessionController;
 
-	// 【UI响应修复】状态管理器 - 解决状态栏重复显示问题
-	std::unique_ptr<UIStateManager> m_uiStateManager;
-
 	// 【阶段1迁移】UI控制器 - 统一管理控件初始化和状态更新
 	std::unique_ptr<DialogUiController> m_uiController;
 
 	// 【阶段2迁移】端口配置呈现器 - 管理端口枚举和参数配置
 	std::unique_ptr<PortConfigPresenter> m_portConfigPresenter;
+
+	// 【阶段4迁移】状态展示管理器 - 统一管理统计、日志、进度显示
+	std::unique_ptr<StatusDisplayManager> m_statusDisplayManager;
 
 	// 配置管理
 	ConfigStore& m_configStore;
@@ -226,10 +223,6 @@ private:
 	// 【阶段5迁移】CreateTransport/DestroyTransport/StartReceiveThread/StopReceiveThread已迁移到PortSessionController
 	void UpdateConnectionStatus();
 	void UpdateStatistics();
-
-	// 【UI响应修复】状态管理器方法
-	void UpdateUIStatus();  // 更新UI状态显示
-	void InitializeUIStateManager();  // 初始化状态管理器
 
 	// 【可靠模式按钮管控】保存按钮状态控制
 	void UpdateSaveButtonStatus();
@@ -286,4 +279,9 @@ private:
 	afx_msg LRESULT OnTransmissionComplete(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionError(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam);
+
+	friend class PortMasterDialogEvents;
+
+private:
+	std::unique_ptr<PortMasterDialogEvents> m_eventDispatcher;
 };

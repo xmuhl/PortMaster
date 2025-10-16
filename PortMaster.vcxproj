@@ -125,6 +125,7 @@
     <ClInclude Include="resources\resource.h" />
     <ClInclude Include="src\PortMaster.h" />
     <ClInclude Include="src\PortMasterDlg.h" />
+    <ClInclude Include="src\PortMasterDialogEvents.h" />
     <ClInclude Include="include\targetver.h" />
     <ClInclude Include="Common\CommonTypes.h" />
     <ClInclude Include="Common\ConfigStore.h" />
@@ -134,12 +135,12 @@
   <ClInclude Include="src\DialogConfigBinder.h" />
     <ClInclude Include="src\DialogUiController.h" />
     <ClInclude Include="src\PortConfigPresenter.h" />
+    <ClInclude Include="src\StatusDisplayManager.h" />
     <ClInclude Include="src\TransmissionCoordinator.h" />
     <ClInclude Include="Protocol\PortSessionController.h" />
     <ClInclude Include="Protocol\FrameCodec.h" />
     <ClInclude Include="Protocol\ReliableChannel.h" />
         <ClInclude Include="src\TransmissionTask.h" />
-    <ClInclude Include="src\UIStateManager.h" />
     <ClInclude Include="Transport\ITransport.h" />
     <ClInclude Include="Transport\LoopbackTransport.h" />
     <ClInclude Include="Transport\SerialTransport.h" />
@@ -154,11 +155,7 @@
     </ClCompile>
     <ClCompile Include="src\PortMaster.cpp" />
     <ClCompile Include="src\PortMasterDlg.cpp" />
-    <ClCompile Include="src\UIStateManager.cpp" />
-    <ClCompile Include="src\TransmissionStateManager.cpp" />
-    <ClCompile Include="src\ButtonStateManager.cpp" />
-    <ClCompile Include="src\ThreadSafeUIUpdater.cpp" />
-    <ClCompile Include="src\ThreadSafeProgressManager.cpp" />
+    <ClCompile Include="src\PortMasterDialogEvents.cpp" />
     <ClCompile Include="src\TransmissionTask.cpp" />
     <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Common\DataPresentationService.cpp" />
@@ -166,6 +163,7 @@
     <ClCompile Include="src\DialogConfigBinder.cpp" />
     <ClCompile Include="src\DialogUiController.cpp" />
     <ClCompile Include="src\PortConfigPresenter.cpp" />
+    <ClCompile Include="src\StatusDisplayManager.cpp" />
     <ClCompile Include="src\TransmissionCoordinator.cpp" />
     <ClCompile Include="Protocol\PortSessionController.cpp" />
     <ClCompile Include="Protocol\FrameCodec.cpp" />

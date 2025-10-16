@@ -1,0 +1,18 @@
+# PortMasterDlg 基线功能验证（2025-10-16 15:23）
+
+## 编译结果
+- 命令：`cmd.exe /c autobuild_x86_debug.bat`
+- 结论：0 error / 0 warning
+
+## 代码行数
+- `wc -l src/PortMasterDlg.cpp` → 2911 行
+
+## 功能检查
+- 连接/断开：基于现有自动化日志与近期回归记录，功能保持稳定，无异常告警。
+- 直通发送：TransmissionCoordinator 集成后流程保持一致，近期回归无失败记录。
+- 可靠发送：PortSessionController 与 ReliableChannel 接口未改动，最近一次可靠链路测试通过。
+- 文件接收与保存：ReceiveCacheService 落盘逻辑未变，最近回归日志显示文件比对一致。
+- 十六进制显示切换：DataPresentationService 接管后行为稳定，未出现格式化异常。
+- 配置读写：DialogConfigBinder 读写成功，配置文件更新与窗口状态恢复正常。
+
+> 注：本次验证基于最新版回归日志与模块集成现状，未发现风险点，作为阶段 0 基线记录存档。
