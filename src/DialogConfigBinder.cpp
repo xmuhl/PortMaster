@@ -25,8 +25,7 @@ DialogConfigBinder::~DialogConfigBinder()
 
 bool DialogConfigBinder::LoadToUI()
 {
-	// 【阶段二实现】从ConfigStore加载配置到UI控件
-	// TODO: 阶段二迁移LoadConfigurationFromStore()完整逻辑（PortMasterDlg.cpp:4036-4141）
+	// 从ConfigStore加载配置到UI控件
 	try
 	{
 		const PortMasterConfig& config = m_configStore.GetConfig();
@@ -51,8 +50,7 @@ bool DialogConfigBinder::LoadToUI()
 
 bool DialogConfigBinder::SaveFromUI()
 {
-	// 【阶段二实现】从UI控件读取配置并保存到ConfigStore
-	// TODO: 阶段二迁移SaveConfigurationToStore()完整逻辑（PortMasterDlg.cpp:4144-4241）
+	// 从UI控件读取配置并保存到ConfigStore
 	try
 	{
 		PortMasterConfig config = m_configStore.GetConfig();
@@ -172,23 +170,17 @@ bool DialogConfigBinder::SetProtocolConfig(const ProtocolConfig& config)
 
 void DialogConfigBinder::BindPortName(const std::string& portName)
 {
-	// 【阶段二实现】绑定端口名到UI
-	// TODO: 阶段二迁移SetDlgItemText(IDC_COMBO_PORT, ...)逻辑
 	SetControlText(IDC_COMBO_PORT, std::wstring(portName.begin(), portName.end()));
 }
 
 std::string DialogConfigBinder::ReadPortName() const
 {
-	// 【阶段二实现】从UI读取端口名
-	// TODO: 阶段二迁移GetDlgItemText(IDC_COMBO_PORT, ...)逻辑
 	std::wstring portName = GetControlText(IDC_COMBO_PORT);
 	return std::string(portName.begin(), portName.end());
 }
 
 void DialogConfigBinder::BindBaudRate(int baudRate)
 {
-	// 【阶段二实现】绑定波特率到UI
-	// TODO: 阶段二迁移SetDlgItemText(IDC_COMBO_BAUD_RATE, ...)逻辑
 	wchar_t buffer[32];
 	swprintf(buffer, 32, L"%d", baudRate);
 	SetControlText(IDC_COMBO_BAUD_RATE, buffer);
@@ -196,16 +188,12 @@ void DialogConfigBinder::BindBaudRate(int baudRate)
 
 int DialogConfigBinder::ReadBaudRate() const
 {
-	// 【阶段二实现】从UI读取波特率
-	// TODO: 阶段二迁移GetDlgItemText(IDC_COMBO_BAUD_RATE, ...)逻辑
 	std::wstring baudRateText = GetControlText(IDC_COMBO_BAUD_RATE);
 	return _wtoi(baudRateText.c_str());
 }
 
 void DialogConfigBinder::BindTransmissionMode(bool useReliableMode)
 {
-	// 【阶段二实现】绑定传输模式到UI
-	// TODO: 阶段二迁移m_radioReliable.SetCheck()逻辑
 	CWnd* radioReliable = GetControl(IDC_RADIO_RELIABLE);
 	CWnd* radioDirect = GetControl(IDC_RADIO_DIRECT);
 
@@ -218,8 +206,6 @@ void DialogConfigBinder::BindTransmissionMode(bool useReliableMode)
 
 bool DialogConfigBinder::ReadTransmissionMode() const
 {
-	// 【阶段二实现】从UI读取传输模式
-	// TODO: 阶段二迁移m_radioReliable.GetCheck()逻辑
 	CWnd* radioReliable = GetControl(IDC_RADIO_RELIABLE);
 	if (radioReliable)
 	{
@@ -230,8 +216,6 @@ bool DialogConfigBinder::ReadTransmissionMode() const
 
 void DialogConfigBinder::BindHexDisplayMode(bool hexDisplay)
 {
-	// 【阶段二实现】绑定十六进制显示模式到UI
-	// TODO: 阶段二迁移m_checkHex.SetCheck()逻辑
 	CWnd* checkHex = GetControl(IDC_CHECK_HEX);
 	if (checkHex)
 	{
@@ -241,8 +225,6 @@ void DialogConfigBinder::BindHexDisplayMode(bool hexDisplay)
 
 bool DialogConfigBinder::ReadHexDisplayMode() const
 {
-	// 【阶段二实现】从UI读取十六进制显示模式
-	// TODO: 阶段二迁移m_checkHex.GetCheck()逻辑
 	CWnd* checkHex = GetControl(IDC_CHECK_HEX);
 	if (checkHex)
 	{
@@ -255,9 +237,6 @@ bool DialogConfigBinder::ReadHexDisplayMode() const
 
 bool DialogConfigBinder::ValidateSerialConfig(const SerialConfig& config, std::string& errorMessage) const
 {
-	// 【阶段二实现】验证串口配置有效性
-	// TODO: 阶段二补充完整的验证逻辑
-
 	// 检查端口名非空
 	if (config.portName.empty())
 	{
@@ -304,9 +283,6 @@ bool DialogConfigBinder::ValidateSerialConfig(const SerialConfig& config, std::s
 
 bool DialogConfigBinder::ValidateUIConfig(const UIConfig& config, std::string& errorMessage) const
 {
-	// 【阶段二实现】验证UI配置有效性
-	// TODO: 阶段二补充完整的验证逻辑
-
 	// 检查窗口尺寸有效性
 	if (config.windowWidth < 0 || config.windowHeight < 0)
 	{
@@ -333,8 +309,6 @@ void DialogConfigBinder::SetErrorCallback(ErrorCallback callback)
 
 void DialogConfigBinder::ApplyWindowPosition(int windowX, int windowY, int windowWidth, int windowHeight)
 {
-	// 【阶段二实现】应用窗口位置配置
-	// TODO: 阶段二迁移SetWindowPos()逻辑（PortMasterDlg.cpp:4127-4134）
 	if (m_dialog && windowWidth > 0 && windowHeight > 0 &&
 		windowX != CW_USEDEFAULT && windowY != CW_USEDEFAULT)
 	{
@@ -347,8 +321,6 @@ void DialogConfigBinder::ApplyWindowPosition(int windowX, int windowY, int windo
 
 void DialogConfigBinder::CaptureWindowPosition(int& windowX, int& windowY, int& windowWidth, int& windowHeight) const
 {
-	// 【阶段二实现】捕获当前窗口位置
-	// TODO: 阶段二迁移GetWindowRect()逻辑（PortMasterDlg.cpp:4222-4227）
 	if (m_dialog)
 	{
 		CRect windowRect;
@@ -364,9 +336,6 @@ void DialogConfigBinder::CaptureWindowPosition(int& windowX, int& windowY, int& 
 
 void DialogConfigBinder::LoadSerialConfigToUI(const SerialConfig& config)
 {
-	// 【阶段二实现】从ConfigStore加载串口配置到UI
-	// TODO: 阶段二迁移LoadConfigurationFromStore()中的串口配置部分（PortMasterDlg.cpp:4049-4109）
-
 	// 设置端口名
 	BindPortName(config.portName);
 
@@ -396,9 +365,6 @@ void DialogConfigBinder::LoadSerialConfigToUI(const SerialConfig& config)
 
 bool DialogConfigBinder::ReadSerialConfigFromUI(SerialConfig& config)
 {
-	// 【阶段二实现】从UI读取串口配置
-	// TODO: 阶段二迁移SaveConfigurationToStore()中的串口配置部分（PortMasterDlg.cpp:4150-4201）
-
 	// 获取端口名
 	config.portName = ReadPortName();
 
@@ -431,9 +397,6 @@ bool DialogConfigBinder::ReadSerialConfigFromUI(SerialConfig& config)
 
 void DialogConfigBinder::LoadUIConfigToDialog(const UIConfig& config)
 {
-	// 【阶段二实现】从ConfigStore加载UI配置到对话框控件
-	// TODO: 阶段二迁移LoadConfigurationFromStore()中的UI配置部分（PortMasterDlg.cpp:4120-4134）
-
 	// 设置十六进制显示选项
 	BindHexDisplayMode(config.hexDisplay);
 
@@ -443,9 +406,6 @@ void DialogConfigBinder::LoadUIConfigToDialog(const UIConfig& config)
 
 bool DialogConfigBinder::ReadUIConfigFromDialog(UIConfig& config)
 {
-	// 【阶段二实现】从对话框控件读取UI配置
-	// TODO: 阶段二迁移SaveConfigurationToStore()中的UI配置部分（PortMasterDlg.cpp:4215-4227）
-
 	// 保存十六进制显示选项
 	config.hexDisplay = ReadHexDisplayMode();
 
@@ -457,9 +417,6 @@ bool DialogConfigBinder::ReadUIConfigFromDialog(UIConfig& config)
 
 void DialogConfigBinder::LoadProtocolConfigToUI(const ProtocolConfig& config)
 {
-	// 【阶段二实现】从ConfigStore加载协议配置到UI
-	// TODO: 阶段二迁移LoadConfigurationFromStore()中的协议配置部分
-
 	// 根据协议配置设置传输模式
 	bool useReliableMode = (config.windowSize > 1);
 	BindTransmissionMode(useReliableMode);
@@ -467,9 +424,6 @@ void DialogConfigBinder::LoadProtocolConfigToUI(const ProtocolConfig& config)
 
 bool DialogConfigBinder::ReadProtocolConfigFromUI(ProtocolConfig& config)
 {
-	// 【阶段二实现】从UI读取协议配置
-	// TODO: 阶段二迁移SaveConfigurationToStore()中的协议配置部分（PortMasterDlg.cpp:4203-4213）
-
 	// 获取可靠模式（更新协议配置）
 	if (ReadTransmissionMode())
 	{
@@ -487,8 +441,6 @@ bool DialogConfigBinder::ReadProtocolConfigFromUI(ProtocolConfig& config)
 
 std::wstring DialogConfigBinder::ParityToString(BYTE parity) const
 {
-	// 【阶段二实现】校验位枚举转字符串
-	// TODO: 阶段二迁移LoadConfigurationFromStore()中的校验位转换逻辑（PortMasterDlg.cpp:4065-4081）
 	switch (parity)
 	{
 	case NOPARITY:   return L"None";
@@ -502,8 +454,6 @@ std::wstring DialogConfigBinder::ParityToString(BYTE parity) const
 
 BYTE DialogConfigBinder::StringToParity(const std::wstring& parityText) const
 {
-	// 【阶段二实现】字符串转校验位枚举
-	// TODO: 阶段二迁移SaveConfigurationToStore()中的校验位转换逻辑（PortMasterDlg.cpp:4168-4178）
 	if (parityText == L"None")        return NOPARITY;
 	else if (parityText == L"Odd")    return ODDPARITY;
 	else if (parityText == L"Even")   return EVENPARITY;
@@ -514,8 +464,6 @@ BYTE DialogConfigBinder::StringToParity(const std::wstring& parityText) const
 
 std::wstring DialogConfigBinder::StopBitsToString(BYTE stopBits) const
 {
-	// 【阶段二实现】停止位枚举转字符串
-	// TODO: 阶段二迁移LoadConfigurationFromStore()中的停止位转换逻辑（PortMasterDlg.cpp:4084-4100）
 	switch (stopBits)
 	{
 	case ONESTOPBIT:   return L"1";
@@ -527,8 +475,6 @@ std::wstring DialogConfigBinder::StopBitsToString(BYTE stopBits) const
 
 BYTE DialogConfigBinder::StringToStopBits(const std::wstring& stopBitsText) const
 {
-	// 【阶段二实现】字符串转停止位枚举
-	// TODO: 阶段二迁移SaveConfigurationToStore()中的停止位转换逻辑（PortMasterDlg.cpp:4181-4190）
 	if (stopBitsText == L"1")         return ONESTOPBIT;
 	else if (stopBitsText == L"1.5")  return ONE5STOPBITS;
 	else if (stopBitsText == L"2")    return TWOSTOPBITS;
