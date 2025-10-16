@@ -33,15 +33,55 @@ PortSessionController::~PortSessionController()
 
 bool PortSessionController::Connect(const TransportConfig& config, bool useReliableMode)
 {
-	// 【阶段二实现】根据config创建Transport，可选创建ReliableChannel
-	// TODO: 阶段二迁移CreateTransport()完整逻辑
-	return false;
+	// 先断开已有连接
+	if (m_isConnected)
+	{
+		Disconnect();
+	}
+
+	// 创建Transport
+	m_transport = CreateTransportByType(config);
+	if (!m_transport || !m_transport->IsOpen())
+	{
+		OnError("创建或打开传输通道失败");
+		return false;
+	}
+
+	// 如果启用可靠模式,创建ReliableChannel
+	m_useReliableMode = useReliableMode;
+	if (useReliableMode)
+	{
+		m_reliableChannel = std::make_unique<ReliableChannel>();
+		if (!m_reliableChannel->Initialize(m_transport, m_reliableConfig))
+		{
+			OnError("可靠传输通道初始化失败");
+			m_reliableChannel.reset();
+			m_transport->Close();
+			m_transport.reset();
+			return false;
+		}
+
+		// 连接ReliableChannel
+		if (!m_reliableChannel->Connect())
+		{
+			OnError("可靠传输通道连接失败");
+			m_reliableChannel->Shutdown();
+			m_reliableChannel.reset();
+			m_transport->Close();
+			m_transport.reset();
+			return false;
+		}
+
+		// 配置日志级别
+		ConfigureReliableLogging(false);
+	}
+
+	m_isConnected = true;
+	return true;
 }
 
 void PortSessionController::Disconnect()
 {
-	// 【阶段二实现】停止接收、销毁ReliableChannel、关闭Transport
-	// TODO: 阶段二迁移DestroyTransport()完整逻辑
 	StopReceiveSession();
 
 	if (m_reliableChannel)
@@ -68,8 +108,6 @@ bool PortSessionController::IsConnected() const
 
 void PortSessionController::StartReceiveSession()
 {
-	// 【阶段二实现】启动接收线程
-	// TODO: 阶段二迁移StartReceiveThread()完整逻辑
 	if (m_receiveThread.joinable())
 	{
 		return;
@@ -80,8 +118,6 @@ void PortSessionController::StartReceiveSession()
 
 void PortSessionController::StopReceiveSession()
 {
-	// 【阶段二实现】停止接收线程
-	// TODO: 阶段二迁移StopReceiveThread()完整逻辑
 	m_isConnected = false;
 
 	if (m_receiveThread.joinable())
@@ -103,8 +139,6 @@ std::shared_ptr<ReliableChannel> PortSessionController::GetReliableChannel()
 
 void PortSessionController::ConfigureReliableLogging(bool verbose)
 {
-	// 【阶段二实现】配置ReliableChannel日志级别
-	// TODO: 阶段二迁移ConfigureReliableLogging()逻辑
 	if (m_reliableChannel)
 	{
 		m_reliableChannel->SetVerboseLoggingEnabled(verbose);
@@ -134,15 +168,113 @@ std::shared_ptr<ITransport> PortSessionController::GetTransport()
 
 std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const TransportConfig& config)
 {
-	// 【阶段二实现】根据配置创建不同类型的Transport
-	// TODO: 阶段二迁移CreateTransport()中的switch逻辑
-	return nullptr;
+	std::shared_ptr<ITransport> transport = nullptr;
+
+	switch (config.portType)
+	{
+	case PortType::PORT_TYPE_SERIAL:
+	{
+		// 创建串口传输对象
+		auto serialTransport = std::make_shared<SerialTransport>();
+		SerialConfig serialConfig;
+		serialConfig.portName = config.portName;
+		serialConfig.baudRate = config.baudRate;
+		serialConfig.dataBits = config.dataBits;
+		serialConfig.parity = config.parity;
+		serialConfig.stopBits = config.stopBits;
+		serialConfig.flowControl = config.flowControl;
+		serialConfig.readTimeout = config.readTimeout;
+		serialConfig.writeTimeout = config.writeTimeout;
+
+		if (serialTransport->Open(serialConfig) == TransportError::Success)
+		{
+			transport = serialTransport;
+		}
+		break;
+	}
+
+	case PortType::PORT_TYPE_PARALLEL:
+	{
+		// 创建并口传输对象
+		auto parallelTransport = std::make_shared<ParallelTransport>();
+		ParallelPortConfig parallelConfig;
+		parallelConfig.deviceName = config.portName;
+		parallelConfig.readTimeout = config.readTimeout;
+		parallelConfig.writeTimeout = config.writeTimeout;
+
+		if (parallelTransport->Open(parallelConfig) == TransportError::Success)
+		{
+			transport = parallelTransport;
+		}
+		break;
+	}
+
+	case PortType::PORT_TYPE_USB_PRINT:
+	{
+		// 创建USB打印传输对象
+		auto usbTransport = std::make_shared<UsbPrintTransport>();
+		UsbPrintConfig usbConfig;
+		usbConfig.deviceName = config.portName;
+		usbConfig.readTimeout = config.readTimeout;
+		usbConfig.writeTimeout = config.writeTimeout;
+
+		if (usbTransport->Open(usbConfig) == TransportError::Success)
+		{
+			transport = usbTransport;
+		}
+		break;
+	}
+
+	case PortType::PORT_TYPE_NETWORK_PRINT:
+	{
+		// 创建网络打印传输对象
+		auto networkTransport = std::make_shared<NetworkPrintTransport>();
+		NetworkPrintConfig networkConfig;
+
+		// 解析地址和端口
+		size_t colonPos = config.portName.find(':');
+		if (colonPos != std::string::npos)
+		{
+			networkConfig.hostname = config.portName.substr(0, colonPos);
+			networkConfig.port = static_cast<WORD>(std::stoi(config.portName.substr(colonPos + 1)));
+		}
+		else
+		{
+			networkConfig.hostname = config.portName;
+			networkConfig.port = 9100; // 默认网络打印端口
+		}
+		networkConfig.connectTimeout = 5000;
+		networkConfig.sendTimeout = config.writeTimeout;
+		networkConfig.receiveTimeout = config.readTimeout;
+
+		if (networkTransport->Open(networkConfig) == TransportError::Success)
+		{
+			transport = networkTransport;
+		}
+		break;
+	}
+
+	case PortType::PORT_TYPE_LOOPBACK:
+	{
+		// 创建回路测试传输对象
+		auto loopbackTransport = std::make_shared<LoopbackTransport>();
+		if (loopbackTransport->Open() == TransportError::Success)
+		{
+			transport = loopbackTransport;
+		}
+		break;
+	}
+
+	default:
+		OnError("不支持的端口类型");
+		break;
+	}
+
+	return transport;
 }
 
 void PortSessionController::ReceiveThreadProc()
 {
-	// 【阶段二实现】接收线程主循环
-	// TODO: 阶段二迁移StartReceiveThread()中的lambda逻辑
 	std::vector<uint8_t> buffer(4096);
 
 	while (m_isConnected)
