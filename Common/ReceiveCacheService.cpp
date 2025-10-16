@@ -59,7 +59,19 @@ bool ReceiveCacheService::Initialize()
 		m_memoryCache.clear();
 		m_memoryCacheValid = false;
 
-		Log("临时缓存文件已创建: " + std::string(m_tempCacheFilePath.begin(), m_tempCacheFilePath.end()));
+		// 将wstring转换为string用于日志输出
+		std::string tempFilePathStr;
+		if (!m_tempCacheFilePath.empty())
+		{
+			// 计算所需的缓冲区大小
+			int size = WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			if (size > 0)
+			{
+				tempFilePathStr.resize(size - 1);
+				WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, &tempFilePathStr[0], size, nullptr, nullptr);
+			}
+		}
+		Log("临时缓存文件已创建: " + tempFilePathStr);
 		return true;
 	}
 	catch (const std::exception& e)
@@ -604,7 +616,19 @@ void ReceiveCacheService::LogDetail(const std::string& message)
 void ReceiveCacheService::LogFileStatus(const std::string& context)
 {
 	LogDetail("--- " + context + " ---");
-	LogDetail("临时文件路径: " + std::string(m_tempCacheFilePath.begin(), m_tempCacheFilePath.end()));
+	// 将wstring转换为string用于日志输出
+		std::string tempFilePathStr;
+		if (!m_tempCacheFilePath.empty())
+		{
+			// 计算所需的缓冲区大小
+			int size = WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			if (size > 0)
+			{
+				tempFilePathStr.resize(size - 1);
+				WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, &tempFilePathStr[0], size, nullptr, nullptr);
+			}
+		}
+		LogDetail("临时文件路径: " + tempFilePathStr);
 	LogDetail("文件流打开状态: " + std::string(m_tempCacheFile.is_open() ? "是" : "否"));
 	LogDetail("文件流状态: " + std::string(m_tempCacheFile.good() ? "正常" : "异常"));
 	LogDetail("总接收字节数: " + std::to_string(m_totalReceivedBytes.load()) + " 字节");

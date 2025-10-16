@@ -258,7 +258,7 @@ std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const T
 	{
 		// 创建回路测试传输对象
 		auto loopbackTransport = std::make_shared<LoopbackTransport>();
-		if (loopbackTransport->Open() == TransportError::Success)
+		if (loopbackTransport->Open(config) == TransportError::Success)
 		{
 			transport = loopbackTransport;
 		}

@@ -2,8 +2,10 @@
 
 #include "pch.h"
 #include "DialogConfigBinder.h"
-#include "resource.h"
-#include <afxwin.h>
+#pragma warning(push)
+#pragma warning(disable: 4828)  // 禁用字符编码警告
+#include "../resources/resource.h"
+#pragma warning(pop)
 
 // ==================== 构造与析构 ====================
 
@@ -111,7 +113,7 @@ UIConfig DialogConfigBinder::GetUIConfig() const
 	return m_configStore.GetConfig().ui;
 }
 
-ProtocolConfig DialogConfigBinder::GetProtocolConfig() const
+ReliableProtocolConfig DialogConfigBinder::GetProtocolConfig() const
 {
 	return m_configStore.GetConfig().protocol;
 }
@@ -151,7 +153,7 @@ bool DialogConfigBinder::SetUIConfig(const UIConfig& config)
 	}
 }
 
-bool DialogConfigBinder::SetProtocolConfig(const ProtocolConfig& config)
+bool DialogConfigBinder::SetProtocolConfig(const ReliableProtocolConfig& config)
 {
 	try
 	{
@@ -176,7 +178,17 @@ void DialogConfigBinder::BindPortName(const std::string& portName)
 std::string DialogConfigBinder::ReadPortName() const
 {
 	std::wstring portName = GetControlText(IDC_COMBO_PORT);
-	return std::string(portName.begin(), portName.end());
+	// 使用安全的字符串转换，避免wchar_t到char的直接转换
+	if (portName.empty()) return std::string();
+
+	// 计算所需的缓冲区大小
+	int size = WideCharToMultiByte(CP_UTF8, 0, portName.c_str(), -1, nullptr, 0, nullptr, nullptr);
+	if (size <= 0) return std::string();
+
+	// 转换字符串
+	std::string result(size - 1, 0);
+	WideCharToMultiByte(CP_UTF8, 0, portName.c_str(), -1, &result[0], size, nullptr, nullptr);
+	return result;
 }
 
 void DialogConfigBinder::BindBaudRate(int baudRate)
@@ -415,14 +427,14 @@ bool DialogConfigBinder::ReadUIConfigFromDialog(UIConfig& config)
 	return true;
 }
 
-void DialogConfigBinder::LoadProtocolConfigToUI(const ProtocolConfig& config)
+void DialogConfigBinder::LoadProtocolConfigToUI(const ReliableProtocolConfig& config)
 {
 	// 根据协议配置设置传输模式
 	bool useReliableMode = (config.windowSize > 1);
 	BindTransmissionMode(useReliableMode);
 }
 
-bool DialogConfigBinder::ReadProtocolConfigFromUI(ProtocolConfig& config)
+bool DialogConfigBinder::ReadProtocolConfigFromUI(ReliableProtocolConfig& config)
 {
 	// 获取可靠模式（更新协议配置）
 	if (ReadTransmissionMode())

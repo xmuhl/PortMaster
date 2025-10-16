@@ -6,6 +6,7 @@
 #include <string>
 #include <functional>
 #include <vector>
+#include "../Common/CommonTypes.h"
 
 // 传输层状态枚举
 enum class TransportState
@@ -38,6 +39,9 @@ enum class TransportError
 	AccessDenied          // 访问被拒绝
 };
 
+// 前向声明
+enum class PortType;
+
 // 传输层配置基类
 struct TransportConfig
 {
@@ -46,6 +50,14 @@ struct TransportConfig
 	DWORD writeTimeout = 2000;    // 写超时(ms)
 	DWORD bufferSize = 4096;      // 缓冲区大小
 	bool asyncMode = false;       // 异步模式
+	PortType portType = PortType::PORT_TYPE_SERIAL;  // 端口类型
+
+	// 串口特定配置（为了PortSessionController的统一访问）
+	DWORD baudRate = 9600;        // 波特率
+	BYTE dataBits = 8;            // 数据位
+	BYTE parity = NOPARITY;       // 校验位
+	BYTE stopBits = ONESTOPBIT;   // 停止位
+	DWORD flowControl = 0;        // 流控制
 
 	virtual ~TransportConfig() = default;
 };

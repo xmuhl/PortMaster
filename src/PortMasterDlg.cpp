@@ -6,11 +6,7 @@
 #include "PortMasterDlg.h"
 #include "afxdialogex.h"
 #include "../Transport/ITransport.h"
-#include "../Transport/SerialTransport.h"
-#include "../Transport/ParallelTransport.h"
-#include "../Transport/UsbPrintTransport.h"
-#include "../Transport/NetworkPrintTransport.h"
-#include "../Transport/LoopbackTransport.h"
+// 【阶段2迁移】Transport头文件已迁移到PortConfigPresenter
 #include "../Common/CommonTypes.h"
 #include "../Common/ConfigStore.h"
 #include <chrono>
@@ -106,7 +102,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	m_transmissionPaused(false),
 	m_transmissionCancelled(false),
 	m_receiveThread(),
-	m_transmissionThread(),
+	// 【Stage4迁移】移除传输线程初始化，由TransmissionCoordinator管理
 	m_reliableSessionMutex(),
 	m_reliableExpectedBytes(0),
 	m_reliableReceivedBytes(0),
@@ -114,16 +110,110 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	m_bytesReceived(0),
 	m_sendSpeed(0),
 	m_receiveSpeed(0),
-	m_lastProgressPercent(0),
+	// 【阶段1迁移】m_lastProgressPercent、m_receiveDisplayPending、m_lastReceiveDisplayUpdate已迁移到DialogUiController
 	m_configStore(ConfigStore::GetInstance()),
 	m_binaryDataDetected(false),
 	m_updateDisplayInProgress(false),
 	m_receiveVerboseLogging(false),
-	m_receiveDisplayPending(false),
-	m_lastReceiveDisplayUpdate(0),
 	m_lastUiLogTick(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
+
+	// 初始化DialogConfigBinder
+	try
+	{
+		m_configBinder = std::make_unique<DialogConfigBinder>(this, m_configStore);
+
+		// 设置配置变更回调
+		m_configBinder->SetConfigChangedCallback([this]() {
+			OnConfigurationChanged();
+		});
+
+		// 设置错误回调
+		m_configBinder->SetErrorCallback([this](const std::string& errorMessage) {
+			CString errorMsg;
+			errorMsg.Format(_T("配置错误: %s"), CString(errorMessage.c_str()));
+			MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
+		});
+	}
+	catch (const std::exception& e)
+	{
+		MessageBox(_T("初始化配置绑定器失败: ") + CString(e.what()), _T("初始化错误"), MB_OK | MB_ICONERROR);
+	}
+
+	// 初始化ReceiveCacheService
+	try
+	{
+		m_receiveCacheService = std::make_unique<ReceiveCacheService>();
+
+		// 设置日志回调
+		m_receiveCacheService->SetLogCallback([this](const std::string& message) {
+			this->WriteLog(message);
+		});
+
+		// 设置详细日志（开发阶段开启）
+		m_receiveCacheService->SetVerboseLogging(true);
+
+		// 初始化临时缓存文件
+		if (!m_receiveCacheService->Initialize())
+		{
+			MessageBox(_T("初始化接收缓存服务失败"), _T("初始化错误"), MB_OK | MB_ICONERROR);
+		}
+	}
+	catch (const std::exception& e)
+	{
+		MessageBox(_T("初始化接收缓存服务失败: ") + CString(e.what()), _T("初始化错误"), MB_OK | MB_ICONERROR);
+	}
+
+	// 初始化TransmissionCoordinator
+	try
+	{
+		m_transmissionCoordinator = std::make_unique<TransmissionCoordinator>();
+
+		// 设置进度回调
+		m_transmissionCoordinator->SetProgressCallback([this](const TransmissionProgress& progress) {
+			this->OnTransmissionProgress(progress);
+		});
+
+		// 设置完成回调
+		m_transmissionCoordinator->SetCompletionCallback([this](const TransmissionResult& result) {
+			this->OnTransmissionCompleted(result);
+		});
+
+		// 设置日志回调
+		m_transmissionCoordinator->SetLogCallback([this](const std::string& message) {
+			this->OnTransmissionLog(message);
+		});
+
+		// 配置传输参数
+		m_transmissionCoordinator->SetChunkSize(1024); // 1KB数据块
+		m_transmissionCoordinator->SetRetrySettings(3, 1000); // 最多重试3次，间隔1秒
+		m_transmissionCoordinator->SetProgressUpdateInterval(100); // 100ms更新间隔
+	}
+	catch (const std::exception& e)
+	{
+		MessageBox(_T("初始化传输协调器失败: ") + CString(e.what()), _T("初始化错误"), MB_OK | MB_ICONERROR);
+	}
+
+	// 初始化PortSessionController
+	try
+	{
+		m_sessionController = std::make_unique<PortSessionController>();
+
+		// 设置数据接收回调
+		m_sessionController->SetDataCallback([this](const std::vector<uint8_t>& data) {
+			this->OnTransportDataReceived(data);
+		});
+
+		// 设置错误回调
+		m_sessionController->SetErrorCallback([this](const std::string& error) {
+			this->OnTransportError(error);
+		});
+	}
+	catch (const std::exception& e)
+	{
+		MessageBox(_T("初始化会话控制器失败: ") + CString(e.what()), _T("初始化错误"), MB_OK | MB_ICONERROR);
+	}
 }
 
 void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
@@ -235,65 +325,85 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 	// TODO: 在此添加额外的初始化代码
 
-	// 初始化端口类型下拉框
-	m_comboPortType.AddString(_T("串口"));
-	m_comboPortType.AddString(_T("并口"));
-	m_comboPortType.AddString(_T("USB打印"));
-	m_comboPortType.AddString(_T("网络打印"));
-	m_comboPortType.AddString(_T("回路测试"));
-	//m_comboPortType.SetCurSel(0);
-	// 默认选择回路测试
-	m_comboPortType.SetCurSel(4);
+	// 【阶段1迁移】初始化DialogUiController - 统一管理控件初始化和状态更新
+	try
+	{
+		// 创建DialogUiController实例
+		m_uiController = std::make_unique<DialogUiController>();
 
-	// 初始化端口列表
-	m_comboPort.AddString(_T("COM1"));
-	m_comboPort.SetCurSel(0);
+		// 构建控件引用结构
+		UIControlRefs controlRefs;
+		controlRefs.btnConnect = &m_btnConnect;
+		controlRefs.btnDisconnect = &m_btnDisconnect;
+		controlRefs.btnSend = &m_btnSend;
+		controlRefs.btnStop = &m_btnStop;
+		controlRefs.btnFile = &m_btnFile;
+		controlRefs.btnClearAll = &m_btnClearAll;
+		controlRefs.btnClearReceive = &m_btnClearReceive;
+		controlRefs.btnCopyAll = &m_btnCopyAll;
+		controlRefs.btnSaveAll = &m_btnSaveAll;
+		controlRefs.editSendData = &m_editSendData;
+		controlRefs.editReceiveData = &m_editReceiveData;
+		controlRefs.editTimeout = &m_editTimeout;
+		controlRefs.comboPortType = &m_comboPortType;
+		controlRefs.comboPort = &m_comboPort;
+		controlRefs.comboBaudRate = &m_comboBaudRate;
+		controlRefs.comboDataBits = &m_comboDataBits;
+		controlRefs.comboParity = &m_comboParity;
+		controlRefs.comboStopBits = &m_comboStopBits;
+		controlRefs.comboFlowControl = &m_comboFlowControl;
+		controlRefs.radioReliable = &m_radioReliable;
+		controlRefs.radioDirect = &m_radioDirect;
+		controlRefs.checkHex = &m_checkHex;
+		controlRefs.checkOccupy = &m_checkOccupy;
+		controlRefs.progress = &m_progress;
+		controlRefs.staticLog = &m_staticLog;
+		controlRefs.staticPortStatus = &m_staticPortStatus;
+		controlRefs.staticMode = &m_staticMode;
+		controlRefs.staticSpeed = &m_staticSpeed;
+		controlRefs.staticSendSource = &m_staticSendSource;
+		controlRefs.parentDialog = this;
 
-	// 初始化波特率列表
-	m_comboBaudRate.AddString(_T("9600"));
-	m_comboBaudRate.SetCurSel(0);
+		// 初始化DialogUiController（包含所有控件初始化和状态设置）
+		m_uiController->Initialize(controlRefs);
 
-	// 初始化数据位下拉框
-	m_comboDataBits.AddString(_T("8"));
-	m_comboDataBits.SetCurSel(0);
+		// 设置节流显示回调
+		m_uiController->SetThrottledDisplayCallback([this]() {
+			this->UpdateReceiveDisplayFromCache();
+		});
+	}
+	catch (const std::exception& e)
+	{
+		MessageBox(_T("初始化UI控制器失败: ") + CString(e.what()), _T("初始化错误"), MB_OK | MB_ICONERROR);
+	}
 
-	// 初始化校验位下拉框
-	m_comboParity.AddString(_T("None"));
-	m_comboParity.SetCurSel(0);
+	// 【阶段2迁移】初始化PortConfigPresenter - 统一管理端口配置和枚举
+	try
+	{
+		// 创建PortConfigPresenter实例
+		m_portConfigPresenter = std::make_unique<PortConfigPresenter>();
 
-	// 初始化停止位下拉框
-	m_comboStopBits.AddString(_T("1"));
-	m_comboStopBits.SetCurSel(0);
+		// 构建端口配置控件引用结构
+		PortConfigControlRefs portControlRefs;
+		portControlRefs.comboPortType = &m_comboPortType;
+		portControlRefs.comboPort = &m_comboPort;
+		portControlRefs.comboBaudRate = &m_comboBaudRate;
+		portControlRefs.comboDataBits = &m_comboDataBits;
+		portControlRefs.comboParity = &m_comboParity;
+		portControlRefs.comboStopBits = &m_comboStopBits;
+		portControlRefs.comboFlowControl = &m_comboFlowControl;
+		portControlRefs.parentDialog = this;
 
-	// 初始化流控下拉框
-	m_comboFlowControl.AddString(_T("None"));
-	m_comboFlowControl.SetCurSel(0);
+		// 初始化PortConfigPresenter（包含端口类型初始化）
+		m_portConfigPresenter->Initialize(portControlRefs);
 
-	// 初始化超时编辑框
-	SetDlgItemText(IDC_EDIT_TIMEOUT, _T("1000"));
-
-	//// 初始化单选按钮 - 默认选择直通模式
-	//m_radioReliable.SetCheck(BST_UNCHECKED);
-	//m_radioDirect.SetCheck(BST_CHECKED);
-	// 默认选择可靠模式
-	m_radioReliable.SetCheck(BST_CHECKED);
-	m_radioDirect.SetCheck(BST_UNCHECKED);
-
-	// 初始化占用检测复选框 - 默认勾选直通模式
-	m_checkOccupy.SetCheck(BST_CHECKED);
-
-	// 初始化进度条
-	m_progress.SetRange(0, 100);
-	SetProgressPercent(0, true);
-
-	// 显示初始状态
-	LogMessage(_T("程序启动成功"));
-	SetDlgItemText(IDC_STATIC_PORT_STATUS, _T("未连接"));
-	//SetDlgItemText(IDC_STATIC_MODE, _T("直通")); // 与默认选择的直通模式保持一致
-	// 获取当前模式选项并更新显示(可靠/直通)
-
-	SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
-	SetDlgItemText(IDC_STATIC_SEND_SOURCE, _T("手动输入"));
+		// 设置默认选择回路测试
+		m_portConfigPresenter->SetSelectedPortType(PortTypeIndex::Loopback);
+	}
+	catch (const std::exception& e)
+	{
+		MessageBox(_T("初始化端口配置呈现器失败: ") + CString(e.what()), _T("初始化错误"), MB_OK | MB_ICONERROR);
+	}
 
 	// 初始化传输配置
 	InitializeTransportConfig();
@@ -304,8 +414,8 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 启用文件拖拽功能
 	DragAcceptFiles(TRUE);
 
-	// 初始化临时缓存文件
-	InitializeTempCacheFile();
+	// 初始化ReceiveCacheService（临时缓存文件功能已迁移到服务层）
+	// ReceiveCacheService已在构造函数初始化部分完成
 
 	return TRUE; // 除非将焦点设置到控件，否则返回 TRUE
 }
@@ -372,15 +482,18 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 	}
 	else if (nIDEvent == TIMER_ID_THROTTLED_DISPLAY)
 	{
-		// 【UI优化】定时器2：节流的接收显示更新
-		KillTimer(TIMER_ID_THROTTLED_DISPLAY);
-
-		if (m_receiveDisplayPending)
+		// 【阶段1迁移】使用DialogUiController管理节流显示
+		if (m_uiController)
 		{
-			// 执行延迟的显示更新
-			UpdateReceiveDisplayFromCache();
-			m_lastReceiveDisplayUpdate = ::GetTickCount();
-			m_receiveDisplayPending = false;
+			m_uiController->StopThrottledDisplayTimer();
+
+			if (m_uiController->IsDisplayUpdatePending())
+			{
+				// 执行延迟的显示更新
+				UpdateReceiveDisplayFromCache();
+				m_uiController->RecordDisplayUpdate();
+				m_uiController->SetDisplayUpdatePending(false);
+			}
 		}
 	}
 
@@ -389,69 +502,43 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 
 void CPortMasterDlg::PostNcDestroy()
 {
-	// 确保传输线程正确结束
-	if (m_transmissionThread.joinable())
-	{
-		m_transmissionCancelled = true;
-		m_transmissionThread.join();
-	}
+	// 【Stage4迁移】使用TransmissionCoordinator管理传输，无需手动清理线程
 
-	// 清理临时缓存文件
-	CloseTempCacheFile();
+	// 清理ReceiveCacheService（临时缓存文件功能已迁移到服务层）
+	if (m_receiveCacheService)
+	{
+		m_receiveCacheService->Shutdown();
+	}
 
 	CDialogEx::PostNcDestroy();
 }
 
 void CPortMasterDlg::OnBnClickedButtonConnect()
 {
-	// TODO: 在此添加控件通知处理程序代码
+	// 【阶段5迁移】使用PortSessionController统一管理连接
+	WriteLog("OnBnClickedButtonConnect: 开始连接...");
 
-	// 创建传输对象
-	if (!CreateTransport())
+	// 准备传输配置（应该已在InitializeTransportConfig中初始化）
+	InitializeTransportConfig();
+
+	// 确定是否使用可靠模式
+	bool useReliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+	WriteLog(std::string("OnBnClickedButtonConnect: 使用") + (useReliableMode ? "可靠" : "直通") + "模式");
+
+	// 通过PortSessionController建立连接
+	if (!m_sessionController->Connect(m_transportConfig, useReliableMode))
 	{
+		WriteLog("OnBnClickedButtonConnect: 连接失败");
+		MessageBox(_T("连接失败"), _T("错误"), MB_OK | MB_ICONERROR);
 		return;
 	}
 
-	// 打开传输连接
-	WriteLog("OnBnClickedButtonConnect: Starting connection...");
-
-	TransportError error = TransportError::Success;
-	if (m_reliableChannel)
-	{
-		WriteLog("OnBnClickedButtonConnect: Connecting reliable channel...");
-		bool connected = m_reliableChannel->Connect();
-		WriteLog("OnBnClickedButtonConnect: Reliable channel connect result: " + std::to_string(connected));
-		error = connected ? static_cast<TransportError>(TransportError::Success) : static_cast<TransportError>(TransportError::ConnectionClosed);
-	}
-	else if (m_transport)
-	{
-		WriteLog("OnBnClickedButtonConnect: Using direct transport...");
-		// 传输对象已经在CreateTransport中打开，这里不需要重复打开
-		if (!m_transport->IsOpen())
-		{
-			WriteLog("OnBnClickedButtonConnect: Transport not open");
-			error = TransportError::NotOpen;
-		}
-		else
-		{
-			WriteLog("OnBnClickedButtonConnect: Transport already open");
-		}
-	}
-
-	if (error != TransportError::Success)
-	{
-		CString errorMsg;
-		errorMsg.Format(_T("连接失败: %d"), static_cast<int>(error));
-		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
-		DestroyTransport();
-		return;
-	}
+	// 启动接收会话
+	m_sessionController->StartReceiveSession();
+	WriteLog("OnBnClickedButtonConnect: 接收会话已启动");
 
 	// 标记为已连接
 	m_isConnected = true;
-
-	// 启动接收线程
-	StartReceiveThread();
 
 	// 更新状态条连接状态
 	UpdateConnectionStatus();
@@ -467,17 +554,34 @@ void CPortMasterDlg::OnBnClickedButtonConnect()
 	GetDlgItem(IDC_COMBO_PARITY)->EnableWindow(FALSE);
 	GetDlgItem(IDC_COMBO_STOP_BITS)->EnableWindow(FALSE);
 	GetDlgItem(IDC_COMBO_FLOW_CONTROL)->EnableWindow(FALSE);
+
+	WriteLog("OnBnClickedButtonConnect: 连接成功");
 }
 
 void CPortMasterDlg::OnBnClickedButtonDisconnect()
 {
-	// TODO: 在此添加控件通知处理程序代码
+	// 【阶段5迁移】使用PortSessionController统一管理断开连接
+	WriteLog("OnBnClickedButtonDisconnect: 开始断开连接...");
 
-	// 销毁传输对象
-	DestroyTransport();
+	// 通过PortSessionController断开连接（会自动停止接收会话）
+	if (m_sessionController)
+	{
+		m_sessionController->Disconnect();
+	}
 
-	// 清理临时缓存文件（断开连接时清空缓存）
-	ClearTempCacheFile();
+	// 标记为未连接
+	m_isConnected = false;
+
+	// 【阶段3迁移】清理接收缓存（断开连接时清空缓存）
+	if (m_receiveCacheService)
+	{
+		m_receiveCacheService->Shutdown();
+		m_totalReceivedBytes = 0;
+		if (!m_receiveCacheService->Initialize())
+		{
+			WriteLog("断开连接后重新初始化接收缓存失败");
+		}
+	}
 
 	// 更新状态条连接状态
 	UpdateConnectionStatus();
@@ -493,6 +597,8 @@ void CPortMasterDlg::OnBnClickedButtonDisconnect()
 	GetDlgItem(IDC_COMBO_PARITY)->EnableWindow(TRUE);
 	GetDlgItem(IDC_COMBO_STOP_BITS)->EnableWindow(TRUE);
 	GetDlgItem(IDC_COMBO_FLOW_CONTROL)->EnableWindow(TRUE);
+
+	WriteLog("OnBnClickedButtonDisconnect: 断开连接完成");
 }
 
 void CPortMasterDlg::OnBnClickedButtonSend()
@@ -543,24 +649,18 @@ void CPortMasterDlg::StartTransmission()
 	m_btnSend.SetWindowText(_T("中断"));
 	m_staticPortStatus.SetWindowText(_T("数据传输已开始"));
 
-	// 启动异步传输线程，避免UI阻塞
-	if (m_transmissionThread.joinable())
-	{
-		m_transmissionThread.join();
-	}
-
-	m_transmissionThread = std::thread([this]()
-		{ PerformDataTransmission(); });
+	// 【Stage4迁移】使用TransmissionCoordinator启动实际传输
+	PerformDataTransmission();
 }
 
 // 【P1修复】更新传输控制方法 - 使用TransmissionTask实现暂停/恢复
 void CPortMasterDlg::PauseTransmission()
 {
-	// 暂停当前传输任务
-	if (m_currentTransmissionTask && m_currentTransmissionTask->IsRunning())
+	// 使用TransmissionCoordinator暂停传输任务
+	if (m_transmissionCoordinator && m_transmissionCoordinator->IsRunning())
 	{
-		m_currentTransmissionTask->Pause();
-		this->WriteLog("传输任务已暂停");
+		m_transmissionCoordinator->Pause();
+		this->WriteLog("传输协调器已暂停传输任务");
 
 		// 更新按钮文本和状态栏
 		m_btnSend.SetWindowText(_T("继续"));
@@ -577,11 +677,11 @@ void CPortMasterDlg::PauseTransmission()
 
 void CPortMasterDlg::ResumeTransmission()
 {
-	// 恢复当前传输任务
-	if (m_currentTransmissionTask && m_currentTransmissionTask->IsPaused())
+	// 使用TransmissionCoordinator恢复传输任务
+	if (m_transmissionCoordinator && m_transmissionCoordinator->IsRunning())
 	{
-		m_currentTransmissionTask->Resume();
-		this->WriteLog("传输任务已恢复");
+		m_transmissionCoordinator->Resume();
+		this->WriteLog("传输协调器已恢复传输任务");
 
 		// 更新按钮文本和状态栏
 		m_btnSend.SetWindowText(_T("中断"));
@@ -596,13 +696,13 @@ void CPortMasterDlg::ResumeTransmission()
 	m_transmissionPaused = false;
 }
 
-// 【P1修复】重构传输方法 - 使用TransmissionTask实现UI与传输解耦
+// 【阶段D迁移】使用TransmissionCoordinator实现传输任务协调
 void CPortMasterDlg::PerformDataTransmission()
 {
 	try
 	{
 		// 检查是否已有传输任务在运行
-		if (m_currentTransmissionTask && !m_currentTransmissionTask->IsCompleted())
+		if (m_transmissionCoordinator && m_transmissionCoordinator->IsRunning())
 		{
 			this->WriteLog("PerformDataTransmission: 传输任务已在运行中，忽略重复请求");
 			return;
@@ -617,66 +717,49 @@ void CPortMasterDlg::PerformDataTransmission()
 			return;
 		}
 
-		this->WriteLog("PerformDataTransmission: 开始创建传输任务，数据大小: " + std::to_string(data.size()) + " 字节");
+		this->WriteLog("PerformDataTransmission: 开始协调传输任务，数据大小: " + std::to_string(data.size()) + " 字节");
 
-		// 创建适当的传输任务
-		if (m_reliableChannel && m_reliableChannel->IsConnected())
+		// 使用TransmissionCoordinator自动选择传输通道并启动传输
+		if (m_transmissionCoordinator)
 		{
-			this->WriteLog("PerformDataTransmission: 使用可靠传输通道");
-			m_currentTransmissionTask = std::make_unique<ReliableTransmissionTask>(
-				std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*) {}));
-		}
-		else if (m_transport && m_transport->IsOpen())
-		{
-			this->WriteLog("PerformDataTransmission: 使用原始传输通道");
-			m_currentTransmissionTask = std::make_unique<RawTransmissionTask>(m_transport);
+			// 初始化进度条
+			PostMessage(WM_USER + 10, 0, 100); // 设置进度条范围
+			PostMessage(WM_USER + 11, 0, 0);   // 设置进度条位置
+
+			// 启动传输任务（TransmissionCoordinator会自动选择可靠/直接传输模式）
+			std::shared_ptr<ReliableChannel> reliableChannel =
+				m_reliableChannel ?
+				std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*){}) :
+				nullptr;
+			std::shared_ptr<ITransport> transport =
+				m_transport ?
+				std::shared_ptr<ITransport>(m_transport.get(), [](ITransport*){}) :
+				nullptr;
+
+			bool started = m_transmissionCoordinator->Start(
+				data,
+				reliableChannel,
+				transport
+			);
+
+			if (!started)
+			{
+				this->WriteLog("PerformDataTransmission: 错误 - 传输协调器启动失败");
+				PostMessage(WM_USER + 13, (WPARAM)TransportError::WriteFailed, 0);
+				return;
+			}
+
+			this->WriteLog("PerformDataTransmission: 传输协调器已成功启动，UI线程继续响应");
 		}
 		else
 		{
-			this->WriteLog("PerformDataTransmission: 错误 - 没有可用的传输通道");
+			this->WriteLog("PerformDataTransmission: 错误 - 传输协调器未初始化");
 			PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
-			return;
 		}
-
-		// 设置回调函数
-		m_currentTransmissionTask->SetProgressCallback(
-			[this](const TransmissionProgress& progress) {
-				this->OnTransmissionProgress(progress);
-			});
-
-		m_currentTransmissionTask->SetCompletionCallback(
-			[this](const TransmissionResult& result) {
-				this->OnTransmissionCompleted(result);
-			});
-
-		m_currentTransmissionTask->SetLogCallback(
-			[this](const std::string& message) {
-				this->OnTransmissionLog(message);
-			});
-
-		// 初始化进度条
-		PostMessage(WM_USER + 10, 0, 100); // 设置进度条范围
-		PostMessage(WM_USER + 11, 0, 0);   // 设置进度条位置
-
-		// 启动传输任务
-		bool started = m_currentTransmissionTask->Start(data);
-		if (!started)
-		{
-			this->WriteLog("PerformDataTransmission: 错误 - 传输任务启动失败");
-			m_currentTransmissionTask.reset();
-			PostMessage(WM_USER + 13, (WPARAM)TransportError::WriteFailed, 0);
-			return;
-		}
-
-		this->WriteLog("PerformDataTransmission: 传输任务已成功启动，UI线程继续响应");
 	}
 	catch (const std::exception& e)
 	{
 		this->WriteLog("PerformDataTransmission异常: " + std::string(e.what()));
-		if (m_currentTransmissionTask)
-		{
-			m_currentTransmissionTask.reset();
-		}
 		PostMessage(WM_USER + 14, 0, 0); // 通知UI线程处理异常
 	}
 }
@@ -765,8 +848,16 @@ void CPortMasterDlg::ClearAllCacheData()
 		// 仅清空接收数据显示框，保持发送窗口数据不变
 		m_editReceiveData.SetWindowText(_T(""));
 
-		// 清除临时缓存文件
-		ClearTempCacheFile();
+		// 【阶段3迁移】清除接收缓存
+		if (m_receiveCacheService)
+		{
+			m_receiveCacheService->Shutdown();
+			m_totalReceivedBytes = 0;
+			if (!m_receiveCacheService->Initialize())
+			{
+				WriteLog("清空接收数据后重新初始化接收缓存失败");
+			}
+		}
 
 		// 重置接收统计信息
 		m_bytesReceived = 0;
@@ -785,13 +876,17 @@ void CPortMasterDlg::ClearAllCacheData()
 
 void CPortMasterDlg::OnBnClickedButtonStop()
 {
-	if (m_isTransmitting)
+	// 使用TransmissionCoordinator检查传输状态
+	if (m_transmissionCoordinator && m_transmissionCoordinator->IsRunning())
 	{
 		// 如果正在传输，弹出确认对话框
 		int result = MessageBox(_T("确认终止传输？"), _T("确认终止传输"), MB_YESNO | MB_ICONQUESTION);
 		if (result == IDYES)
 		{
 			// 用户确认终止传输
+			m_transmissionCoordinator->Cancel();
+
+			// 更新兼容性状态
 			m_transmissionCancelled = true;
 			m_isTransmitting = false;
 			m_transmissionPaused = false;
@@ -805,7 +900,27 @@ void CPortMasterDlg::OnBnClickedButtonStop()
 			SetProgressPercent(0, true);
 
 			// 记录日志
-			this->WriteLog("用户手动终止传输，已清除所有缓存数据");
+			this->WriteLog("用户通过传输协调器手动终止传输，已清除所有缓存数据");
+		}
+	}
+	else if (m_isTransmitting)
+	{
+		// 兼容性：检查旧的状态标志
+		int result = MessageBox(_T("确认终止传输？"), _T("确认终止传输"), MB_YESNO | MB_ICONQUESTION);
+		if (result == IDYES)
+		{
+			m_transmissionCancelled = true;
+			m_isTransmitting = false;
+			m_transmissionPaused = false;
+
+			ClearAllCacheData();
+
+			// 更新界面状态
+			m_btnSend.SetWindowText(_T("发送"));
+			m_staticPortStatus.SetWindowText(_T("传输已终止"));
+			SetProgressPercent(0, true);
+
+			this->WriteLog("用户手动终止传输（兼容模式），已清除所有缓存数据");
 		}
 	}
 	else
@@ -936,7 +1051,17 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 				// 设置到发送数据编辑框
 				if (m_checkHex.GetCheck())
 				{
-					CString hexContent = StringToHex(fileContent);
+					// 将CString转换为UTF-8字节序列
+				CT2A utf8Str(fileContent, CP_UTF8);
+				const char* pUtf8 = utf8Str;
+				int utf8Len = strlen(pUtf8);
+
+				// 直接使用DataPresentationService
+				std::string hexResult = DataPresentationService::BytesToHex(
+					reinterpret_cast<const uint8_t*>(pUtf8),
+					utf8Len
+				);
+				CString hexContent(hexResult.c_str(), static_cast<int>(hexResult.length()));
 					m_editSendData.SetWindowText(hexContent);
 				}
 				else
@@ -999,122 +1124,14 @@ void CPortMasterDlg::LoadDataFromFile(const CString& filePath)
 
 void CPortMasterDlg::OnCbnSelchangeComboPortType()
 {
-	// 根据端口类型切换参数配置
-	UpdatePortParameters();
+	// 【阶段2迁移】使用PortConfigPresenter处理端口类型切换
+	if (m_portConfigPresenter)
+	{
+		m_portConfigPresenter->OnPortTypeChanged();
+	}
 }
 
-void CPortMasterDlg::UpdatePortParameters()
-{
-	int nSel = m_comboPortType.GetCurSel();
-
-	// 清空端口列表
-	m_comboPort.ResetContent();
-
-	switch (nSel)
-	{
-	case 0: // 串口
-	{
-		// 使用SetupAPI枚举实际串口
-		std::vector<std::string> ports = SerialTransport::EnumerateSerialPorts();
-		for (const auto& port : ports)
-		{
-			m_comboPort.AddString(CString(port.c_str()));
-		}
-		// 如果没有找到串口，添加默认选项
-		if (ports.empty())
-		{
-			m_comboPort.AddString(_T("COM1"));
-			m_comboPort.AddString(_T("COM2"));
-			m_comboPort.AddString(_T("COM3"));
-			m_comboPort.AddString(_T("COM4"));
-		}
-		// 显示串口相关参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_SHOW);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_SHOW);
-	}
-	break;
-
-	case 1: // 并口
-	{
-		// 枚举并口
-		std::vector<std::string> ports = ParallelTransport::EnumerateParallelPorts();
-		for (const auto& port : ports)
-		{
-			m_comboPort.AddString(CString(port.c_str()));
-		}
-		// 如果没有找到并口，添加默认选项
-		if (ports.empty())
-		{
-			m_comboPort.AddString(_T("LPT1"));
-			m_comboPort.AddString(_T("LPT2"));
-			m_comboPort.AddString(_T("LPT3"));
-		}
-		// 隐藏串口参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
-	}
-	break;
-
-	case 2: // USB打印
-	{
-		// 枚举USB打印端口
-		std::vector<std::string> ports = UsbPrintTransport::EnumerateUsbPorts();
-		for (const auto& port : ports)
-		{
-			m_comboPort.AddString(CString(port.c_str()));
-		}
-		// 如果没有找到USB打印端口，添加默认选项
-		if (ports.empty())
-		{
-			m_comboPort.AddString(_T("USB001"));
-			m_comboPort.AddString(_T("USB002"));
-		}
-		// 隐藏串口参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
-	}
-	break;
-
-	case 3: // 网络打印
-	{
-		// 添加网络打印地址选项
-		m_comboPort.AddString(_T("127.0.0.1:9100"));
-		m_comboPort.AddString(_T("192.168.1.100:9100"));
-		m_comboPort.AddString(_T("printer.local:9100"));
-		// 隐藏串口参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
-	}
-	break;
-
-	case 4: // 回路测试
-	{
-		// 添加回路测试选项
-		m_comboPort.AddString(_T("Loopback"));
-		// 隐藏串口参数
-		GetDlgItem(IDC_COMBO_BAUD_RATE)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_DATA_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_PARITY)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_STOP_BITS)->ShowWindow(SW_HIDE);
-		GetDlgItem(IDC_COMBO_FLOW_CONTROL)->ShowWindow(SW_HIDE);
-	}
-	break;
-	}
-
-	m_comboPort.SetCurSel(0);
-}
+// 【阶段2迁移】UpdatePortParameters已迁移到PortConfigPresenter
 
 void CPortMasterDlg::OnBnClickedCheckHex()
 {
@@ -1146,7 +1163,22 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 			if (!m_sendCacheValid)
 			{
 				// 缓存无效，尝试从当前显示的十六进制数据中提取
-				CString textData = HexToString(currentSendData);
+				// 将CString转换为std::string以使用DataPresentationService
+				CT2A hexStr(currentSendData, CP_UTF8);
+				std::string hexStdString(hexStr);
+
+				// 直接使用DataPresentationService
+				std::vector<uint8_t> bytes = DataPresentationService::HexToBytes(hexStdString);
+
+				// 将字节数组转换为UTF-8编码的CString
+				CString textData;
+				if (!bytes.empty())
+				{
+					// 添加null终止符确保字符串安全
+					bytes.push_back(0);
+					CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
+					textData = CString(utf8Result);
+				}
 				if (!textData.IsEmpty())
 				{
 					UpdateSendCache(textData);
@@ -1176,914 +1208,60 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 	}
 }
 
-CString CPortMasterDlg::StringToHex(const CString& str)
-{
-	CString hexStr;
-	CString asciiStr;
-
-	// 将CString转换为UTF-8字节序列以正确处理Unicode字符
-	CT2A utf8Str(str, CP_UTF8);
-	const char* pUtf8 = utf8Str;
-	int utf8Len = strlen(pUtf8);
-
-	for (int i = 0; i < utf8Len; i++)
-	{
-		uint8_t byte = static_cast<uint8_t>(pUtf8[i]);
-
-		// 添加偏移地址（每16字节一行）
-		if (i % 16 == 0)
-		{
-			if (i > 0)
-			{
-				// 添加ASCII显示部分
-				hexStr += _T("  |");
-				hexStr += asciiStr;
-				hexStr += _T("|\r\n");
-				asciiStr.Empty();
-			}
-
-			CString offset;
-			offset.Format(_T("%08X: "), i);
-			hexStr += offset;
-		}
-
-		// 添加16进制值
-		CString hexByte;
-		hexByte.Format(_T("%02X "), byte);
-		hexStr += hexByte;
-
-		// 添加可打印字符到ASCII部分
-		if (byte >= 32 && byte <= 126)
-		{
-			asciiStr += (TCHAR)byte;
-		}
-		else
-		{
-			asciiStr += _T(".");
-		}
-	}
-
-	// 处理最后一行
-	if (utf8Len % 16 != 0)
-	{
-		// 补齐空格
-		int remain = 16 - (utf8Len % 16);
-		for (int i = 0; i < remain; i++)
-		{
-			hexStr += _T("   ");
-		}
-	}
-
-	// 添加ASCII显示部分
-	hexStr += _T("  |");
-	hexStr += asciiStr;
-	hexStr += _T("|");
-
-	return hexStr;
-}
-
-CString CPortMasterDlg::BytesToHex(const BYTE* data, size_t length)
-{
-	CString hexStr;
-	CString asciiStr;
-
-	for (size_t i = 0; i < length; i++)
-	{
-		uint8_t byte = data[i];
-
-		// 添加偏移地址（每16字节一行）
-		if (i % 16 == 0)
-		{
-			if (i > 0)
-			{
-				// 添加ASCII显示部分
-				hexStr += _T("  |");
-				hexStr += asciiStr;
-				hexStr += _T("|\r\n");
-				asciiStr.Empty();
-			}
-
-			CString offset;
-			offset.Format(_T("%08X: "), (unsigned int)i);
-			hexStr += offset;
-		}
-
-		// 添加16进制值
-		CString hexByte;
-		hexByte.Format(_T("%02X "), byte);
-		hexStr += hexByte;
-
-		// 添加可打印字符到ASCII部分
-		if (byte >= 32 && byte <= 126)
-		{
-			asciiStr += (TCHAR)byte;
-		}
-		else
-		{
-			asciiStr += _T(".");
-		}
-	}
-
-	// 处理最后一行
-	if (length % 16 != 0)
-	{
-		// 补齐空格
-		int remain = 16 - (length % 16);
-		for (int i = 0; i < remain; i++)
-		{
-			hexStr += _T("   ");
-		}
-	}
-
-	// 添加ASCII显示部分
-	hexStr += _T("  |");
-	hexStr += asciiStr;
-	hexStr += _T("|");
-
-	return hexStr;
-}
-
-CString CPortMasterDlg::HexToString(const CString& hex)
-{
-	// 从格式化的十六进制文本中提取纯十六进制字节对
-	CString cleanHex;
-	int len = hex.GetLength();
-	bool inHexSection = false;
-
-	for (int i = 0; i < len; i++)
-	{
-		TCHAR ch = hex[i];
-
-		// 检测十六进制数据区域（在冒号之后）
-		if (ch == _T(':'))
-		{
-			inHexSection = true;
-			continue;
-		}
-
-		// 检测ASCII部分开始（在'|'字符处结束十六进制部分）
-		if (ch == _T('|'))
-		{
-			inHexSection = false;
-			continue;
-		}
-
-		// 只在十六进制数据区域内收集字符
-		if (inHexSection)
-		{
-			// 只保留有效的十六进制字符
-			if ((ch >= _T('0') && ch <= _T('9')) ||
-				(ch >= _T('A') && ch <= _T('F')) ||
-				(ch >= _T('a') && ch <= _T('f')))
-			{
-				cleanHex += ch;
-			}
-			// 跳过空格、换行符等其他字符
-		}
-	}
-
-	// 确保字节对数为偶数
-	if (cleanHex.GetLength() % 2 != 0)
-	{
-		// 如果长度为奇数，移除最后一个字符
-		cleanHex = cleanHex.Left(cleanHex.GetLength() - 1);
-	}
-
-	// 转换十六进制字节对为字节数组
-	std::vector<uint8_t> bytes;
-	for (int i = 0; i < cleanHex.GetLength(); i += 2)
-	{
-		CString hexByte = cleanHex.Mid(i, 2);
-		uint8_t byteValue = static_cast<uint8_t>(_tcstoul(hexByte, NULL, 16));
-		bytes.push_back(byteValue);
-	}
-
-	// 将字节数组转换为UTF-8编码的CString
-	if (!bytes.empty())
-	{
-		// 添加null终止符确保字符串安全
-		bytes.push_back(0);
-		CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
-		return CString(utf8Result);
-	}
-
-	// 如果没有有效的十六进制数据，返回空字符串
-	return CString();
-}
-
-CString CPortMasterDlg::ExtractHexAsciiText(const CString& hex)
-{
-	// 从格式化的十六进制文本中提取ASCII部分
-	CString asciiText;
-	int len = hex.GetLength();
-	bool inAsciiSection = false;
-
-	for (int i = 0; i < len; i++)
-	{
-		TCHAR ch = hex[i];
-
-		// 检测ASCII部分开始（在'|'字符处开始）
-		if (ch == _T('|'))
-		{
-			inAsciiSection = true;
-			continue;
-		}
-
-		// 检测ASCII部分结束（在第二个'|'字符处结束）
-		if (inAsciiSection && ch == _T('|'))
-		{
-			break;
-		}
-
-		// 收集ASCII部分的字符
-		if (inAsciiSection)
-		{
-			asciiText += ch;
-		}
-	}
-
-	// 移除可能的换行符和回车符
-	asciiText.Remove(_T('\r'));
-	asciiText.Remove(_T('\n'));
-
-	return asciiText;
-}
-
 // 基于缓存的格式转换函数实现
 
 void CPortMasterDlg::UpdateSendDisplayFromCache()
 {
-	// 如果发送缓存有效且不为空，直接使用缓存显示
+	// 使用DataPresentationService准备显示数据
 	if (m_sendCacheValid && !m_sendDataCache.empty())
 	{
-		// 实现100行显示限制（与接收窗口保持一致）
-		const int MAX_DISPLAY_LINES = 100;
+		bool hexMode = (m_checkHex.GetCheck() == BST_CHECKED);
+		DataPresentationService::DisplayUpdate update =
+			DataPresentationService::PrepareDisplay(m_sendDataCache, hexMode);
 
-		// 根据当前显示模式从缓存更新显示
-		if (m_checkHex.GetCheck() == BST_CHECKED)
-		{
-			// 十六进制模式：每16字节一行
-			CString hexDisplay;
-			CString asciiStr;
-			int lineCount = 0;
-
-			// 计算需要显示的数据范围（最后100行）
-			size_t totalLines = (m_sendDataCache.size() + 15) / 16; // 向上取整
-			size_t startLine = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
-			size_t startByte = startLine * 16;
-
-			// 如果数据被截断，添加提示
-			if (startLine > 0)
-			{
-				hexDisplay += _T("... (显示最后100行数据) ...\r\n");
-			}
-
-			for (size_t i = startByte; i < m_sendDataCache.size(); i++)
-			{
-				uint8_t byte = m_sendDataCache[i];
-
-				// 添加偏移地址（每16字节一行）
-				if (i % 16 == 0)
-				{
-					if (i > startByte)
-					{
-						// 添加ASCII显示部分
-						hexDisplay += _T("  |");
-						hexDisplay += asciiStr;
-						hexDisplay += _T("|\r\n");
-						asciiStr.Empty();
-						lineCount++;
-					}
-
-					CString offset;
-					offset.Format(_T("%08X: "), (int)i);
-					hexDisplay += offset;
-				}
-
-				// 添加16进制值
-				CString hexByte;
-				hexByte.Format(_T("%02X "), byte);
-				hexDisplay += hexByte;
-
-				// 添加可打印字符到ASCII部分
-				if (byte >= 32 && byte <= 126)
-				{
-					asciiStr += (TCHAR)byte;
-				}
-				else
-				{
-					asciiStr += _T(".");
-				}
-			}
-
-			// 处理最后一行
-			if (m_sendDataCache.size() % 16 != 0)
-			{
-				// 补齐空格
-				size_t remain = 16 - (m_sendDataCache.size() % 16);
-				for (size_t i = 0; i < remain; i++)
-				{
-					hexDisplay += _T("   ");
-				}
-			}
-
-			// 添加ASCII显示部分
-			hexDisplay += _T("  |");
-			hexDisplay += asciiStr;
-			hexDisplay += _T("|");
-
-			// 设置标志防止OnEnChangeEditSendData事件触发
-			m_updateDisplayInProgress = true;
-			m_editSendData.SetWindowText(hexDisplay);
-			m_updateDisplayInProgress = false;
-		}
-		else
-		{
-			// 文本模式：智能编码检测和显示（与接收窗口完全一致）
-			std::vector<char> safeData(m_sendDataCache.begin(), m_sendDataCache.end());
-			safeData.push_back('\0');
-
-			CString displayText;
-			bool decoded = false;
-
-			// 检测是否为二进制数据（包含大量不可打印字符）
-			size_t nonPrintableCount = 0;
-			size_t nullByteCount = 0;
-			size_t sampleSize = min(m_sendDataCache.size(), (size_t)1024); // 检查前1KB
-
-			for (size_t i = 0; i < sampleSize; i++)
-			{
-				uint8_t byte = m_sendDataCache[i];
-				if (byte == 0)
-				{
-					nullByteCount++;
-				}
-				else if (byte < 32 && byte != '\r' && byte != '\n' && byte != '\t')
-				{
-					nonPrintableCount++;
-				}
-			}
-
-			// 改进的二进制检测逻辑：
-			// 1. 如果包含空字节，很可能是二进制文件
-			// 2. 如果不可打印字符超过20%，认为是二进制数据
-			bool isBinaryData = false;
-			if (sampleSize > 0)
-			{
-				if (nullByteCount > 0 || (nonPrintableCount * 100 / sampleSize) > 20)
-				{
-					isBinaryData = true;
-				}
-			}
-
-			if (isBinaryData)
-			{
-				displayText = _T("=== 检测到二进制数据 ===\r\n");
-				displayText += _T("建议切换到十六进制模式查看完整内容\r\n");
-
-				CString sizeInfo;
-				sizeInfo.Format(_T("数据大小: %u 字节\r\n"), (unsigned int)m_sendDataCache.size());
-				displayText += sizeInfo;
-
-				CString charInfo;
-				charInfo.Format(_T("不可打印字符: %u (%.1f%%)\r\n"),
-					(unsigned int)nonPrintableCount,
-					sampleSize > 0 ? (nonPrintableCount * 100.0 / sampleSize) : 0);
-				displayText += charInfo;
-
-				if (nullByteCount > 0)
-				{
-					CString nullInfo;
-					nullInfo.Format(_T("空字节数量: %u\r\n"), (unsigned int)nullByteCount);
-					displayText += nullInfo;
-				}
-				displayText += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
-
-				// 显示前512字节的可打印字符作为预览，按行格式化
-				size_t previewSize = min(m_sendDataCache.size(), (size_t)512);
-				CString previewLine;
-				int lineLength = 0;
-
-				for (size_t i = 0; i < previewSize; i++)
-				{
-					uint8_t byte = m_sendDataCache[i];
-					if (byte >= 32 && byte <= 126)
-					{
-						previewLine += (TCHAR)byte;
-						lineLength++;
-					}
-					else if (byte == '\r')
-					{
-						previewLine += _T("\\r");
-						lineLength += 2;
-					}
-					else if (byte == '\n')
-					{
-						previewLine += _T("\\n\r\n");
-						displayText += previewLine;
-						previewLine.Empty();
-						lineLength = 0;
-					}
-					else if (byte == '\t')
-					{
-						previewLine += _T("\\t");
-						lineLength += 2;
-					}
-					else
-					{
-						previewLine += _T(".");
-						lineLength++;
-					}
-
-					// 每80个字符换行
-					if (lineLength >= 80)
-					{
-						previewLine += _T("\r\n");
-						displayText += previewLine;
-						previewLine.Empty();
-						lineLength = 0;
-					}
-				}
-
-				// 添加剩余的预览内容
-				if (!previewLine.IsEmpty())
-				{
-					displayText += previewLine;
-				}
-
-				if (m_sendDataCache.size() > 512)
-				{
-					displayText += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
-				}
-
-				decoded = true;
-			}
-			else
-			{
-				// 尝试UTF-8解码
-				try
-				{
-					CA2T utf8Text(safeData.data(), CP_UTF8);
-					CString testResult = CString(utf8Text);
-
-					if (!testResult.IsEmpty())
-					{
-						displayText = testResult;
-						decoded = true;
-					}
-				}
-				catch (...)
-				{
-					// UTF-8解码失败，继续尝试其他编码
-				}
-
-				// 如果UTF-8失败，尝试GBK解码
-				if (!decoded)
-				{
-					try
-					{
-						CA2T gbkText(safeData.data(), CP_ACP);
-						CString testResult = CString(gbkText);
-
-						if (!testResult.IsEmpty())
-						{
-							displayText = testResult;
-							decoded = true;
-						}
-					}
-					catch (...)
-					{
-						// GBK解码失败
-					}
-				}
-
-				// 如果所有编码都失败，显示原始字节
-				if (!decoded)
-				{
-					for (size_t i = 0; i < m_sendDataCache.size(); i++)
-					{
-						uint8_t byte = m_sendDataCache[i];
-						displayText += (TCHAR)byte;
-					}
-				}
-			}
-
-			// 实现100行限制（与接收窗口保持一致）
-			CString lines[MAX_DISPLAY_LINES];
-			int totalLines = 0;
-			int currentPos = 0;
-
-			// 分割文本为行
-			while (currentPos < displayText.GetLength() && totalLines < MAX_DISPLAY_LINES * 2) // 预留缓冲
-			{
-				int nextPos = displayText.Find(_T('\n'), currentPos);
-				if (nextPos == -1)
-				{
-					if (currentPos < displayText.GetLength())
-					{
-						lines[totalLines % MAX_DISPLAY_LINES] = displayText.Mid(currentPos);
-						totalLines++;
-					}
-					break;
-				}
-				else
-				{
-					lines[totalLines % MAX_DISPLAY_LINES] = displayText.Mid(currentPos, nextPos - currentPos + 1);
-					totalLines++;
-					currentPos = nextPos + 1;
-				}
-			}
-
-			// 构建最终显示文本（最后100行）
-			CString finalText;
-			int startLineIndex = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
-
-			if (startLineIndex > 0)
-			{
-				finalText += _T("... (显示最后100行数据) ...\r\n");
-			}
-
-			for (int i = startLineIndex; i < totalLines; i++)
-			{
-				finalText += lines[i % MAX_DISPLAY_LINES];
-			}
-
-			// 设置标志防止OnEnChangeEditSendData事件触发
-			m_updateDisplayInProgress = true;
-			m_editSendData.SetWindowText(finalText);
-			m_updateDisplayInProgress = false;
-		}
-
-		// 自动滚动到最新数据（与接收窗口保持一致）
-		m_editSendData.SetSel(-1, -1);							  // 移动光标到末尾
-		m_editSendData.LineScroll(m_editSendData.GetLineCount()); // 滚动到底部
+		// 转换为CString并设置到编辑框
+		CString displayText(update.content.c_str(), static_cast<int>(update.content.length()));
+		m_editSendData.SetWindowText(displayText);
 	}
 	else
 	{
-		// 缓存无效或为空，尝试从当前显示内容获取数据
-		CString currentData;
-		m_editSendData.GetWindowText(currentData);
-
-		if (!currentData.IsEmpty())
-		{
-			// 如果当前是十六进制模式且内容看起来是十六进制格式
-			if (m_checkHex.GetCheck() == BST_CHECKED)
-			{
-				// 检查是否为十六进制格式（包含冒号和十六进制字符）
-				if (currentData.Find(_T(':')) >= 0)
-				{
-					// 尝试从十六进制显示中提取原始数据
-					CString textData = HexToString(currentData);
-					if (!textData.IsEmpty())
-					{
-						// 更新缓存
-						UpdateSendCache(textData);
-						// 重新调用此函数以正确显示
-						UpdateSendDisplayFromCache();
-						return;
-					}
-				}
-				else
-				{
-					// 直接缓存当前的十六进制文本数据
-					UpdateSendCache(currentData);
-					// 重新调用此函数以正确显示
-					UpdateSendDisplayFromCache();
-					return;
-				}
-			}
-			else
-			{
-				// 文本模式，直接缓存当前文本数据
-				UpdateSendCache(currentData);
-				// 重新调用此函数以正确显示
-				UpdateSendDisplayFromCache();
-				return;
-			}
-		}
-		else
-		{
-			// 没有数据，清空显示
-			m_updateDisplayInProgress = true;
-			m_editSendData.SetWindowText(_T(""));
-			m_updateDisplayInProgress = false;
-		}
+		// 缓存无效或为空，清空显示
+		m_editSendData.SetWindowText(_T(""));
 	}
 }
-
 void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 {
-	// 如果接收缓存无效，直接返回
-	if (!m_receiveCacheValid || m_receiveDataCache.empty())
+	// 使用DataPresentationService准备显示数据
+	if (m_receiveCacheValid && !m_receiveDataCache.empty())
 	{
-		m_editReceiveData.SetWindowText(_T(""));
-		return;
-	}
+		bool hexMode = (m_checkHex.GetCheck() == BST_CHECKED);
+		DataPresentationService::DisplayUpdate update =
+			DataPresentationService::PrepareDisplay(m_receiveDataCache, hexMode);
 
-	// 实现100行显示限制
-	const int MAX_DISPLAY_LINES = 100;
-
-	// 根据当前显示模式从缓存更新显示
-	if (m_checkHex.GetCheck() == BST_CHECKED)
-	{
-		// 十六进制模式：每16字节一行
-		CString hexDisplay;
-		CString asciiStr;
-		int lineCount = 0;
-
-		// 计算需要显示的数据范围（最后100行）
-		size_t totalLines = (m_receiveDataCache.size() + 15) / 16; // 向上取整
-		size_t startLine = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
-		size_t startByte = startLine * 16;
-
-		// 如果数据被截断，添加提示
-		if (startLine > 0)
-		{
-			hexDisplay += _T("... (显示最后100行数据) ...\r\n");
-		}
-
-		for (size_t i = startByte; i < m_receiveDataCache.size(); i++)
-		{
-			uint8_t byte = m_receiveDataCache[i];
-
-			// 添加偏移地址（每16字节一行）
-			if (i % 16 == 0)
-			{
-				if (i > startByte)
-				{
-					// 添加ASCII显示部分
-					hexDisplay += _T("  |");
-					hexDisplay += asciiStr;
-					hexDisplay += _T("|\r\n");
-					asciiStr.Empty();
-					lineCount++;
-				}
-
-				CString offset;
-				offset.Format(_T("%08X: "), (int)i);
-				hexDisplay += offset;
-			}
-
-			// 添加16进制值
-			CString hexByte;
-			hexByte.Format(_T("%02X "), byte);
-			hexDisplay += hexByte;
-
-			// 添加可打印字符到ASCII部分
-			if (byte >= 32 && byte <= 126)
-			{
-				asciiStr += (TCHAR)byte;
-			}
-			else
-			{
-				asciiStr += _T(".");
-			}
-		}
-
-		// 处理最后一行
-		if (m_receiveDataCache.size() % 16 != 0)
-		{
-			// 补齐空格
-			size_t remain = 16 - (m_receiveDataCache.size() % 16);
-			for (size_t i = 0; i < remain; i++)
-			{
-				hexDisplay += _T("   ");
-			}
-		}
-
-		// 添加ASCII显示部分
-		hexDisplay += _T("  |");
-		hexDisplay += asciiStr;
-		hexDisplay += _T("|");
-
-		m_editReceiveData.SetWindowText(hexDisplay);
+		// 转换为CString并设置到编辑框
+		CString displayText(update.content.c_str(), static_cast<int>(update.content.length()));
+		m_editReceiveData.SetWindowText(displayText);
 	}
 	else
 	{
-		// 文本模式：智能编码检测和显示
-		std::vector<char> safeData(m_receiveDataCache.begin(), m_receiveDataCache.end());
-		safeData.push_back('\0');
-
-		CString displayText;
-		bool decoded = false;
-
-		// 检测是否为二进制数据（包含大量不可打印字符）
-		size_t nonPrintableCount = 0;
-		size_t nullByteCount = 0;
-		size_t sampleSize = min(m_receiveDataCache.size(), (size_t)1024); // 检查前1KB
-
-		for (size_t i = 0; i < sampleSize; i++)
-		{
-			uint8_t byte = m_receiveDataCache[i];
-			if (byte == 0)
-			{
-				nullByteCount++;
-			}
-			else if (byte < 32 && byte != '\r' && byte != '\n' && byte != '\t')
-			{
-				nonPrintableCount++;
-			}
-		}
-
-		// 改进的二进制检测逻辑：
-		// 1. 如果包含空字节，很可能是二进制文件
-		// 2. 如果不可打印字符超过20%，认为是二进制数据
-		bool isBinaryData = false;
-		if (sampleSize > 0)
-		{
-			if (nullByteCount > 0 || (nonPrintableCount * 100 / sampleSize) > 20)
-			{
-				isBinaryData = true;
-			}
-		}
-
-		if (isBinaryData)
-		{
-			// 如果是首次检测到二进制数据，生成静态预览内容
-			if (!m_binaryDataDetected)
-			{
-				m_binaryDataDetected = true;
-
-				// 生成简化的静态提示内容
-				m_binaryDataPreview = _T("=== 检测到二进制数据 ===\r\n");
-				m_binaryDataPreview += _T("建议切换到十六进制模式查看完整内容\r\n");
-				m_binaryDataPreview += _T("\r\n--- 数据预览（仅显示可打印字符）---\r\n");
-
-				// 显示前512字节的可打印字符作为预览，按行格式化
-				size_t previewSize = min(m_receiveDataCache.size(), (size_t)512);
-				CString previewLine;
-				int lineLength = 0;
-
-				for (size_t i = 0; i < previewSize; i++)
-				{
-					uint8_t byte = m_receiveDataCache[i];
-					if (byte >= 32 && byte <= 126)
-					{
-						previewLine += (TCHAR)byte;
-						lineLength++;
-					}
-					else if (byte == '\r')
-					{
-						previewLine += _T("\\r");
-						lineLength += 2;
-					}
-					else if (byte == '\n')
-					{
-						previewLine += _T("\\n\r\n");
-						m_binaryDataPreview += previewLine;
-						previewLine.Empty();
-						lineLength = 0;
-					}
-					else if (byte == '\t')
-					{
-						previewLine += _T("\\t");
-						lineLength += 2;
-					}
-					else
-					{
-						previewLine += _T(".");
-						lineLength++;
-					}
-
-					// 每80个字符换行
-					if (lineLength >= 80)
-					{
-						previewLine += _T("\r\n");
-						m_binaryDataPreview += previewLine;
-						previewLine.Empty();
-						lineLength = 0;
-					}
-				}
-
-				// 添加剩余的预览内容
-				if (!previewLine.IsEmpty())
-				{
-					m_binaryDataPreview += previewLine;
-				}
-
-				if (m_receiveDataCache.size() > 512)
-				{
-					m_binaryDataPreview += _T("\r\n\r\n... (更多内容请切换到十六进制模式查看) ...");
-				}
-			}
-
-			// 使用静态预览内容，避免重复刷新
-			displayText = m_binaryDataPreview;
-			decoded = true;
-		}
-		else
-		{
-			// 尝试UTF-8解码
-			try
-			{
-				CA2T utf8Text(safeData.data(), CP_UTF8);
-				CString testResult = CString(utf8Text);
-
-				if (!testResult.IsEmpty())
-				{
-					displayText = testResult;
-					decoded = true;
-				}
-			}
-			catch (...)
-			{
-				// UTF-8解码失败，继续尝试其他编码
-			}
-
-			// 如果UTF-8失败，尝试GBK解码
-			if (!decoded)
-			{
-				try
-				{
-					CA2T gbkText(safeData.data(), CP_ACP);
-					CString testResult = CString(gbkText);
-
-					if (!testResult.IsEmpty())
-					{
-						displayText = testResult;
-						decoded = true;
-					}
-				}
-				catch (...)
-				{
-					// GBK解码失败
-				}
-			}
-
-			// 如果所有编码都失败，显示原始字节
-			if (!decoded)
-			{
-				for (size_t i = 0; i < m_receiveDataCache.size(); i++)
-				{
-					uint8_t byte = m_receiveDataCache[i];
-					displayText += (TCHAR)byte;
-				}
-			}
-		}
-
-		// 实现100行限制
-		CString lines[MAX_DISPLAY_LINES];
-		int totalLines = 0;
-		int currentPos = 0;
-
-		// 分割文本为行
-		while (currentPos < displayText.GetLength() && totalLines < MAX_DISPLAY_LINES * 2) // 预留缓冲
-		{
-			int nextPos = displayText.Find(_T('\n'), currentPos);
-			if (nextPos == -1)
-			{
-				if (currentPos < displayText.GetLength())
-				{
-					lines[totalLines % MAX_DISPLAY_LINES] = displayText.Mid(currentPos);
-					totalLines++;
-				}
-				break;
-			}
-			else
-			{
-				lines[totalLines % MAX_DISPLAY_LINES] = displayText.Mid(currentPos, nextPos - currentPos + 1);
-				totalLines++;
-				currentPos = nextPos + 1;
-			}
-		}
-
-		// 构建最终显示文本（最后100行）
-		CString finalText;
-		int startLineIndex = (totalLines > MAX_DISPLAY_LINES) ? (totalLines - MAX_DISPLAY_LINES) : 0;
-
-		if (startLineIndex > 0)
-		{
-			finalText += _T("... (显示最后100行数据) ...\r\n");
-		}
-
-		for (int i = startLineIndex; i < totalLines; i++)
-		{
-			finalText += lines[i % MAX_DISPLAY_LINES];
-		}
-
-		m_editReceiveData.SetWindowText(finalText);
+		// 缓存无效或为空，清空显示
+		m_editReceiveData.SetWindowText(_T(""));
 	}
-
-	// 自动滚动到最新数据
-	m_editReceiveData.SetSel(-1, -1);								// 移动光标到末尾
-	m_editReceiveData.LineScroll(m_editReceiveData.GetLineCount()); // 滚动到底部
 }
-
-// 【UI优化】节流的接收显示更新 - 避免大文件传输时频繁UI刷新导致的窗口闪烁
 void CPortMasterDlg::ThrottledUpdateReceiveDisplay()
 {
-	DWORD currentTime = ::GetTickCount();
+	// 【阶段1迁移】使用DialogUiController管理节流机制
+	if (!m_uiController)
+		return;
 
-	// 检查是否在节流间隔内
-	if (currentTime - m_lastReceiveDisplayUpdate < RECEIVE_DISPLAY_THROTTLE_MS)
+	// 检查是否可以立即更新显示
+	if (!m_uiController->CanUpdateDisplay())
 	{
 		// 如果在节流间隔内，设置待处理标志并启动定时器
-		if (!m_receiveDisplayPending)
+		if (!m_uiController->IsDisplayUpdatePending())
 		{
-			m_receiveDisplayPending = true;
-			// 启动延时定时器，延时时间为剩余的节流间隔
-			DWORD remainingTime = RECEIVE_DISPLAY_THROTTLE_MS - (currentTime - m_lastReceiveDisplayUpdate);
-			SetTimer(TIMER_ID_THROTTLED_DISPLAY, remainingTime, nullptr);
+			m_uiController->SetDisplayUpdatePending(true);
+			m_uiController->StartThrottledDisplayTimer();
 		}
 		// 如果已经有待处理的更新，不需要重复设置定时器
 	}
@@ -2091,11 +1269,11 @@ void CPortMasterDlg::ThrottledUpdateReceiveDisplay()
 	{
 		// 超过节流间隔，立即更新显示
 		UpdateReceiveDisplayFromCache();
-		m_lastReceiveDisplayUpdate = currentTime;
-		m_receiveDisplayPending = false;
+		m_uiController->RecordDisplayUpdate();
+		m_uiController->SetDisplayUpdatePending(false);
 
 		// 确保定时器被取消（以防万一）
-		KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+		m_uiController->StopThrottledDisplayTimer();
 	}
 }
 
@@ -2203,127 +1381,23 @@ void CPortMasterDlg::UpdateSendCacheFromHex(const CString& hexData)
 
 void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t>& data)
 {
-	// 添加调试输出：记录缓存更新过程
-	this->WriteLog("=== UpdateReceiveCache 开始 ===");
-	this->WriteLog("更新接收缓存 - 输入数据大小: " + std::to_string(data.size()) + " 字节");
-	this->WriteLog("更新接收缓存 - 当前缓存状态: " + std::string(m_receiveCacheValid ? "有效" : "无效"));
-	this->WriteLog("更新接收缓存 - 当前缓存数据大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
-
-	// 修复：追加接收到的字节数据，而不是覆盖
-	if (!m_receiveCacheValid || m_receiveDataCache.empty())
+	// 使用ReceiveCacheService替代手动缓存管理
+	if (m_receiveCacheService)
 	{
-		// 如果缓存无效或为空，直接设置新数据
-		this->WriteLog("更新接收缓存 - 缓存无效或为空，直接设置新数据");
-		m_receiveDataCache = data;
-	}
-	else
-	{
-		// 如果缓存有效且不为空，追加新数据
-		this->WriteLog("更新接收缓存 - 追加新数据到现有缓存");
-		size_t oldSize = m_receiveDataCache.size();
-		m_receiveDataCache.insert(m_receiveDataCache.end(), data.begin(), data.end());
-		this->WriteLog("更新接收缓存 - 数据追加完成，从 " + std::to_string(oldSize) + " 字节增加到 " + std::to_string(m_receiveDataCache.size()) + " 字节");
-	}
-	m_receiveCacheValid = true;
-
-	this->WriteLog("更新接收缓存 - 缓存更新完成，新的缓存数据大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
-
-	// 【深层修复】不再调用WriteDataToTempCache，避免与ThreadSafeAppendReceiveData重复写入
-	// UpdateReceiveCache现在仅负责内存缓存管理，临时文件由ThreadSafeAppendReceiveData统一处理
-	this->WriteLog("更新接收缓存 - 仅更新内存缓存，临时文件由直接落盘函数统一处理");
-
-	this->WriteLog("=== UpdateReceiveCache 结束 ===");
-}
-
-// 【深层修复】线程安全的接收数据直接落盘函数
-// 根据最新检查报告最优解方案：接收线程直接落盘，避免消息队列异步延迟导致的数据丢失
-void CPortMasterDlg::ThreadSafeAppendReceiveData(const std::vector<uint8_t>& data)
-{
-	// 使用接收文件专用互斥锁，确保与保存操作完全互斥
-	std::lock_guard<std::mutex> lock(m_receiveFileMutex);
-
-	auto logReceiveDetail = [&](const std::string& message)
-		{
-			if (m_receiveVerboseLogging)
-			{
-				this->WriteLog(message);
-			}
-		};
-
-	// 增强日志：记录详细的直接落盘过程
-	logReceiveDetail("=== ThreadSafeAppendReceiveData 开始（接收线程直接落盘）===");
-	logReceiveDetail("接收数据大小: " + std::to_string(data.size()) + " 字节");
-	logReceiveDetail("当前接收缓存大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
-	logReceiveDetail("总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
-
-	// 1. 立即更新内存缓存（内存缓存作为备份，保证数据完整性）
-	if (!m_receiveCacheValid || m_receiveDataCache.empty())
-	{
-		logReceiveDetail("初始化接收缓存（首次接收）");
-		m_receiveDataCache = data;
-	}
-	else
-	{
-		logReceiveDetail("追加数据到接收缓存");
-		size_t oldSize = m_receiveDataCache.size();
-		m_receiveDataCache.insert(m_receiveDataCache.end(), data.begin(), data.end());
-		logReceiveDetail("缓存追加完成: " + std::to_string(oldSize) + " → " + std::to_string(m_receiveDataCache.size()) + " 字节");
-	}
-	m_receiveCacheValid = true;
-
-	// 2. 【优化】简化状态检查，仅在文件流关闭时恢复
-	if (m_useTempCacheFile && !m_tempCacheFile.is_open())
-	{
-		this->WriteLog("⚠️ 检测到临时文件流关闭，启动自动恢复...");
-		if (CheckAndRecoverTempCacheFile())
-		{
-			this->WriteLog("✅ 临时文件自动恢复成功，继续数据写入");
-		}
-		else
-		{
-			this->WriteLog("❌ 临时文件自动恢复失败，数据将仅保存到内存缓存");
-		}
-	}
-
-	// 3. 立即同步写入临时文件（强制串行化，确保数据完全落盘）
-	if (m_useTempCacheFile && m_tempCacheFile.is_open())
-	{
-		logReceiveDetail("执行强制同步写入临时缓存文件...");
 		try
 		{
-			// 写入数据到文件
-			m_tempCacheFile.write(reinterpret_cast<const char*>(data.data()), data.size());
+			m_receiveCacheService->AppendData(data);
 
-			// 强制刷新缓冲区到磁盘，确保数据真正落盘
-			m_tempCacheFile.flush();
-
-			// 更新总字节数统计
-			m_totalReceivedBytes += data.size();
-
-			logReceiveDetail("强制同步写入成功: " + std::to_string(data.size()) + " 字节");
-			logReceiveDetail("更新后总接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
-
-			// 【修复】数据写入后进行状态诊断
 			if (m_receiveVerboseLogging)
 			{
-				LogTempCacheFileStatus("数据写入后状态验证");
+				WriteLog("UpdateReceiveCache通过ReceiveCacheService追加: " + std::to_string(data.size()) + " 字节");
 			}
 		}
 		catch (const std::exception& e)
 		{
-			this->WriteLog("临时缓存文件写入异常: " + std::string(e.what()));
-			this->WriteLog("数据已保存到内存缓存，文件写入失败但不影响数据完整性");
+			WriteLog("UpdateReceiveCache失败: " + std::string(e.what()));
 		}
 	}
-	else
-	{
-		logReceiveDetail("临时缓存文件未启用或未打开，仅更新内存缓存");
-		// 即使没有临时文件，也要更新总字节数
-		m_totalReceivedBytes += data.size();
-		logReceiveDetail("更新总接收字节数（仅内存）: " + std::to_string(m_totalReceivedBytes) + " 字节");
-	}
-
-	logReceiveDetail("=== ThreadSafeAppendReceiveData 结束（数据已强制落盘）===");
 }
 
 void CPortMasterDlg::LogMessage(const CString& message)
@@ -2459,8 +1533,16 @@ void CPortMasterDlg::OnBnClickedButtonClearReceive()
 	m_binaryDataDetected = false;
 	m_binaryDataPreview.Empty();
 
-	// 清空临时缓存文件
-	ClearTempCacheFile();
+	// 【阶段3迁移】清空接收缓存
+	if (m_receiveCacheService)
+	{
+		m_receiveCacheService->Shutdown();
+		m_totalReceivedBytes = 0;
+		if (!m_receiveCacheService->Initialize())
+		{
+			WriteLog("清空所有缓存后重新初始化接收缓存失败");
+		}
+	}
 
 	// 更新日志
 	CTime time = CTime::GetCurrentTime();
@@ -2473,16 +1555,18 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 	// 复制接收数据到剪贴板
 	CString copyData;
 
-	// 优先从临时缓存文件读取原始数据（如果可用）
-	if (m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
+	// 【阶段3迁移】优先从ReceiveCacheService读取原始数据
+	if (m_receiveCacheService && m_receiveCacheService->IsInitialized())
 	{
-		std::vector<uint8_t> cachedData = ReadAllDataFromTempCache();
+		std::vector<uint8_t> cachedData = m_receiveCacheService->ReadAllData();
 		if (!cachedData.empty())
 		{
 			if (m_checkHex.GetCheck() == BST_CHECKED)
 			{
 				// 十六进制模式：复制格式化的十六进制文本（避免null字符截断问题）
-				copyData = BytesToHex(cachedData.data(), cachedData.size());
+				// 直接使用DataPresentationService
+				std::string hexResult = DataPresentationService::BytesToHex(cachedData.data(), cachedData.size());
+				CString copyData(hexResult.c_str(), static_cast<int>(hexResult.length()));
 			}
 			else
 			{
@@ -2636,8 +1720,8 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 			// 【关键修复】移除重复声明，直接使用外层变量避免变量遮蔽
 			{
 				std::lock_guard<std::mutex> quickLock(m_receiveFileMutex);
-				// 【修复保存误判】改用文件大小判定，避免依赖可能被清空的统计值
-				tempFileAvailable = PathFileExists(m_tempCacheFilePath) && (GetTempCacheFileSize() > 0);
+				// 【阶段3迁移】使用ReceiveCacheService判定是否有接收数据
+				tempFileAvailable = m_receiveCacheService && (m_receiveCacheService->GetTotalReceivedBytes() > 0);
 			}
 
 			if (tempFileAvailable)
@@ -2774,16 +1858,27 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 				uint64_t stableBytes = 0;
 				uint64_t stableFileSize = 0;
 
+				// 【Stage3迁移】使用ReceiveCacheService替代稳定性检测
+				this->WriteLog("使用ReceiveCacheService验证数据完整性");
+
+				// 简化的数据验证：检查缓存服务状态
+				bool dataStable = true; // 默认认为数据稳定
+				if (m_receiveCacheService)
+				{
+					// 检查文件完整性
+					dataStable = m_receiveCacheService->VerifyFileIntegrity();
+					this->WriteLog("ReceiveCacheService文件完整性验证结果: " + std::to_string(dataStable));
+				}
+
 				CWaitCursor waitCursor;
 				m_btnSaveAll.EnableWindow(FALSE);
-				bool dataStable = WaitForReceiveDataStability(kMaxStabilityChecks, kStabilityIntervalMs, stableBytes, stableFileSize);
-				m_btnSaveAll.EnableWindow(TRUE);
 
 				if (!dataStable)
 				{
-					this->WriteLog("⚠️ 数据稳定性检测未通过，建议用户稍后再试");
+					this->WriteLog("⚠️ 数据完整性检测未通过，建议用户稍后再试");
 					MessageBox(_T("当前仍有数据写入，请等待片刻后再尝试保存。"),
 						_T("数据尚未稳定"), MB_OK | MB_ICONINFORMATION);
+					m_btnSaveAll.EnableWindow(TRUE);
 					return;
 				}
 
@@ -2793,9 +1888,17 @@ void CPortMasterDlg::OnBnClickedButtonSaveAll()
 				std::vector<uint8_t> latestData;
 				try
 				{
-					std::lock_guard<std::mutex> saveLock(m_receiveFileMutex);
-					latestData = ReadAllDataFromTempCacheUnlocked();
-					this->WriteLog("最新数据大小: " + std::to_string(latestData.size()) + " 字节");
+					// 【Stage3迁移】使用ReceiveCacheService替代手动缓存管理
+					if (m_receiveCacheService)
+					{
+						latestData = m_receiveCacheService->ReadAllData();
+						this->WriteLog("通过ReceiveCacheService读取数据大小: " + std::to_string(latestData.size()) + " 字节");
+					}
+					else
+					{
+						this->WriteLog("❌ ReceiveCacheService未初始化，无法读取数据");
+						return;
+					}
 
 					// 【数据完整性验证】确保读取到的数据不为空且大小合理
 					if (latestData.empty())
@@ -3130,386 +2233,14 @@ void CPortMasterDlg::InitializeTransportConfig()
 	m_reliableConfig.windowSize = 32;		// 窗口大小 - 增加窗口大小以支持大量数据传输
 }
 
-bool CPortMasterDlg::CreateTransport()
-{
-	try
-	{
-		// 根据端口类型创建相应的传输对象
-		int portType = m_comboPortType.GetCurSel();
-
-		switch (portType)
-		{
-		case 0: // 串口
-		{
-			// 获取串口参数
-			CString portName;
-			m_comboPort.GetWindowText(portName);
-
-			CString baudRateStr;
-			m_comboBaudRate.GetWindowText(baudRateStr);
-			int baudRate = _ttoi(baudRateStr);
-
-			// 创建串口传输对象
-			auto transport = std::make_shared<SerialTransport>();
-
-			// 配置串口参数
-			SerialConfig config;
-			config.portName = CT2A(portName);
-			config.baudRate = baudRate;
-			config.dataBits = 8;
-			config.parity = NOPARITY;
-			config.stopBits = ONESTOPBIT;
-
-			// 打开串口
-			if (transport->Open(config) == TransportError::Success)
-			{
-				m_transport = transport;
-
-				// 创建可靠传输通道（如果启用）
-				if (m_radioReliable.GetCheck() == BST_CHECKED)
-				{
-					this->WriteLog("CreateTransport: Creating reliable channel...");
-					m_reliableChannel = std::make_unique<ReliableChannel>();
-					this->WriteLog("CreateTransport: Reliable channel created, initializing...");
-					bool initResult = m_reliableChannel->Initialize(m_transport, m_reliableConfig);
-					this->WriteLog("CreateTransport: Reliable channel initialization result: " + std::to_string(initResult));
-
-					if (!initResult)
-					{
-						this->WriteLog("CreateTransport: ERROR - Reliable channel initialization failed");
-						m_reliableChannel.reset();
-						return false;
-					}
-
-					// 根据配置动态控制可靠协议日志，避免无谓的日志增长
-					ConfigureReliableLogging();
-
-					// 设置回调函数
-					this->WriteLog("CreateTransport: Setting callbacks...");
-					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-						{ OnReliableProgress(current, total); });
-
-					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-						{ OnReliableStateChanged(connected); });
-
-					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
-					m_reliableChannel->SetCompleteCallback([this](bool success)
-						{ OnReliableComplete(success); });
-
-					this->WriteLog("CreateTransport: Callbacks set successfully");
-				}
-
-				return true;
-			}
-		}
-		break;
-
-		case 1: // 并口
-		{
-			// 获取并口参数
-			CString portName;
-			m_comboPort.GetWindowText(portName);
-
-			// 创建并口传输对象
-			auto transport = std::make_shared<ParallelTransport>();
-
-			// 配置并口参数
-			ParallelPortConfig config;
-			config.deviceName = CT2A(portName);
-			config.readTimeout = 1000;
-			config.writeTimeout = 2000;
-
-			// 打开并口
-			if (transport->Open(config) == TransportError::Success)
-			{
-				m_transport = transport;
-
-				// 创建可靠传输通道（如果启用）
-				if (m_radioReliable.GetCheck() == BST_CHECKED)
-				{
-					m_reliableChannel = std::make_unique<ReliableChannel>();
-					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
-
-					ConfigureReliableLogging();
-
-					// 设置回调函数
-					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-						{ OnReliableProgress(current, total); });
-
-					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-						{ OnReliableStateChanged(connected); });
-
-					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
-					m_reliableChannel->SetCompleteCallback([this](bool success)
-						{ OnReliableComplete(success); });
-				}
-
-				return true;
-			}
-		}
-		break;
-
-		case 2: // USB打印
-		{
-			// 获取USB打印端口参数
-			CString portName;
-			m_comboPort.GetWindowText(portName);
-
-			// 创建USB打印传输对象
-			auto transport = std::make_shared<UsbPrintTransport>();
-
-			// 配置USB打印参数
-			UsbPrintConfig config;
-			config.deviceName = CT2A(portName);
-			config.readTimeout = 1000;
-			config.writeTimeout = 2000;
-
-			// 打开USB打印端口
-			if (transport->Open(config) == TransportError::Success)
-			{
-				m_transport = transport;
-
-				// 创建可靠传输通道（如果启用）
-				if (m_radioReliable.GetCheck() == BST_CHECKED)
-				{
-					m_reliableChannel = std::make_unique<ReliableChannel>();
-					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
-
-					ConfigureReliableLogging();
-
-					// 设置回调函数
-					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-						{ OnReliableProgress(current, total); });
-
-					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-						{ OnReliableStateChanged(connected); });
-
-					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
-					m_reliableChannel->SetCompleteCallback([this](bool success)
-						{ OnReliableComplete(success); });
-				}
-
-				return true;
-			}
-		}
-		break;
-
-		case 3: // 网络打印
-		{
-			// 获取网络地址参数
-			CString address;
-			m_comboPort.GetWindowText(address);
-
-			// 创建网络打印传输对象
-			auto transport = std::make_shared<NetworkPrintTransport>();
-
-			// 配置网络打印参数
-			NetworkPrintConfig config;
-			// 解析地址和端口
-			CStringA addressA(address);
-			std::string addrStr(addressA);
-			size_t colonPos = addrStr.find(':');
-			if (colonPos != std::string::npos)
-			{
-				config.hostname = addrStr.substr(0, colonPos);
-				config.port = static_cast<WORD>(std::stoi(addrStr.substr(colonPos + 1)));
-			}
-			else
-			{
-				config.hostname = addrStr;
-				config.port = 9100; // 默认网络打印端口
-			}
-			config.connectTimeout = 5000;
-			config.sendTimeout = 10000;
-			config.receiveTimeout = 10000;
-
-			// 打开网络连接
-			if (transport->Open(config) == TransportError::Success)
-			{
-				m_transport = transport;
-
-				// 创建可靠传输通道（如果启用）
-				if (m_radioReliable.GetCheck() == BST_CHECKED)
-				{
-					m_reliableChannel = std::make_unique<ReliableChannel>();
-					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
-
-					ConfigureReliableLogging();
-
-					// 设置回调函数
-					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-						{ OnReliableProgress(current, total); });
-
-					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-						{ OnReliableStateChanged(connected); });
-
-					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
-					m_reliableChannel->SetCompleteCallback([this](bool success)
-						{ OnReliableComplete(success); });
-				}
-
-				return true;
-			}
-		}
-		break;
-
-		case 4: // 回路测试
-		{
-			// 创建回路测试传输对象
-			auto transport = std::make_shared<LoopbackTransport>();
-
-			// 配置回路测试参数
-			LoopbackConfig config;
-			config.delayMs = 10;
-			config.errorRate = 0;
-			config.packetLossRate = 0;
-			config.enableJitter = false;
-			config.jitterMaxMs = 5;
-			config.maxQueueSize = 1000;
-
-			// 打开回路测试
-			if (transport->Open(config) == TransportError::Success)
-			{
-				m_transport = transport;
-
-				// 创建可靠传输通道（如果启用）
-				if (m_radioReliable.GetCheck() == BST_CHECKED)
-				{
-					m_reliableChannel = std::make_unique<ReliableChannel>();
-					m_reliableChannel->Initialize(m_transport, m_reliableConfig);
-
-					ConfigureReliableLogging();
-
-					// 设置回调函数
-					m_reliableChannel->SetProgressCallback([this](int64_t current, int64_t total)
-						{ OnReliableProgress(current, total); });
-
-					m_reliableChannel->SetStateChangedCallback([this](bool connected)
-						{ OnReliableStateChanged(connected); });
-
-					// 【修复】注册传输完成回调，确保传输完成时触发文件同步和按钮状态更新
-					m_reliableChannel->SetCompleteCallback([this](bool success)
-						{ OnReliableComplete(success); });
-				}
-
-				return true;
-			}
-		}
-		break;
-
-		default:
-			return false;
-		}
-	}
-	catch (const std::exception& e)
-	{
-		CString errorMsg;
-		errorMsg.Format(_T("创建传输对象失败: %s"), CString(e.what()));
-		MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
-	}
-
-	return false;
-}
-
-void CPortMasterDlg::DestroyTransport()
-{
-	// 停止接收线程
-	StopReceiveThread();
-
-	// 销毁可靠传输通道
-	if (m_reliableChannel)
-	{
-		m_reliableChannel->Shutdown();
-		m_reliableChannel.reset();
-	}
-
-	// 销毁传输对象
-	if (m_transport)
-	{
-		m_transport->Close();
-		m_transport.reset();
-	}
-
-	m_isConnected = false;
-	m_isTransmitting = false;
-}
-
-void CPortMasterDlg::StartReceiveThread()
-{
-	if (m_receiveThread.joinable())
-	{
-		return;
-	}
-
-	m_receiveThread = std::thread([this]()
-		{
-			std::vector<uint8_t> buffer(4096);
-
-			while (m_isConnected)
-			{
-				try
-				{
-					if (m_reliableChannel && m_reliableChannel->IsConnected())
-					{
-						// 使用可靠传输通道接收数据
-						std::vector<uint8_t> data;
-						if (m_reliableChannel->Receive(data, 100)) // 100ms超时
-						{
-							OnTransportDataReceived(data);
-						}
-					}
-					else if (m_transport && m_transport->IsOpen())
-					{
-						// 使用原始传输接收数据
-						// 每次读取前清零缓冲区，避免旧数据残留
-						std::fill(buffer.begin(), buffer.end(), 0);
-
-						size_t bytesRead = 0;
-						auto result = m_transport->Read(buffer.data(), buffer.size(), &bytesRead, 100);
-						if (result == TransportError::Success && bytesRead > 0)
-						{
-							std::vector<uint8_t> data(buffer.begin(), buffer.begin() + bytesRead);
-							OnTransportDataReceived(data);
-						}
-						// 【新增】处理超时和空数据情况，避免高频轮询
-						else
-						{
-							// 当Read超时或返回0字节时，短暂休眠避免忙等
-							// 这样可以将轮询频率从~10次/秒降低到~50次/秒
-							std::this_thread::sleep_for(std::chrono::milliseconds(20));
-						}
-					}
-				}
-				catch (const std::exception& e)
-				{
-					OnTransportError(e.what());
-				}
-			} });
-}
-
-void CPortMasterDlg::StopReceiveThread()
-{
-	m_isConnected = false;
-
-	if (m_receiveThread.joinable())
-	{
-		m_receiveThread.join();
-	}
-}
-
 void CPortMasterDlg::UpdateConnectionStatus()
 {
-	CString statusText;
-	if (m_isConnected)
+	// 【阶段1迁移】使用DialogUiController更新连接状态
+	if (m_uiController)
 	{
-		statusText = _T("已连接");
+		m_uiController->UpdateConnectionStatus(m_isConnected);
+		m_uiController->UpdateConnectionButtons(m_isConnected);
 	}
-	else
-	{
-		statusText = _T("未连接");
-	}
-
-	m_staticPortStatus.SetWindowText(statusText);
 
 	// 【可靠模式按钮管控】根据缺陷分析报告实施按钮状态控制
 	UpdateSaveButtonStatus();
@@ -3521,7 +2252,8 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 	bool enableSaveButton = true; // 默认启用保存按钮
 
 	bool isReliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
-	uint64_t tempFileSize = GetTempCacheFileSize();
+	// 【阶段3迁移】使用ReceiveCacheService获取接收数据大小
+	uint64_t tempFileSize = m_receiveCacheService ? m_receiveCacheService->GetTotalReceivedBytes() : 0;
 	bool hasTempFileData = (tempFileSize > 0);
 
 	uint64_t cachedBytes = 0;
@@ -3534,10 +2266,13 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 		hasPendingWrites = !m_pendingWrites.empty();
 	}
 
-	if (isReliableMode && m_reliableChannel)
+	// 【阶段5迁移】通过PortSessionController获取ReliableChannel
+	auto reliableChannel = m_sessionController ? m_sessionController->GetReliableChannel() : nullptr;
+
+	if (isReliableMode && reliableChannel)
 	{
-		bool fileTransferActive = m_reliableChannel->IsFileTransferActive();
-		bool reliableBufferReady = m_reliableChannel->HasCompletedFile();
+		bool fileTransferActive = reliableChannel->IsFileTransferActive();
+		bool reliableBufferReady = reliableChannel->HasCompletedFile();
 
 		bool hasDataToSave = hasTempFileData ||
 			cachedBytes > 0 ||
@@ -3595,10 +2330,11 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 
 void CPortMasterDlg::UpdateStatistics()
 {
-	// 更新速度显示
-	CString speedText;
-	speedText.Format(_T("%uKB/s"), (m_sendSpeed + m_receiveSpeed) / 1024);
-	m_staticSpeed.SetWindowText(speedText);
+	// 【阶段1迁移】使用DialogUiController更新统计信息
+	if (m_uiController)
+	{
+		m_uiController->UpdateSpeedDisplay(m_sendSpeed, m_receiveSpeed);
+	}
 }
 
 void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
@@ -3650,8 +2386,24 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
 	}
 	logReceiveDetail("接收数据预览(ASCII): " + asciiPreview);
 
-	// 【关键修复】直接调用线程安全落盘函数，立即写入缓存和文件
-	ThreadSafeAppendReceiveData(data);
+	// 【阶段3迁移】使用ReceiveCacheService替代旧缓存函数
+	if (m_receiveCacheService)
+	{
+		try
+		{
+			m_receiveCacheService->AppendData(data);
+			m_totalReceivedBytes = m_receiveCacheService->GetTotalReceivedBytes();
+
+			if (m_receiveVerboseLogging)
+			{
+				WriteLog("ReceiveCacheService追加数据: " + std::to_string(data.size()) + " 字节，总计: " + std::to_string(m_totalReceivedBytes) + " 字节");
+			}
+		}
+		catch (const std::exception& e)
+		{
+			WriteLog("ReceiveCacheService追加数据失败: " + std::string(e.what()));
+		}
+	}
 
 	// 【轻量化UI更新】仅发送统计信息，不传输实际数据，避免消息队列堆积
 	struct UIUpdateInfo {
@@ -3735,8 +2487,8 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		// 2秒后恢复连接状态显示，但保持进度条100%状态
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
 
-		// 【修复保存延迟】立即检查临时文件大小，快速启用保存按钮
-		uint64_t tempFileSize = GetTempCacheFileSize();
+		// 【阶段3迁移】立即检查接收数据大小，快速启用保存按钮
+		uint64_t tempFileSize = m_receiveCacheService ? m_receiveCacheService->GetTotalReceivedBytes() : 0;
 		if (tempFileSize > 0)
 		{
 			WriteLog("OnReliableComplete: 检测到临时文件有数据(" +
@@ -3826,7 +2578,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			SetDlgItemText(IDC_STATIC_RECEIVED, receivedText);
 
 			// 【UI优化】使用节流机制更新显示，避免大文件传输时频繁重绘
-			// 注意：数据已经在ThreadSafeAppendReceiveData中直接落盘和更新内存缓存
+			// 注意：数据已经由ReceiveCacheService直接落盘和更新内存缓存
 			ThrottledUpdateReceiveDisplay();
 
 			if (shouldLog)
@@ -3861,26 +2613,11 @@ LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
 
 void CPortMasterDlg::SetProgressPercent(int percent, bool forceReset)
 {
-	if (percent < 0)
+	// 【阶段1迁移】使用DialogUiController管理进度条
+	if (m_uiController)
 	{
-		percent = 0;
+		m_uiController->SetProgressPercent(percent, forceReset);
 	}
-	else if (percent > 100)
-	{
-		percent = 100;
-	}
-
-	// 【进度守护】默认保持进度单调递增，避免多线程回退覆盖造成闪烁
-	if (!forceReset && percent < static_cast<int>(m_lastProgressPercent))
-	{
-		percent = static_cast<int>(m_lastProgressPercent);
-	}
-	else
-	{
-		m_lastProgressPercent = static_cast<uint32_t>(percent);
-	}
-
-	m_progress.SetPos(percent);
 }
 
 // 新增：传输进度条范围设置消息处理
@@ -4014,20 +2751,11 @@ LRESULT CPortMasterDlg::OnTransmissionError(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-// 【回归修复】传输任务清理消息处理
+// 【Stage4迁移】传输任务清理消息处理 - 已由TransmissionCoordinator自动管理
 LRESULT CPortMasterDlg::OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam)
 {
-	// 【关键修复】在UI线程中安全析构传输任务对象
-	// 此方法通过PostMessage调用，确保在UI线程中执行，避免线程自阻塞问题
-	if (m_currentTransmissionTask)
-	{
-		WriteLog("OnCleanupTransmissionTask - 开始安全清理传输任务对象");
-
-		// 在UI线程中安全析构，此时传输线程已完成，可以安全调用join()
-		m_currentTransmissionTask.reset();
-
-		WriteLog("OnCleanupTransmissionTask - 传输任务对象已安全清理");
-	}
+	// 【Stage4迁移】TransmissionCoordinator自动管理任务生命周期，无需手动清理
+	WriteLog("OnCleanupTransmissionTask - 传输任务由TransmissionCoordinator自动管理");
 
 	return 0;
 }
@@ -4035,208 +2763,32 @@ LRESULT CPortMasterDlg::OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam)
 // 配置管理方法实现
 void CPortMasterDlg::LoadConfigurationFromStore()
 {
-	try
+	// 使用DialogConfigBinder加载配置到UI控件
+	if (m_configBinder && m_configBinder->LoadToUI())
 	{
-		const PortMasterConfig& config = m_configStore.GetConfig();
-
-		// 加载应用程序配置
-		if (config.app.enableLogging)
-		{
-			// 设置日志级别等
-		}
-
-		// 加载串口配置
-		const SerialConfig& serialConfig = config.serial;
-
-		// 设置端口名
-		SetDlgItemText(IDC_COMBO_PORT, CString(serialConfig.portName.c_str()));
-
-		// 设置波特率
-		CString baudRateText;
-		baudRateText.Format(_T("%d"), serialConfig.baudRate);
-		SetDlgItemText(IDC_COMBO_BAUD_RATE, baudRateText);
-
-		// 设置数据位
-		CString dataBitsText;
-		dataBitsText.Format(_T("%d"), serialConfig.dataBits);
-		SetDlgItemText(IDC_COMBO_DATA_BITS, dataBitsText);
-
-		// 设置校验位
-		CString parityText;
-		switch (serialConfig.parity)
-		{
-		case NOPARITY:
-			parityText = _T("None");
-			break;
-		case ODDPARITY:
-			parityText = _T("Odd");
-			break;
-		case EVENPARITY:
-			parityText = _T("Even");
-			break;
-		default:
-			parityText = _T("None");
-			break;
-		}
-		SetDlgItemText(IDC_COMBO_PARITY, parityText);
-
-		// 设置停止位
-		CString stopBitsText;
-		switch (serialConfig.stopBits)
-		{
-		case ONESTOPBIT:
-			stopBitsText = _T("1");
-			break;
-		case ONE5STOPBITS:
-			stopBitsText = _T("1.5");
-			break;
-		case TWOSTOPBITS:
-			stopBitsText = _T("2");
-			break;
-		default:
-			stopBitsText = _T("1");
-			break;
-		}
-		SetDlgItemText(IDC_COMBO_STOP_BITS, stopBitsText);
-
-		// 设置流控制
-		CString flowControlText = (serialConfig.flowControl == 0) ? _T("None") : _T("Hardware");
-		SetDlgItemText(IDC_COMBO_FLOW_CONTROL, flowControlText);
-
-		// 设置超时
-		CString timeoutText;
-		timeoutText.Format(_T("%d"), serialConfig.readTimeout);
-		SetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
-
-		//// 设置传输模式 - 始终默认选择直通模式，不受配置文件影响
-		//m_radioReliable.SetCheck(BST_UNCHECKED);
-		//m_radioDirect.SetCheck(BST_CHECKED);
-
-		// 更新状态栏显示为直通模式
-		//SetDlgItemText(IDC_STATIC_MODE, _T("直通"));
-		// 获取当前模式选项并更新显示(可靠/直通)
-		
-
-		// 加载UI配置
-		const UIConfig& uiConfig = config.ui;
-
-		// 设置十六进制显示选项
-		m_checkHex.SetCheck(uiConfig.hexDisplay ? BST_CHECKED : BST_UNCHECKED);
-
-		// 更新窗口位置（如果有保存）
-		if (uiConfig.windowWidth > 0 && uiConfig.windowHeight > 0 &&
-			uiConfig.windowX != CW_USEDEFAULT && uiConfig.windowY != CW_USEDEFAULT)
-		{
-			SetWindowPos(nullptr,
-				uiConfig.windowX, uiConfig.windowY,
-				uiConfig.windowWidth, uiConfig.windowHeight,
-				SWP_NOZORDER);
-		}
+		// 配置加载成功
+		LogMessage(_T("配置加载成功"));
 	}
-	catch (const std::exception& e)
+	else
 	{
-		CString errorMsg;
-		errorMsg.Format(_T("加载配置失败: %s"), CString(e.what()));
-		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
+		// 配置加载失败
+		MessageBox(_T("加载配置失败"), _T("配置错误"), MB_OK | MB_ICONWARNING);
 	}
 }
 
 void CPortMasterDlg::SaveConfigurationToStore()
 {
-	try
+	// 使用DialogConfigBinder从UI控件保存配置
+	if (m_configBinder && m_configBinder->SaveFromUI())
 	{
-		PortMasterConfig config = m_configStore.GetConfig();
-
-		// 保存串口配置
-		SerialConfig& serialConfig = config.serial;
-
-		// 获取端口名
-		CString portName;
-		GetDlgItemText(IDC_COMBO_PORT, portName);
-		serialConfig.portName = CStringA(portName).GetString();
-
-		// 获取波特率
-		CString baudRateText;
-		GetDlgItemText(IDC_COMBO_BAUD_RATE, baudRateText);
-		serialConfig.baudRate = _ttoi(baudRateText);
-
-		// 获取数据位
-		CString dataBitsText;
-		GetDlgItemText(IDC_COMBO_DATA_BITS, dataBitsText);
-		serialConfig.dataBits = (BYTE)_ttoi(dataBitsText);
-
-		// 获取校验位
-		CString parityText;
-		GetDlgItemText(IDC_COMBO_PARITY, parityText);
-		if (parityText == _T("None"))
-			serialConfig.parity = NOPARITY;
-		else if (parityText == _T("Odd"))
-			serialConfig.parity = ODDPARITY;
-		else if (parityText == _T("Even"))
-			serialConfig.parity = EVENPARITY;
-		else
-			serialConfig.parity = NOPARITY;
-
-		// 获取停止位
-		CString stopBitsText;
-		GetDlgItemText(IDC_COMBO_STOP_BITS, stopBitsText);
-		if (stopBitsText == _T("1"))
-			serialConfig.stopBits = ONESTOPBIT;
-		else if (stopBitsText == _T("1.5"))
-			serialConfig.stopBits = ONE5STOPBITS;
-		else if (stopBitsText == _T("2"))
-			serialConfig.stopBits = TWOSTOPBITS;
-		else
-			serialConfig.stopBits = ONESTOPBIT;
-
-		// 获取流控制
-		CString flowControlText;
-		GetDlgItemText(IDC_COMBO_FLOW_CONTROL, flowControlText);
-		serialConfig.flowControl = (flowControlText == _T("None")) ? 0 : 1;
-
-		// 获取超时
-		CString timeoutText;
-		GetDlgItemText(IDC_EDIT_TIMEOUT, timeoutText);
-		serialConfig.readTimeout = _ttoi(timeoutText);
-		serialConfig.writeTimeout = serialConfig.readTimeout;
-
-		// 获取可靠模式（更新协议配置）
-		if (m_radioReliable.GetCheck() == BST_CHECKED)
-		{
-			config.protocol.windowSize = 4; // 启用可靠模式
-			config.protocol.maxRetries = 3;
-		}
-		else
-		{
-			config.protocol.windowSize = 1; // 禁用可靠模式
-			config.protocol.maxRetries = 0;
-		}
-
-		// 保存UI配置
-		UIConfig& uiConfig = config.ui;
-
-		// 保存十六进制显示选项
-		uiConfig.hexDisplay = (m_checkHex.GetCheck() == BST_CHECKED);
-
-		// 保存窗口位置
-		CRect windowRect;
-		GetWindowRect(&windowRect);
-		uiConfig.windowX = windowRect.left;
-		uiConfig.windowY = windowRect.top;
-		uiConfig.windowWidth = windowRect.Width();
-		uiConfig.windowHeight = windowRect.Height();
-
-		// 更新配置到存储
-		m_configStore.SetConfig(config);
-
-		// 触发配置变更回调
+		// 配置保存成功，触发配置变更回调
 		OnConfigurationChanged();
+		LogMessage(_T("配置保存成功"));
 	}
-	catch (const std::exception& e)
+	else
 	{
-		CString errorMsg;
-		errorMsg.Format(_T("保存配置失败: %s"), CString(e.what()));
-		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONERROR);
+		// 配置保存失败
+		MessageBox(_T("保存配置失败"), _T("配置错误"), MB_OK | MB_ICONWARNING);
 	}
 }
 
@@ -4266,377 +2818,9 @@ void CPortMasterDlg::OnConfigurationChanged()
 	}
 }
 
-// 临时缓存文件管理方法实现
-bool CPortMasterDlg::InitializeTempCacheFile()
-{
-	try
-	{
-		// 生成临时文件名
-		TCHAR tempPath[MAX_PATH];
-		TCHAR tempFileName[MAX_PATH];
 
-		if (GetTempPath(MAX_PATH, tempPath) == 0)
-		{
-			return false;
-		}
 
-		if (GetTempFileName(tempPath, _T("PM_"), 0, tempFileName) == 0)
-		{
-			return false;
-		}
 
-		m_tempCacheFilePath = tempFileName;
-
-		// 打开临时文件用于写入（二进制模式）
-		m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::trunc);
-		if (!m_tempCacheFile.is_open())
-		{
-			return false;
-		}
-
-		m_useTempCacheFile = true;
-		m_totalReceivedBytes = 0;
-		m_totalSentBytes = 0;
-
-		WriteLog("临时缓存文件已创建: " + std::string(CStringA(m_tempCacheFilePath)));
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		WriteLog("创建临时缓存文件失败: " + std::string(e.what()));
-		return false;
-	}
-}
-
-void CPortMasterDlg::CloseTempCacheFile()
-{
-	if (m_tempCacheFile.is_open())
-	{
-		m_tempCacheFile.close();
-	}
-
-	// 删除临时文件
-	if (!m_tempCacheFilePath.IsEmpty() && PathFileExists(m_tempCacheFilePath))
-	{
-		DeleteFile(m_tempCacheFilePath);
-		WriteLog("临时缓存文件已删除");
-	}
-
-	m_tempCacheFilePath.Empty();
-	m_useTempCacheFile = false;
-	m_totalReceivedBytes = 0;
-	m_totalSentBytes = 0;
-}
-
-bool CPortMasterDlg::WriteDataToTempCache(const std::vector<uint8_t>& data)
-{
-	if (data.empty())
-	{
-		return false;
-	}
-
-	// 【深层修复】使用接收文件专用互斥锁，确保与接收线程和保存操作完全互斥
-	std::lock_guard<std::mutex> lock(m_receiveFileMutex);
-
-	// 如果文件流被关闭（如正在读取），将数据加入待写入队列
-	if (!m_tempCacheFile.is_open())
-	{
-		m_pendingWrites.push(data);
-		WriteLog("临时缓存文件流已关闭，数据加入待写入队列，大小: " + std::to_string(data.size()) + " 字节");
-		return true; // 返回成功，数据将在文件重新打开时写入
-	}
-
-	try
-	{
-		// 先处理队列中的待写入数据
-		while (!m_pendingWrites.empty())
-		{
-			const auto& pendingData = m_pendingWrites.front();
-			m_tempCacheFile.write(reinterpret_cast<const char*>(pendingData.data()), pendingData.size());
-			if (m_tempCacheFile.fail())
-			{
-				WriteLog("写入待处理数据失败，队列大小: " + std::to_string(m_pendingWrites.size()));
-				return false;
-			}
-			m_totalReceivedBytes += pendingData.size();
-			m_pendingWrites.pop();
-		}
-
-		// 写入当前数据
-		m_tempCacheFile.write(reinterpret_cast<const char*>(data.data()), data.size());
-		if (m_tempCacheFile.fail())
-		{
-			WriteLog("写入当前数据到临时缓存文件失败，大小: " + std::to_string(data.size()) + " 字节");
-			return false;
-		}
-
-		m_tempCacheFile.flush(); // 确保数据立即写入磁盘
-		m_totalReceivedBytes += data.size();
-
-		WriteLog("成功写入临时缓存文件，大小: " + std::to_string(data.size()) + " 字节，总计: " + std::to_string(m_totalReceivedBytes) + " 字节");
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		WriteLog("写入临时缓存文件异常: " + std::string(e.what()));
-		return false;
-	}
-}
-
-std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCache(uint64_t offset, size_t length)
-{
-	std::vector<uint8_t> result;
-
-	if (m_tempCacheFilePath.IsEmpty() || !PathFileExists(m_tempCacheFilePath))
-	{
-		return result;
-	}
-
-	try
-	{
-		// 【深层修复】使用接收文件专用互斥锁，与接收线程直接落盘完全互斥
-		std::lock_guard<std::mutex> lock(m_receiveFileMutex);
-
-		// 【读写冲突消除】保持写入流打开，仅刷新确保数据落盘
-		if (m_tempCacheFile.is_open())
-		{
-			m_tempCacheFile.flush(); // 确保所有数据写入磁盘，但不关闭文件流
-			WriteLog("ReadDataFromTempCache: 刷新写入流，保持文件流打开状态");
-		}
-
-		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
-		if (!file.is_open())
-		{
-			WriteLog("ReadDataFromTempCache: 无法打开临时缓存文件进行读取");
-			return result;
-		}
-
-		// 检查文件大小
-		file.seekg(0, std::ios::end);
-		std::streamsize fileSize = file.tellg();
-		file.seekg(0, std::ios::beg);
-		WriteLog("ReadDataFromTempCache: 临时缓存文件大小 " + std::to_string(fileSize) + " 字节");
-
-		// 验证偏移量
-		if (offset >= static_cast<uint64_t>(fileSize))
-		{
-			WriteLog("ReadDataFromTempCache: 偏移量超出文件大小");
-			file.close();
-			return result;
-		}
-
-		// 计算实际可读取的长度
-		size_t availableLength = static_cast<size_t>(fileSize - offset);
-		size_t readLength = (length == 0 || length > availableLength) ? availableLength : length;
-		WriteLog("ReadDataFromTempCache: 计划读取 " + std::to_string(readLength) + " 字节，从偏移量 " + std::to_string(offset));
-
-		if (readLength > 0)
-		{
-			result.resize(readLength);
-			file.seekg(offset);
-			file.read(reinterpret_cast<char*>(result.data()), readLength);
-
-			if (file.fail())
-			{
-				WriteLog("ReadDataFromTempCache: 文件读取失败");
-				result.clear();
-			}
-			else
-			{
-				WriteLog("ReadDataFromTempCache: 成功读取 " + std::to_string(result.size()) + " 字节");
-			}
-		}
-
-		file.close();
-
-		WriteLog("ReadDataFromTempCache: 独立读取完成，写入流保持打开状态");
-
-		return result;
-	}
-	catch (const std::exception& e)
-	{
-		WriteLog("从临时缓存文件读取数据异常: " + std::string(e.what()));
-		return result;
-	}
-}
-
-std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCache()
-{
-	return ReadDataFromTempCache(0, 0); // 0长度表示读取全部数据
-}
-
-// 【简化保存流程】简化的不加锁数据读取版本
-std::vector<uint8_t> CPortMasterDlg::ReadDataFromTempCacheUnlocked(uint64_t offset, size_t length)
-{
-	std::vector<uint8_t> result;
-
-	if (m_tempCacheFilePath.IsEmpty() || !PathFileExists(m_tempCacheFilePath))
-	{
-		WriteLog("ReadDataFromTempCacheUnlocked: 临时缓存文件不存在");
-		return result;
-	}
-
-	try
-	{
-		// 【回归修复】彻底解决竞态条件：使用独立读取流，避免关闭共享写入流
-		// 记录读取前的文件大小，用于完整性验证
-		uint64_t beforeReadBytes = m_totalReceivedBytes;
-
-		if (m_tempCacheFile.is_open())
-		{
-			// 【关键修复】仅刷新数据到磁盘，绝不关闭写入流
-			m_tempCacheFile.flush(); // 确保所有数据写入磁盘
-			WriteLog("ReadDataFromTempCacheUnlocked: 刷新写入流到磁盘，保持流开放状态");
-		}
-
-		// 额外等待确保文件系统同步（解决Windows文件缓存问题）
-		Sleep(50); // 50ms等待，确保文件系统完全同步
-
-		// 【核心修复】使用独立读取流，避免与写入流冲突
-		std::ifstream file(m_tempCacheFilePath, std::ios::in | std::ios::binary);
-		if (!file.is_open())
-		{
-			WriteLog("ReadDataFromTempCacheUnlocked: 无法打开临时缓存文件");
-			return result;
-		}
-
-		// 获取文件大小
-		file.seekg(0, std::ios::end);
-		std::streamsize fileSize = file.tellg();
-		file.seekg(0, std::ios::beg);
-		WriteLog("ReadDataFromTempCacheUnlocked: 临时缓存文件大小 " + std::to_string(fileSize) + " 字节");
-
-		if (fileSize <= 0)
-		{
-			WriteLog("ReadDataFromTempCacheUnlocked: 文件为空");
-			file.close();
-			return result;
-		}
-
-		// 计算读取长度（0表示读取全部）
-		size_t availableLength = static_cast<size_t>(fileSize - offset);
-		size_t targetReadLength = (length == 0) ? static_cast<size_t>(fileSize) : (length < availableLength ? length : availableLength);
-
-		if (targetReadLength > 0 && offset < static_cast<uint64_t>(fileSize))
-		{
-			WriteLog("ReadDataFromTempCacheUnlocked: 开始分块循环读取，目标长度 " + std::to_string(targetReadLength) + " 字节");
-
-			// 【关键修复】实施分块循环读取机制，彻底解决大文件部分读取问题
-			try
-			{
-				// 预分配内存，提高性能
-				result.reserve(targetReadLength);
-
-				// 设置64KB块大小进行循环读取
-				const size_t CHUNK_SIZE = 65536; // 64KB
-				std::vector<char> chunk(CHUNK_SIZE);
-
-				file.seekg(offset);
-				size_t totalBytesRead = 0;
-				size_t remainingBytes = targetReadLength;
-
-				WriteLog("ReadDataFromTempCacheUnlocked: 使用64KB分块循环读取策略");
-
-				while (remainingBytes > 0 && !file.eof())
-				{
-					// 计算本次读取大小（不超过剩余字节数和块大小）
-					size_t currentChunkSize = (CHUNK_SIZE < remainingBytes) ? CHUNK_SIZE : remainingBytes;
-
-					// 读取数据块
-					file.read(chunk.data(), static_cast<std::streamsize>(currentChunkSize));
-					std::streamsize actualRead = file.gcount(); // 获取实际读取的字节数
-
-					if (actualRead > 0)
-					{
-						// 将读取的数据追加到结果向量
-						size_t actualReadSize = static_cast<size_t>(actualRead);
-						result.insert(result.end(), chunk.begin(), chunk.begin() + actualReadSize);
-						totalBytesRead += actualReadSize;
-						remainingBytes -= actualReadSize;
-
-						// 【调试日志】记录读取进度（每10MB输出一次进度）
-						if (totalBytesRead % (10 * 1024 * 1024) == 0 || remainingBytes == 0)
-						{
-							WriteLog("ReadDataFromTempCacheUnlocked: 读取进度 " +
-								std::to_string(totalBytesRead) + "/" +
-								std::to_string(targetReadLength) + " 字节 (" +
-								std::to_string((totalBytesRead * 100) / targetReadLength) + "%)");
-						}
-					}
-					else
-					{
-						// 如果无法再读取数据，检查是否是文件结束
-						if (file.eof())
-						{
-							WriteLog("ReadDataFromTempCacheUnlocked: 到达文件末尾，读取完成");
-							break;
-						}
-						else if (file.fail())
-						{
-							WriteLog("ReadDataFromTempCacheUnlocked: 读取过程中发生错误");
-							break;
-						}
-					}
-				}
-
-				// 【数据完整性验证】检查实际读取量与预期读取量
-				if (totalBytesRead == targetReadLength)
-				{
-					WriteLog("ReadDataFromTempCacheUnlocked: ✅ 数据读取完整，成功读取 " +
-						std::to_string(totalBytesRead) + " 字节");
-				}
-				else
-				{
-					WriteLog("ReadDataFromTempCacheUnlocked: ⚠️ 数据读取不完整 - 预期: " +
-						std::to_string(targetReadLength) + " 字节，实际: " +
-						std::to_string(totalBytesRead) + " 字节");
-
-					// 对于不完整读取，仍然返回已读取的数据，但记录警告
-					if (totalBytesRead == 0)
-					{
-						WriteLog("ReadDataFromTempCacheUnlocked: ❌ 未读取到任何数据，清空结果");
-						result.clear();
-					}
-				}
-			}
-			catch (const std::exception& e)
-			{
-				WriteLog("ReadDataFromTempCacheUnlocked: ❌ 分块读取过程中发生异常: " + std::string(e.what()));
-				result.clear();
-			}
-		}
-
-		file.close();
-
-		// 【新增】数据完整性验证：检测读取过程中是否有新数据写入
-		uint64_t afterReadBytes = m_totalReceivedBytes;
-		if (afterReadBytes > beforeReadBytes)
-		{
-			size_t newDataSize = static_cast<size_t>(afterReadBytes - beforeReadBytes);
-			WriteLog("⚠️ 检测到读取过程中有新数据写入: " + std::to_string(newDataSize) + " 字节");
-			WriteLog("读取前: " + std::to_string(beforeReadBytes) + " 字节, 读取后: " + std::to_string(afterReadBytes) + " 字节");
-
-			// 这里可以选择重新读取或者提示用户，当前先记录警告
-			WriteLog("当前返回的数据可能不完整，建议用户等待传输完成后重新保存");
-		}
-		else
-		{
-			WriteLog("✅ 数据完整性验证通过，读取期间无新数据写入");
-		}
-
-		return result;
-	}
-	catch (const std::exception& e)
-	{
-		WriteLog("ReadDataFromTempCacheUnlocked: 读取异常 - " + std::string(e.what()));
-		return result;
-	}
-}
-
-std::vector<uint8_t> CPortMasterDlg::ReadAllDataFromTempCacheUnlocked()
-{
-	return ReadDataFromTempCacheUnlocked(0, 0); // 0长度表示读取全部数据
-}
 
 // 【简化保存流程】移除复杂的数据稳定性检测，采用直接保存+后验证模式
 // 原有的 StabilityTracker::IsDataStable 方法已被移除，不再需要复杂的稳定性检测
@@ -4675,251 +2859,10 @@ bool CPortMasterDlg::VerifySavedFileSize(const CString& filePath, size_t expecte
 	return success;
 }
 
-void CPortMasterDlg::ClearTempCacheFile()
-{
-	if (m_tempCacheFile.is_open())
-	{
-		m_tempCacheFile.close();
-		m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::trunc);
-		if (m_tempCacheFile.is_open())
-		{
-			m_totalReceivedBytes = 0;
-			// 【增强日志】详细记录清空操作，提示可能影响数据判定
-			WriteLog("⚠️ 临时缓存文件已清空，m_totalReceivedBytes已重置为0");
-			WriteLog("   提示：清空操作会删除所有接收数据，此后\"保存\"按钮将基于文件大小判定可用性");
-		}
-	}
-}
-
-uint64_t CPortMasterDlg::GetTempCacheFileSize() const
-{
-	if (m_tempCacheFilePath.IsEmpty() || !PathFileExists(m_tempCacheFilePath))
-	{
-		return 0;
-	}
-
-	WIN32_FILE_ATTRIBUTE_DATA fileAttr;
-	if (!GetFileAttributesEx(m_tempCacheFilePath, GetFileExInfoStandard, &fileAttr))
-	{
-		return 0;
-	}
-
-	ULARGE_INTEGER fileSize;
-	fileSize.LowPart = fileAttr.nFileSizeLow;
-	fileSize.HighPart = fileAttr.nFileSizeHigh;
-	return fileSize.QuadPart;
-}
-
-bool CPortMasterDlg::WaitForReceiveDataStability(size_t maxChecks, uint32_t intervalMs, uint64_t& stableBytes, uint64_t& stableFileSize)
-{
-	if (!m_useTempCacheFile || m_tempCacheFilePath.IsEmpty())
-	{
-		stableBytes = m_totalReceivedBytes;
-		stableFileSize = 0;
-		return true;
-	}
-
-	if (maxChecks < 2)
-	{
-		maxChecks = 2;
-	}
-
-	uint64_t previousBytes = 0;
-	uint64_t previousFileSize = 0;
-	bool hasPreviousSample = false;
-
-	for (size_t attempt = 0; attempt < maxChecks; ++attempt)
-	{
-		uint64_t currentBytes = 0;
-		{
-			std::lock_guard<std::mutex> lock(m_receiveFileMutex);
-			currentBytes = m_totalReceivedBytes;
-			if (m_tempCacheFile.is_open())
-			{
-				m_tempCacheFile.flush();
-			}
-		}
-
-		uint64_t currentFileSize = GetTempCacheFileSize();
-
-		this->WriteLog("保存稳定性检测: 第 " + std::to_string(attempt + 1) + "/" + std::to_string(maxChecks) +
-			" 次采样，统计字节=" + std::to_string(currentBytes) +
-			"，文件大小=" + std::to_string(currentFileSize));
-
-		if (hasPreviousSample && currentBytes == previousBytes && currentFileSize == previousFileSize)
-		{
-			stableBytes = (currentFileSize > 0) ? currentFileSize : currentBytes;
-			stableFileSize = currentFileSize;
-			this->WriteLog("保存稳定性检测通过，缓冲与文件大小保持一致");
-			return true;
-		}
-
-		previousBytes = currentBytes;
-		previousFileSize = currentFileSize;
-		hasPreviousSample = true;
-
-		if (attempt + 1 < maxChecks && intervalMs > 0)
-		{
-			this->WriteLog("保存稳定性检测: 数据仍在变化，等待 " + std::to_string(intervalMs) + "ms 后重试");
-			::Sleep(intervalMs);
-		}
-	}
-
-	stableBytes = (previousFileSize > 0) ? previousFileSize : previousBytes;
-	stableFileSize = previousFileSize;
-	this->WriteLog("保存稳定性检测未达一致，可能仍有数据写入");
-	return false;
-}
+// 【阶段3迁移】ClearTempCacheFile和GetTempCacheFileSize已删除，使用ReceiveCacheService替代
 
 // 【临时文件状态监控与自动恢复】新增机制实现
 
-// 记录详细的临时文件状态诊断信息
-void CPortMasterDlg::LogTempCacheFileStatus(const std::string& context)
-{
-	this->WriteLog("=== 临时文件状态诊断 [" + context + "] ===");
-	this->WriteLog("m_useTempCacheFile: " + std::string(m_useTempCacheFile ? "true" : "false"));
-	this->WriteLog("m_tempCacheFile.is_open(): " + std::string(m_tempCacheFile.is_open() ? "true" : "false"));
-	this->WriteLog("临时文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
-
-	// 检查文件系统层面的文件状态
-	if (!m_tempCacheFilePath.IsEmpty())
-	{
-		bool fileExists = PathFileExists(m_tempCacheFilePath) ? true : false;
-		this->WriteLog("文件系统中文件存在: " + std::string(fileExists ? "true" : "false"));
-
-		if (fileExists)
-		{
-			// 获取文件大小
-			WIN32_FILE_ATTRIBUTE_DATA fileAttr;
-			if (GetFileAttributesEx(m_tempCacheFilePath, GetFileExInfoStandard, &fileAttr))
-			{
-				LARGE_INTEGER fileSize;
-				fileSize.LowPart = fileAttr.nFileSizeLow;
-				fileSize.HighPart = fileAttr.nFileSizeHigh;
-				this->WriteLog("文件系统中文件大小: " + std::to_string(fileSize.QuadPart) + " 字节");
-			}
-		}
-	}
-
-	this->WriteLog("内存缓存大小: " + std::to_string(m_receiveDataCache.size()) + " 字节");
-	this->WriteLog("统计接收字节数: " + std::to_string(m_totalReceivedBytes) + " 字节");
-	this->WriteLog("=== 状态诊断结束 ===");
-}
-
-// 验证临时文件完整性
-bool CPortMasterDlg::VerifyTempCacheFileIntegrity()
-{
-	if (m_tempCacheFilePath.IsEmpty())
-	{
-		this->WriteLog("验证失败：临时文件路径为空");
-		return false;
-	}
-
-	if (!PathFileExists(m_tempCacheFilePath))
-	{
-		this->WriteLog("验证失败：临时文件不存在");
-		return false;
-	}
-
-	// 获取文件实际大小
-	WIN32_FILE_ATTRIBUTE_DATA fileAttr;
-	if (!GetFileAttributesEx(m_tempCacheFilePath, GetFileExInfoStandard, &fileAttr))
-	{
-		this->WriteLog("验证失败：无法获取文件属性");
-		return false;
-	}
-
-	LARGE_INTEGER fileSize;
-	fileSize.LowPart = fileAttr.nFileSizeLow;
-	fileSize.HighPart = fileAttr.nFileSizeHigh;
-
-	// 验证文件大小与统计数据一致性
-	if (fileSize.QuadPart != m_totalReceivedBytes)
-	{
-		this->WriteLog("完整性验证：文件大小不匹配");
-		this->WriteLog("文件实际大小: " + std::to_string(fileSize.QuadPart) + " 字节");
-		this->WriteLog("统计接收字节: " + std::to_string(m_totalReceivedBytes) + " 字节");
-		return false;
-	}
-
-	this->WriteLog("完整性验证通过：文件大小 " + std::to_string(fileSize.QuadPart) + " 字节");
-	return true;
-}
-
-// 检查并恢复临时文件状态（核心函数）
-bool CPortMasterDlg::CheckAndRecoverTempCacheFile()
-{
-	// 记录检查开始
-	this->WriteLog("开始临时文件状态检查和恢复...");
-
-	// 如果明确禁用了临时文件机制，直接返回
-	if (!m_useTempCacheFile)
-	{
-		this->WriteLog("临时文件机制已禁用，无需恢复");
-		return false;
-	}
-
-	// 检查文件流状态
-	if (m_tempCacheFile.is_open())
-	{
-		// 验证文件流的健康状态
-		if (m_tempCacheFile.good())
-		{
-			this->WriteLog("临时文件流状态正常，无需恢复");
-			return true;
-		}
-		else
-		{
-			this->WriteLog("检测到文件流状态异常，开始修复...");
-			// 关闭异常的文件流
-			m_tempCacheFile.close();
-		}
-	}
-
-	// 文件流已关闭，尝试重新打开
-	this->WriteLog("尝试重新打开临时文件: " + std::string(CT2A(m_tempCacheFilePath)));
-
-	if (m_tempCacheFilePath.IsEmpty())
-	{
-		this->WriteLog("❌ 恢复失败：临时文件路径为空，尝试重新初始化");
-		return InitializeTempCacheFile();
-	}
-
-	try
-	{
-		// 使用追加模式重新打开，避免覆盖已有数据
-		m_tempCacheFile.open(m_tempCacheFilePath, std::ios::out | std::ios::binary | std::ios::app);
-
-		if (m_tempCacheFile.is_open())
-		{
-			this->WriteLog("✅ 临时文件恢复成功");
-
-			// 验证文件完整性
-			if (VerifyTempCacheFileIntegrity())
-			{
-				this->WriteLog("✅ 文件完整性验证通过");
-				return true;
-			}
-			else
-			{
-				this->WriteLog("⚠️ 文件完整性验证失败，但文件流已恢复");
-				// 即使完整性验证失败，文件流已经恢复，可以继续写入
-				return true;
-			}
-		}
-		else
-		{
-			this->WriteLog("❌ 文件流打开失败，尝试重新创建临时文件");
-			return InitializeTempCacheFile();
-		}
-	}
-	catch (const std::exception& e)
-	{
-		this->WriteLog("❌ 文件恢复异常: " + std::string(e.what()));
-		this->WriteLog("尝试重新初始化临时文件...");
-		return InitializeTempCacheFile();
-	}
-}
 
 // 文件拖拽处理函数
 void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)

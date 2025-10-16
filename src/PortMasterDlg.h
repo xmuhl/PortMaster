@@ -4,8 +4,15 @@
 #include "../Transport/ITransport.h"
 #include "../Protocol/ReliableChannel.h"
 #include "../Common/ConfigStore.h"
-#include "TransmissionTask.h"
+#include "../Common/DataPresentationService.h"
+#include "../Common/ReceiveCacheService.h"
+#include "DialogConfigBinder.h"
+#include "DialogUiController.h"
+#include "PortConfigPresenter.h"
+#include "TransmissionCoordinator.h"
+// 【Stage4迁移】移除TransmissionTask，由TransmissionCoordinator管理
 #include "UIStateManager.h"
+#include "../Protocol/PortSessionController.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -69,12 +76,7 @@ protected:
 	void OnTransmissionCompleted(const TransmissionResult& result);
 	void OnTransmissionLog(const std::string& message);
 
-	// 十六进制转换函数
-	CString StringToHex(const CString& str);
-	CString BytesToHex(const BYTE* data, size_t length); // 新增：处理原始字节数据
-	CString HexToString(const CString& hex);
-	CString ExtractHexAsciiText(const CString& hex);
-
+	
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
@@ -86,9 +88,6 @@ protected:
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
 	void UpdateSendCacheFromHex(const CString& hexData);	   // 从十六进制字符串更新发送缓存
 	void UpdateReceiveCache(const std::vector<uint8_t>& data); // 更新接收缓存
-
-	// 【深层修复】线程安全的接收数据直接落盘函数
-	void ThreadSafeAppendReceiveData(const std::vector<uint8_t>& data); // 接收线程直接落盘，避免消息队列异步延迟
 
 	// 【深层修复】轻量级UI更新信息结构
 	struct UIUpdateInfo {
@@ -106,11 +105,8 @@ private:
 	bool m_updateDisplayInProgress;  // 标志：正在更新显示，防止事件递归
 	bool m_receiveVerboseLogging;    // 是否启用接收数据详细日志
 
-	// 【UI优化】接收窗口更新节流机制
-	bool m_receiveDisplayPending;    // 标志：是否有待处理的接收显示更新
-	DWORD m_lastReceiveDisplayUpdate; // 最后一次更新接收显示的时间戳
+	// 【阶段1迁移】接收窗口更新节流机制已迁移到DialogUiController
 	DWORD m_lastUiLogTick;            // 最近一次输出轻量级UI日志的时间戳
-	const DWORD RECEIVE_DISPLAY_THROTTLE_MS = 200; // 接收显示更新节流间隔(ms)
 
 	DECLARE_MESSAGE_MAP()
 
@@ -165,19 +161,34 @@ private:
 	std::atomic<bool> m_transmissionPaused;  // 新增：传输暂停状态
 	std::atomic<bool> m_transmissionCancelled;  // 新增：传输取消状态
 	std::thread m_receiveThread;
-	std::thread m_transmissionThread;  // 新增：传输线程
+	// 【Stage4迁移】移除传输线程，由TransmissionCoordinator管理
 	std::mutex m_reliableSessionMutex;         // 可靠模式进度统计互斥锁
 	int64_t m_reliableExpectedBytes;           // 最新可靠传输预期字节数
 	int64_t m_reliableReceivedBytes;           // 最新可靠传输已接收字节数
 
-	// 【P1修复】传输任务管理 - 实现UI与传输解耦
-	std::unique_ptr<TransmissionTask> m_currentTransmissionTask;
+	// 【Stage4迁移】传输任务管理已迁移到TransmissionCoordinator
+
+	// 【阶段D迁移】传输任务协调器
+	std::unique_ptr<TransmissionCoordinator> m_transmissionCoordinator;
+
+	// 【阶段E迁移】会话管理控制器
+	std::unique_ptr<PortSessionController> m_sessionController;
 
 	// 【UI响应修复】状态管理器 - 解决状态栏重复显示问题
 	std::unique_ptr<UIStateManager> m_uiStateManager;
 
+	// 【阶段1迁移】UI控制器 - 统一管理控件初始化和状态更新
+	std::unique_ptr<DialogUiController> m_uiController;
+
+	// 【阶段2迁移】端口配置呈现器 - 管理端口枚举和参数配置
+	std::unique_ptr<PortConfigPresenter> m_portConfigPresenter;
+
 	// 配置管理
 	ConfigStore& m_configStore;
+	std::unique_ptr<DialogConfigBinder> m_configBinder;
+
+	// 接收缓存服务
+	std::unique_ptr<ReceiveCacheService> m_receiveCacheService;
 
 	// 传输配置
 	TransportConfig m_transportConfig;
@@ -188,7 +199,7 @@ private:
 	uint64_t m_bytesReceived;
 	uint32_t m_sendSpeed;
 	uint32_t m_receiveSpeed;
-	uint32_t m_lastProgressPercent;  // 最近一次成功更新的进度百分比（用于单调性保护）
+	// 【阶段1迁移】m_lastProgressPercent已迁移到DialogUiController
 
 	// 源数据缓存 - 用于确保显示模式切换时数据一致性
 	std::vector<uint8_t> m_sendDataCache;	 // 发送数据的原始字节缓存
@@ -212,10 +223,7 @@ private:
 
 	// 内部方法
 	void InitializeTransportConfig();
-	bool CreateTransport();
-	void DestroyTransport();
-	void StartReceiveThread();
-	void StopReceiveThread();
+	// 【阶段5迁移】CreateTransport/DestroyTransport/StartReceiveThread/StopReceiveThread已迁移到PortSessionController
 	void UpdateConnectionStatus();
 	void UpdateStatistics();
 
@@ -232,24 +240,7 @@ private:
 	void OnReliableStateChanged(bool connected);
 	void ConfigureReliableLogging();
 
-	// 临时缓存文件管理方法
-	bool InitializeTempCacheFile();
-	void CloseTempCacheFile();
-	bool WriteDataToTempCache(const std::vector<uint8_t>& data);
-	std::vector<uint8_t> ReadDataFromTempCache(uint64_t offset, size_t length);
-	std::vector<uint8_t> ReadAllDataFromTempCache();
-	void ClearTempCacheFile();
-	bool WaitForReceiveDataStability(size_t maxChecks, uint32_t intervalMs, uint64_t& stableBytes, uint64_t& stableFileSize);
-	uint64_t GetTempCacheFileSize() const;
-
-	// 【临时文件状态监控与自动恢复】新增机制
-	bool CheckAndRecoverTempCacheFile();
-	void LogTempCacheFileStatus(const std::string& context);
-	bool VerifyTempCacheFileIntegrity();
-
-	// 【保存完整性误报修复】不加锁的读取版本，用于已持锁的保存流程
-	std::vector<uint8_t> ReadDataFromTempCacheUnlocked(uint64_t offset, size_t length);
-	std::vector<uint8_t> ReadAllDataFromTempCacheUnlocked();
+	// 【阶段3迁移】临时缓存文件管理方法已迁移到ReceiveCacheService
 
 	void BeginReliableReceiveSession();
 	void AppendReliablePayload(const std::vector<uint8_t>& data);

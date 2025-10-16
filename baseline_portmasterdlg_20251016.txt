@@ -1,0 +1,43 @@
+# PortMasterDlg拆分前基线验证报告
+**生成时间**: 2025-10-16 12:09:56
+**验证目标**: 建立PortMasterDlg.cpp拆分前的功能基线
+
+## 编译状态验证
+✅ **编译成功**: 0 error(s), 0 warning(s)
+- 编译时间: 14.17秒
+- 编译平台: Win32 Debug
+- 输出文件: C:\Users\huangl\Desktop\PortMaster\build\Debug\PortMaster.exe
+
+## 代码体量基线
+- **PortMasterDlg.cpp行数**: 4701行
+- **目标行数**: < 1000行
+- **需要减少**: ≥ 3701行
+
+## 旧逻辑残留检查
+- StringToHex引用: 2个
+- ThreadSafeAppendReceiveData调用: 3个
+- CreateTransport调用: 9个
+- m_sessionController引用: 3个（仅初始化）
+
+## 功能基线状态
+需要手工验证以下核心场景：
+1. 连接/断开功能
+2. 直通+可靠发送
+3. 文件接收保存
+4. 十六进制显示
+5. 配置读写
+
+## 修订目标
+彻底移除旧实现逻辑，完全使用新服务模块：
+- DataPresentationService: 数据展示职责
+- DialogConfigBinder: 配置读写职责
+- ReceiveCacheService: 接收缓存职责
+- TransmissionCoordinator: 传输调度职责
+- PortSessionController: 会话连接职责
+
+## 验证标准
+每个阶段完成后必须验证：
+1. 旧函数调用减少到0
+2. 编译保持0 error 0 warning
+3. 核心功能正常工作
+4. 代码行数按预期减少

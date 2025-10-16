@@ -120,10 +120,10 @@ public:
 	 * @return 协议配置结构
 	 *
 	 * 说明：
-	 * - 从当前ConfigStore读取ProtocolConfig
+	 * - 从当前ConfigStore读取ReliableProtocolConfig
 	 * - 包含可靠传输窗口大小、最大重试次数等
 	 */
-	ProtocolConfig GetProtocolConfig() const;
+	ReliableProtocolConfig GetProtocolConfig() const;
 
 	/**
 	 * @brief 获取完整配置
@@ -154,7 +154,7 @@ public:
 	 * @param config 协议配置结构
 	 * @return 设置是否成功
 	 */
-	bool SetProtocolConfig(const ProtocolConfig& config);
+	bool SetProtocolConfig(const ReliableProtocolConfig& config);
 
 	// ========== 单项配置绑定（高频操作优化）==========
 
@@ -326,14 +326,14 @@ private:
 	 * @brief 从ConfigStore加载协议配置到UI
 	 * @param config 协议配置
 	 */
-	void LoadProtocolConfigToUI(const ProtocolConfig& config);
+	void LoadProtocolConfigToUI(const ReliableProtocolConfig& config);
 
 	/**
 	 * @brief 从UI读取协议配置
 	 * @param config 输出协议配置
 	 * @return 读取是否成功
 	 */
-	bool ReadProtocolConfigFromUI(ProtocolConfig& config);
+	bool ReadProtocolConfigFromUI(ReliableProtocolConfig& config);
 
 	/**
 	 * @brief 校验位枚举转字符串

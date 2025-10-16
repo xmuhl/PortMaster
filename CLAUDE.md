@@ -163,11 +163,11 @@ echo "工作目录: $WORK_DIR"
 ```bash
 # 生成修订记录文件名（基于当前时间戳，跨环境兼容）
 if [[ "$CURRENT_ENV" == "WSL" ]]; then
-    REVISION_FILE="修订工作记录$(date +%Y%m%d-%H%M%S).md"
+    REVISION_FILE="docs/修订工作记录$(date +%Y%m%d-%H%M%S).md"
 else
     # PowerShell环境
     TIMESTAMP=$(powershell.exe -Command "Get-Date -Format 'yyyyMMdd-HHmmss'")
-    REVISION_FILE="修订工作记录${TIMESTAMP}.md"
+    REVISION_FILE="docs/修订工作记录${TIMESTAMP}.md"
 fi
 echo "创建修订记录文件: $REVISION_FILE"
 
@@ -302,58 +302,59 @@ echo "变更文件: $CHANGED_FILES"
 ```bash
 # 跨环境智能编译系统
 if [[ "$CURRENT_ENV" == "WSL" ]]; then
-    # WSL环境：使用智能编译脚本
-    echo "WSL环境：使用智能编译脚本（自动处理进程占用）"
+    # WSL环境：使用PowerShell调用编译脚本
+    echo "WSL环境：使用PowerShell调用编译脚本（自动处理进程占用）"
     cd "$WORK_DIR"
-    
-    # 优先使用智能编译脚本
-    if [[ -f "smart_build_wsl.sh" ]]; then
-        ./smart_build_wsl.sh
+
+    # 主要编译脚本：直接调用autobuild_x86_debug.bat
+    echo "调用主要编译脚本：autobuild_x86_debug.bat"
+    powershell.exe -Command "./autobuild_x86_debug.bat"
+    BUILD_RESULT=$?
+
+    # 如果失败且可能是进程占用，自动处理
+    if [[ $BUILD_RESULT -ne 0 ]]; then
+        echo "编译失败，尝试关闭可能的进程占用..."
+        powershell.exe -Command "Stop-Process -Name PortMaster -Force -ErrorAction SilentlyContinue"
+        sleep 2
+        echo "重新编译..."
+        powershell.exe -Command "./autobuild_x86_debug.bat"
         BUILD_RESULT=$?
-    else
-        # 备用：使用传统编译方式
-        echo "智能编译脚本不存在，使用传统编译方式"
-        cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
-        BUILD_RESULT=$?
-        
-        # 如果失败且可能是进程占用，手动处理
-        if [[ $BUILD_RESULT -ne 0 ]]; then
-            echo "编译失败，尝试关闭可能的进程占用..."
-            cmd.exe /c "taskkill /F /IM PortMaster.exe" 2>/dev/null
-            sleep 2
-            echo "重新编译..."
-            cmd.exe /c "autobuild_x86_debug.bat" 2>&1 | tail -20
-            BUILD_RESULT=$?
-        fi
     fi
 else
-    # PowerShell环境：使用Windows智能编译脚本
-    echo "PowerShell环境：使用智能编译脚本"
+    # PowerShell环境：直接执行编译脚本
+    echo "PowerShell环境：直接执行编译脚本"
     cd "$WORK_DIR"
-    
-    if (Test-Path "smart_build.bat") {
-        .\smart_build.bat
-        $BUILD_RESULT = $LASTEXITCODE
-    } elseif (Test-Path "autobuild_x86_debug.bat") {
-        # 备用：使用传统编译方式
+
+    if (Test-Path "autobuild_x86_debug.bat") {
+        # 主要编译脚本
+        echo "调用主要编译脚本：autobuild_x86_debug.bat"
         .\autobuild_x86_debug.bat
         $BUILD_RESULT = $LASTEXITCODE
-        
+
         # 如果失败，尝试关闭进程并重编译
         if ($BUILD_RESULT -ne 0) {
             Write-Host "编译失败，尝试关闭可能的进程占用..."
-            taskkill /F /IM PortMaster.exe 2>$null
+            Stop-Process -Name PortMaster -Force -ErrorAction SilentlyContinue
             Start-Sleep -Seconds 2
             Write-Host "重新编译..."
             .\autobuild_x86_debug.bat
             $BUILD_RESULT = $LASTEXITCODE
         }
     } else {
-        Write-Error "未找到编译脚本"
+        Write-Error "未找到编译脚本：autobuild_x86_debug.bat"
         $BUILD_RESULT = 1
     }
 fi
 ```
+
+**编译脚本调用说明：**
+
+1. **统一使用autobuild_x86_debug.bat** - 这是主要编译脚本，已配置为0错误0警告标准
+2. **跨环境调用方式**：
+   - **WSL环境**：使用`powershell.exe -Command "./autobuild_x86_debug.bat"`
+   - **PowerShell环境**：直接使用`.\autobuild_x86_debug.bat`
+3. **自动进程处理**：检测到编译失败时自动关闭PortMaster.exe进程并重试
+4. **质量保证**：编译脚本内部已配置`/p:TreatWarningsAsErrors=true`确保0错误0警告标准
 
 **智能编译系统特性：**
 
@@ -763,14 +764,30 @@ echo "=== 验证完成 ==="
 
 ## 修订记录管理
 
-### 修订记录文件组织
+### 修订记录文件组织原则
 
-具体的修订记录已迁移到独立文件中，便于管理和查阅：
+**📁 文件存储要求：**
 
-- `第六轮修订工作记录.md` - 传输状态管理优化
-- `第七轮修订工作记录.md` - 数据显示与传输控制综合修订
-- `第八轮修订工作记录.md` - 工作流程优化
-- `第九轮修订工作记录.md` - 可靠传输模式切换状态重置修复
+1. **修订记录文件** - 必须保存在`docs/`目录下
+   - 命名格式：`修订工作记录YYYYMMDD-HHMMSS.md`
+   - 存储位置：`docs/修订工作记录YYYYMMDD-HHMMSS.md`
+   - **强制要求**：所有新增的修订记录文件都必须存储在docs目录
+
+2. **技术文档文件** - 必须保存在`docs/`目录下
+   - 评估报告、设计方案、架构文档等
+   - 确保文档集中管理，便于查阅和维护
+
+3. **文件命名规范**：
+   - 使用中文描述性命名
+   - 包含时间戳便于排序
+   - 避免使用英文缩写或临时命名
+
+### 现有修订记录文件
+
+已迁移到`docs/`目录的修订记录文件：
+
+- `docs/修订工作记录20251015-173928.md` - 传输状态管理优化
+- `docs/修订工作记录20251016-103601.md` - PortMasterDlg模块拆分修订工作记录
 
 ### 技术调试经验总结
 

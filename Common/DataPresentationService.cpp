@@ -227,7 +227,7 @@ DataPresentationService::DisplayUpdate DataPresentationService::PrepareDisplay(
 	update.dataSize = cache.size();
 
 	// 限制显示大小
-	size_t displaySize = std::min(cache.size(), maxDisplaySize);
+	size_t displaySize = (std::min)(cache.size(), maxDisplaySize);
 
 	if (hexMode)
 	{
