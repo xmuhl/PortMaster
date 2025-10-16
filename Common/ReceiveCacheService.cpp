@@ -25,8 +25,6 @@ ReceiveCacheService::~ReceiveCacheService()
 
 bool ReceiveCacheService::Initialize()
 {
-	// 【阶段二实现】初始化临时缓存文件
-	// TODO: 阶段二迁移InitializeTempCacheFile()完整逻辑（PortMasterDlg.cpp:4270-4309）
 	try
 	{
 		// 生成临时文件名
@@ -73,8 +71,6 @@ bool ReceiveCacheService::Initialize()
 
 void ReceiveCacheService::Shutdown()
 {
-	// 【阶段二实现】关闭并删除临时缓存文件
-	// TODO: 阶段二迁移CloseTempCacheFile()完整逻辑（PortMasterDlg.cpp:4311-4329）
 	if (m_tempCacheFile.is_open())
 	{
 		m_tempCacheFile.close();
@@ -110,8 +106,6 @@ bool ReceiveCacheService::IsInitialized() const
 
 bool ReceiveCacheService::AppendData(const std::vector<uint8_t>& data)
 {
-	// 【阶段二实现】线程安全追加接收数据
-	// TODO: 阶段二迁移ThreadSafeAppendReceiveData()完整逻辑（PortMasterDlg.cpp:2240-2327）
 	if (data.empty())
 	{
 		return false;
@@ -197,8 +191,6 @@ bool ReceiveCacheService::AppendData(const std::vector<uint8_t>& data)
 
 std::vector<uint8_t> ReceiveCacheService::ReadData(uint64_t offset, size_t length)
 {
-	// 【阶段二实现】从临时缓存读取指定范围的数据
-	// TODO: 阶段二迁移ReadDataFromTempCache()完整逻辑（PortMasterDlg.cpp:4386-4634）
 	std::vector<uint8_t> result;
 
 	if (m_tempCacheFilePath.empty() || !PathFileExistsW(m_tempCacheFilePath.c_str()))
@@ -212,8 +204,6 @@ std::vector<uint8_t> ReceiveCacheService::ReadData(uint64_t offset, size_t lengt
 
 std::vector<uint8_t> ReceiveCacheService::ReadAllData()
 {
-	// 【阶段二实现】读取所有缓存数据
-	// TODO: 阶段二迁移ReadAllDataFromTempCacheUnlocked()逻辑（PortMasterDlg.cpp:4636-4639）
 	return ReadData(0, 0); // 0长度表示读取全部数据
 }
 
@@ -226,8 +216,6 @@ const std::vector<uint8_t>& ReceiveCacheService::GetMemoryCache() const
 
 bool ReceiveCacheService::VerifyFileIntegrity()
 {
-	// 【阶段二实现】验证临时缓存文件完整性
-	// TODO: 阶段二迁移VerifyTempCacheFileIntegrity()完整逻辑（PortMasterDlg.cpp:4810-4847）
 	if (m_tempCacheFilePath.empty())
 	{
 		Log("验证失败：临时文件路径为空");
@@ -268,8 +256,6 @@ bool ReceiveCacheService::VerifyFileIntegrity()
 
 bool ReceiveCacheService::CheckAndRecover()
 {
-	// 【阶段二实现】检查并恢复临时文件状态
-	// TODO: 阶段二迁移CheckAndRecoverTempCacheFile()完整逻辑（PortMasterDlg.cpp:4850-4922）
 	Log("开始临时文件状态检查和恢复...");
 
 	// 如果明确禁用了临时文件机制，直接返回
@@ -350,8 +336,6 @@ uint64_t ReceiveCacheService::GetTotalReceivedBytes() const
 
 uint64_t ReceiveCacheService::GetFileSize() const
 {
-	// 【阶段二实现】获取临时缓存文件大小
-	// TODO: 阶段二迁移GetTempCacheFileSize()逻辑
 	if (m_tempCacheFilePath.empty() || !PathFileExistsW(m_tempCacheFilePath.c_str()))
 	{
 		return 0;
@@ -396,8 +380,6 @@ void ReceiveCacheService::SetLogCallback(LogCallback callback)
 
 bool ReceiveCacheService::WriteDataUnlocked(const std::vector<uint8_t>& data)
 {
-	// 【阶段二实现】写入数据到临时缓存（内部实现，无锁版本）
-	// TODO: 阶段二迁移WriteDataToTempCache()完整逻辑（PortMasterDlg.cpp:4331-4384）
 	if (data.empty())
 	{
 		return false;
@@ -450,8 +432,6 @@ bool ReceiveCacheService::WriteDataUnlocked(const std::vector<uint8_t>& data)
 
 std::vector<uint8_t> ReceiveCacheService::ReadDataUnlocked(uint64_t offset, size_t length)
 {
-	// 【阶段二实现】从临时缓存读取数据（内部实现，无锁版本）
-	// TODO: 阶段二迁移ReadDataFromTempCacheUnlocked()完整逻辑（PortMasterDlg.cpp:4441-4634）
 	std::vector<uint8_t> result;
 
 	try
@@ -623,8 +603,6 @@ void ReceiveCacheService::LogDetail(const std::string& message)
 
 void ReceiveCacheService::LogFileStatus(const std::string& context)
 {
-	// 【阶段二实现】记录临时缓存文件状态（调试用）
-	// TODO: 阶段二迁移LogTempCacheFileStatus()逻辑
 	LogDetail("--- " + context + " ---");
 	LogDetail("临时文件路径: " + std::string(m_tempCacheFilePath.begin(), m_tempCacheFilePath.end()));
 	LogDetail("文件流打开状态: " + std::string(m_tempCacheFile.is_open() ? "是" : "否"));
