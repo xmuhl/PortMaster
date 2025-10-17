@@ -85,11 +85,12 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 			logFile.close();
 		}
 
-		// 【阶段4迁移】使用StatusDisplayManager显示日志到UI
+		// 【阶段B修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
 		if (m_statusDisplayManager)
 		{
-			// 转换std::string到CString并显示在UI上
-			CString displayMessage(message.c_str());
+			// 使用CA2W进行UTF-8到Unicode的准确转换
+			CA2W displayMessageW(message.c_str(), CP_UTF8);
+			CString displayMessage((LPCWSTR)displayMessageW);
 			m_statusDisplayManager->LogMessage(displayMessage);
 		}
 	}
@@ -680,14 +681,19 @@ void CPortMasterDlg::PerformDataTransmission()
 			PostMessage(WM_USER + 11, 0, 0);   // 设置进度条位置
 
 			// 启动传输任务（TransmissionCoordinator会自动选择可靠/直接传输模式）
-			std::shared_ptr<ReliableChannel> reliableChannel =
-				m_reliableChannel ?
-				std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*){}) :
-				nullptr;
-			std::shared_ptr<ITransport> transport =
-				m_transport ?
-				std::shared_ptr<ITransport>(m_transport.get(), [](ITransport*){}) :
-				nullptr;
+			// 【阶段A修复】从PortSessionController获取实际的连接对象
+			std::shared_ptr<ReliableChannel> reliableChannel = m_sessionController ?
+				m_sessionController->GetReliableChannel() : nullptr;
+			std::shared_ptr<ITransport> transport = m_sessionController ?
+				m_sessionController->GetTransport() : nullptr;
+
+			// 验证获取的通道指针
+			if (!reliableChannel || !transport)
+			{
+				this->WriteLog("PerformDataTransmission: 错误 - 无法从PortSessionController获取有效通道对象");
+				PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
+				return;
+			}
 
 			bool started = m_transmissionCoordinator->Start(
 				data,
@@ -1549,8 +1555,9 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
 
 void CPortMasterDlg::OnTransportError(const std::string& error)
 {
-	// 在主线程中显示错误
-	CString errorMsg(error.c_str());
+	// 【阶段B修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
+	CA2W errorMsgW(error.c_str(), CP_UTF8);
+	CString errorMsg((LPCWSTR)errorMsgW);
 	PostMessage(WM_USER + 2, 0, (LPARAM) new CString(errorMsg));
 }
 
