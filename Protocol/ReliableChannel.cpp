@@ -944,20 +944,23 @@ void ReliableChannel::SendThread()
 			if (m_shutdown)
 			{
 				WriteVerbose("SendThread: shutdown detected, exiting");
+				lock.unlock(); // 显式释放锁
 				break;
 			}
 
 			if (!m_connected)
 			{
 				WriteVerbose("SendThread: not connected, continuing");
+				lock.unlock(); // 显式释放锁
 				continue;
 			}
 
 			if (m_sendQueue.empty())
 			{
 				WriteVerbose("SendThread: queue is empty, continuing");
+				lock.unlock(); // 显式释放锁
 				continue;
-			}
+				}
 
 			// 获取数据并从队列移除
 			WriteVerbose("SendThread: getting data from queue, queue size: " + std::to_string(m_sendQueue.size()));
@@ -967,6 +970,7 @@ void ReliableChannel::SendThread()
 
 			// 【修复】唤醒可能等待队列空间的Send()调用
 			m_sendCondition.notify_all();
+			lock.unlock(); // 显式释放锁
 		}
 
 		// 在没有锁的情况下处理发送

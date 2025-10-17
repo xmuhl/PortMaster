@@ -396,15 +396,15 @@ void DialogUiController::SetDisplayUpdatePending(bool pending)
 // 判断是否可以立即更新显示（节流控制）
 bool DialogUiController::CanUpdateDisplay() const
 {
-	DWORD currentTick = ::GetTickCount();
-	DWORD elapsed = currentTick - m_lastReceiveDisplayUpdate;
+	ULONGLONG currentTick = ::GetTickCount64();
+	ULONGLONG elapsed = currentTick - m_lastReceiveDisplayUpdate;
 	return elapsed >= RECEIVE_DISPLAY_THROTTLE_MS;
 }
 
 // 记录本次显示更新时间戳
 void DialogUiController::RecordDisplayUpdate()
 {
-	m_lastReceiveDisplayUpdate = ::GetTickCount();
+	m_lastReceiveDisplayUpdate = ::GetTickCount64();
 }
 
 // 设置节流显示回调函数

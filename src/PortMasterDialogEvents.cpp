@@ -224,97 +224,86 @@ void PortMasterDialogEvents::HandleSaveAll()
 
 void PortMasterDialogEvents::HandleToggleHex()
 {
-	BOOL isHexMode = (m_dialog.m_checkHex.GetCheck() == BST_CHECKED);
-	CString currentSendData;
-	m_dialog.m_editSendData.GetWindowText(currentSendData);
+	// 十六进制显示模式切换
+	// 读取切换后的勾选状态，通过UI控制器获取
+	BOOL isHexMode = m_dialog.m_uiController->IsHexDisplayEnabled();
 
+	// 获取当前编辑框中的内容
+	CString currentSendData;
+	if (m_dialog.m_uiController)
+	{
+		currentSendData = m_dialog.m_uiController->GetSendDataText();
+	}
+	else
+	{
+		currentSendData = _T("");
+	}
+
+	// 如果有内容，重新解析数据
 	if (!currentSendData.IsEmpty())
 	{
 		if (isHexMode)
 		{
+			// 切换到十六进制模式：解析当前显示的内容
+			// 如果当前显示的是文本，需要转换为十六进制
 			if (!m_dialog.m_sendCacheValid)
 			{
+				// 缓存无效，直接缓存当前文本数据
 				m_dialog.UpdateSendCache(currentSendData);
 			}
+			// 缓存有效，从缓存更新显示
 		}
 		else
 		{
+			// 切换到文本模式：如果缓存有效，直接使用缓存
 			if (!m_dialog.m_sendCacheValid)
 			{
-				ApplySendCacheFromHexDisplay(currentSendData);
+				// 缓存无效，尝试从当前显示的十六进制数据中提取
+				// 将CString转换为std::string以使用DataPresentationService
+				CT2A hexStr(currentSendData, CP_UTF8);
+				std::string hexStdString(hexStr);
+
+				// 直接使用DataPresentationService
+				std::vector<uint8_t> bytes = DataPresentationService::HexToBytes(hexStdString);
+
+				// 将字节数组转换为UTF-8编码的CString
+				CString textData;
+				if (!bytes.empty())
+				{
+					// 添加null终止符确保字符串安全
+					bytes.push_back(0);
+					CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
+					textData = CString(utf8Result);
+				}
+				if (!textData.IsEmpty())
+				{
+					m_dialog.UpdateSendCache(textData);
+				}
+				else
+				{
+					// 如果无法提取，假设当前显示的就是文本
+					m_dialog.UpdateSendCache(currentSendData);
+				}
 			}
 		}
 	}
+	// 如果编辑框为空，清空缓存
 	else if (m_dialog.m_sendCacheValid)
 	{
 		m_dialog.m_sendDataCache.clear();
 		m_dialog.m_sendCacheValid = false;
 	}
 
+	// 根据缓存更新显示（这会基于原始数据进行正确的格式转换）
 	m_dialog.UpdateSendDisplayFromCache();
 
-	if (m_dialog.m_receiveCacheValid && !m_dialog.m_receiveDataCache.empty())
-	{
-		m_dialog.UpdateReceiveDisplayFromCache();
-	}
-
-	ShowBinaryPreviewNotice();
-}
-
-void PortMasterDialogEvents::HandleSelectReliable()
-{
-	m_dialog.MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-	m_dialog.m_staticMode.SetWindowText(_T("可靠"));
-	if (m_dialog.m_uiController)
-	{
-		m_dialog.m_uiController->UpdateTransmissionMode(true);
-	}
-}
-
-void PortMasterDialogEvents::HandleSelectDirect()
-{
-	m_dialog.MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-	m_dialog.m_staticMode.SetWindowText(_T("直通"));
-	if (m_dialog.m_uiController)
-	{
-		m_dialog.m_uiController->UpdateTransmissionMode(false);
-	}
-}
-
-void PortMasterDialogEvents::HandleSendDataChanged()
-{
-	if (m_dialog.m_updateDisplayInProgress)
-	{
-		return;
-	}
-
-	CString currentData;
-	m_dialog.m_editSendData.GetWindowText(currentData);
-
-	if (!currentData.IsEmpty())
-	{
-		if (m_dialog.m_checkHex.GetCheck() == BST_CHECKED)
-		{
-			m_dialog.UpdateSendCacheFromHex(currentData);
-		}
-		else
-		{
-			m_dialog.UpdateSendCache(currentData);
-		}
-	}
-	else if (m_dialog.m_sendCacheValid)
-	{
-		m_dialog.m_sendDataCache.clear();
-		m_dialog.m_sendCacheValid = false;
-	}
-
-	m_dialog.UpdateSendDisplayFromCache();
-
+	// 只有在接收缓存有效时才更新接收显示，避免模式切换时错误填充接收框
 	if (m_dialog.m_receiveCacheValid && !m_dialog.m_receiveDataCache.empty())
 	{
 		m_dialog.UpdateReceiveDisplayFromCache();
 	}
 }
+
 
 void PortMasterDialogEvents::HandleDropFiles(HDROP hDropInfo)
 {
@@ -466,7 +455,7 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 				outFile.close();
 
 				CString msg;
-				msg.Format(_T("接收数据已保存到文件: %s"), filePath);
+				msg.Format(_T("接收数据已保存到文件: %s"), static_cast<LPCTSTR>(filePath));
 				m_dialog.m_staticPortStatus.SetWindowText(msg);
 				return;
 			}
@@ -489,7 +478,7 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 		outFile.close();
 
 		CString msg;
-		msg.Format(_T("接收数据已保存到文件: %s"), filePath);
+		msg.Format(_T("接收数据已保存到文件: %s"), static_cast<LPCTSTR>(filePath));
 		m_dialog.m_staticPortStatus.SetWindowText(msg);
 	}
 	catch (...)

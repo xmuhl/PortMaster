@@ -103,7 +103,7 @@ private:
 	bool m_receiveVerboseLogging;    // 是否启用接收数据详细日志
 
 	// 【阶段1迁移】接收窗口更新节流机制已迁移到DialogUiController
-	DWORD m_lastUiLogTick;            // 最近一次输出轻量级UI日志的时间戳
+	ULONGLONG m_lastUiLogTick;        // 最近一次输出轻量级UI日志的时间戳
 
 	DECLARE_MESSAGE_MAP()
 

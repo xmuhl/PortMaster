@@ -123,7 +123,12 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	m_binaryDataDetected(false),
 	m_updateDisplayInProgress(false),
 	m_receiveVerboseLogging(false),
-	m_lastUiLogTick(0)
+	m_lastUiLogTick(0ULL),
+	m_totalSentBytes(0),
+	m_sendCacheValid(false),
+	m_receiveCacheValid(false),
+	m_useTempCacheFile(false),
+	m_totalReceivedBytes(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 
@@ -140,7 +145,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置错误回调
 		m_configBinder->SetErrorCallback([this](const std::string& errorMessage) {
 			CString errorMsg;
-			errorMsg.Format(_T("配置错误: %s"), CString(errorMessage.c_str()));
+			errorMsg.Format(_T("配置错误: %s"), errorMessage.c_str());
 			MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 		});
 	}
@@ -857,83 +862,9 @@ void CPortMasterDlg::OnCbnSelchangeComboPortType()
 
 void CPortMasterDlg::OnBnClickedCheckHex()
 {
-	// 十六进制显示模式切换
-	// 读取切换后的勾选状态，GetCheck()此时已经反映最新结果
-	BOOL isHexMode = (m_checkHex.GetCheck() == BST_CHECKED);
-
-	// 获取当前编辑框中的内容
-	CString currentSendData;
-	if (m_uiController)
+	if (m_eventDispatcher)
 	{
-		currentSendData = m_uiController->GetSendDataText();
-	}
-	else
-	{
-		currentSendData = _T("");
-	}
-
-	// 如果有内容，重新解析数据
-	if (!currentSendData.IsEmpty())
-	{
-		if (isHexMode)
-		{
-			// 切换到十六进制模式：解析当前显示的内容
-			// 如果当前显示的是文本，需要转换为十六进制
-			if (!m_sendCacheValid)
-			{
-				// 缓存无效，直接缓存当前文本数据
-				UpdateSendCache(currentSendData);
-			}
-			// 缓存有效，从缓存更新显示
-		}
-		else
-		{
-			// 切换到文本模式：如果缓存有效，直接使用缓存
-			if (!m_sendCacheValid)
-			{
-				// 缓存无效，尝试从当前显示的十六进制数据中提取
-				// 将CString转换为std::string以使用DataPresentationService
-				CT2A hexStr(currentSendData, CP_UTF8);
-				std::string hexStdString(hexStr);
-
-				// 直接使用DataPresentationService
-				std::vector<uint8_t> bytes = DataPresentationService::HexToBytes(hexStdString);
-
-				// 将字节数组转换为UTF-8编码的CString
-				CString textData;
-				if (!bytes.empty())
-				{
-					// 添加null终止符确保字符串安全
-					bytes.push_back(0);
-					CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
-					textData = CString(utf8Result);
-				}
-				if (!textData.IsEmpty())
-				{
-					UpdateSendCache(textData);
-				}
-				else
-				{
-					// 如果无法提取，假设当前显示的就是文本
-					UpdateSendCache(currentSendData);
-				}
-			}
-		}
-	}
-	// 如果编辑框为空，清空缓存
-	else if (m_sendCacheValid)
-	{
-		m_sendDataCache.clear();
-		m_sendCacheValid = false;
-	}
-
-	// 根据缓存更新显示（这会基于原始数据进行正确的格式转换）
-	UpdateSendDisplayFromCache();
-
-	// 只有在接收缓存有效时才更新接收显示，避免模式切换时错误填充接收框
-	if (m_receiveCacheValid && !m_receiveDataCache.empty())
-	{
-		UpdateReceiveDisplayFromCache();
+		m_eventDispatcher->HandleToggleHex();
 	}
 }
 
@@ -944,7 +875,7 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 	// 使用DataPresentationService准备显示数据
 	if (m_sendCacheValid && !m_sendDataCache.empty())
 	{
-		bool hexMode = (m_checkHex.GetCheck() == BST_CHECKED);
+		bool hexMode = m_uiController->IsHexDisplayEnabled();
 		DataPresentationService::DisplayUpdate update =
 			DataPresentationService::PrepareDisplay(m_sendDataCache, hexMode);
 
@@ -969,7 +900,7 @@ void CPortMasterDlg::UpdateReceiveDisplayFromCache()
 	// 使用DataPresentationService准备显示数据
 	if (m_receiveCacheValid && !m_receiveDataCache.empty())
 	{
-		bool hexMode = (m_checkHex.GetCheck() == BST_CHECKED);
+		bool hexMode = m_uiController->IsHexDisplayEnabled();
 		DataPresentationService::DisplayUpdate update =
 			DataPresentationService::PrepareDisplay(m_receiveDataCache, hexMode);
 
@@ -1175,7 +1106,7 @@ void CPortMasterDlg::OnEnChangeEditSendData()
 	if (!currentData.IsEmpty())
 	{
 		// 根据当前模式更新缓存
-		if (m_checkHex.GetCheck() == BST_CHECKED)
+		if (m_uiController->IsHexDisplayEnabled())
 		{
 			// 十六进制模式：解析十六进制字符串为字节数据
 			UpdateSendCacheFromHex(currentData);
@@ -1220,410 +1151,10 @@ void CPortMasterDlg::OnBnClickedButtonCopyAll()
 
 void CPortMasterDlg::OnBnClickedButtonSaveAll()
 {
-	// 保存接收数据到文件
-	std::vector<uint8_t> binaryData;
-	CString saveData;
-	bool isBinaryMode = false;
-	bool tempFileAvailable = false; // 添加变量声明
-	bool usingReliableBuffer = false;
-	int64_t reliableExpectedSize = 0;
-
-	// 添加调试输出：记录保存操作的详细信息
-	this->WriteLog("=== 保存数据调试信息 ===");
-	this->WriteLog("当前十六进制模式: " + std::to_string(m_checkHex.GetCheck() == BST_CHECKED));
-	this->WriteLog("使用临时缓存文件: " + std::to_string(m_useTempCacheFile));
-	this->WriteLog("临时缓存文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
-
-	// 【可靠模式缺陷修复】根据分析报告实施完整性自愈循环和重新读取机制
-	if (!usingReliableBuffer && m_useTempCacheFile && !m_tempCacheFilePath.IsEmpty())
+	if (m_eventDispatcher)
 	{
-		this->WriteLog("=== 可靠模式保存流程开始 ===");
-		this->WriteLog("临时缓存文件路径: " + std::string(CT2A(m_tempCacheFilePath)));
-		this->WriteLog("临时缓存文件是否存在: " + std::string(PathFileExists(m_tempCacheFilePath) ? "是" : "否"));
-
-		std::vector<uint8_t> finalCachedData;
-		bool dataStabilized = false;
-
-		// 【简化保存流程】采用直接读取+后验证模式，移除复杂的稳定性检测
-		this->WriteLog("=== 开始简化保存流程 ===");
-
-		// 【用户体验优化】传输状态检查与用户确认
-		if (m_isTransmitting || m_transmissionPaused)
-		{
-			this->WriteLog("⚠️ 检测到传输仍在进行中");
-
-			// 询问用户是否要等待传输完成
-			int userChoice = MessageBox(
-				_T("⚠️ 传输正在进行中\n\n")
-				_T("当前数据可能不完整，建议等待传输完成后再保存。\n\n")
-				_T("选择操作：\n")
-				_T("• 是(Y) - 等待传输完成后再保存\n")
-				_T("• 否(N) - 强制保存当前已接收的数据\n")
-				_T("• 取消 - 取消保存操作"),
-				_T("传输状态提醒"),
-				MB_YESNOCANCEL | MB_ICONWARNING | MB_DEFBUTTON1
-			);
-
-			if (userChoice == IDYES)
-			{
-				this->WriteLog("用户选择等待传输完成");
-				MessageBox(_T("请等待传输完成后再点击保存按钮"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-				return;
-			}
-			else if (userChoice == IDCANCEL)
-			{
-				this->WriteLog("用户取消保存操作");
-				return;
-			}
-			else
-			{
-				this->WriteLog("用户选择强制保存当前数据");
-			}
-		}
-
-		// 【关键修复】优先使用临时缓存文件，确保大文件传输的数据完整性
-		try
-		{
-			// 【延后读取策略】先检查数据源可用性，但不即时读取数据
-			this->WriteLog("策略：检查临时缓存文件可用性");
-
-			// 仅检查文件是否存在，不读取内容
-			// 【关键修复】移除重复声明，直接使用外层变量避免变量遮蔽
-			{
-				std::lock_guard<std::mutex> quickLock(m_receiveFileMutex);
-				// 【阶段3迁移】使用ReceiveCacheService判定是否有接收数据
-				tempFileAvailable = m_receiveCacheService && (m_receiveCacheService->GetTotalReceivedBytes() > 0);
-			}
-
-			if (tempFileAvailable)
-			{
-				this->WriteLog("✅ 临时缓存文件可用，将在用户确认保存后读取最新数据");
-				isBinaryMode = true; // 标记为二进制模式，但不读取数据
-				// 为了通过后续判断，添加一个占位元素
-			}
-			else
-			{
-				this->WriteLog("⚠️ 临时缓存文件不可用，将使用备选数据源");
-
-				// 使用内存缓存作为备选
-				if (m_receiveCacheValid && !m_receiveDataCache.empty())
-				{
-					this->WriteLog("使用内存缓存数据作为备选");
-					binaryData = m_receiveDataCache;
-					isBinaryMode = true;
-				}
-			}
-		}
-		catch (const std::exception& e)
-		{
-			this->WriteLog("❌ 数据检查失败: " + std::string(e.what()));
-			MessageBox(_T("⚠️ 数据检查失败\n\n")
-				_T("无法检查接收数据，请稍后重试。\n")
-				_T("如果问题持续存在，请重新启动传输。"),
-				_T("检查错误"), MB_OK | MB_ICONERROR);
-			return;
-		}
+		m_eventDispatcher->HandleSaveAll();
 	}
-
-	// 如果临时缓存不可用，使用原有逻辑
-	if (saveData.IsEmpty() && !isBinaryMode)
-	{
-		// 如果处于十六进制模式，从当前显示内容中提取十六进制数据并转换为二进制
-		if (m_checkHex.GetCheck() == BST_CHECKED)
-		{
-			// 获取当前显示内容
-			CString displayContent;
-			if (m_uiController)
-			{
-				displayContent = m_uiController->GetReceiveDataText();
-			}
-			else
-			{
-				displayContent = _T("");
-			}
-
-			if (!displayContent.IsEmpty())
-			{
-				// 提取纯十六进制字符（去除偏移地址、空格、ASCII部分等格式）
-				CString cleanHex;
-				int len = displayContent.GetLength();
-
-				for (int i = 0; i < len; i++)
-				{
-					TCHAR ch = displayContent[i];
-					// 只保留有效的十六进制字符
-					if ((ch >= _T('0') && ch <= _T('9')) ||
-						(ch >= _T('A') && ch <= _T('F')) ||
-						(ch >= _T('a') && ch <= _T('f')))
-					{
-						cleanHex += ch;
-					}
-				}
-
-				// 将十六进制字符串转换为二进制数据
-				if (!cleanHex.IsEmpty() && cleanHex.GetLength() % 2 == 0)
-				{
-					for (int i = 0; i < cleanHex.GetLength(); i += 2)
-					{
-						CString hexByte = cleanHex.Mid(i, 2);
-						uint8_t byte = (uint8_t)_tcstol(hexByte, nullptr, 16);
-						binaryData.push_back(byte);
-					}
-					isBinaryMode = true;
-				}
-			}
-		}
-		else
-		{
-			// 文本模式：直接保存当前显示的内容
-			if (m_uiController)
-			{
-				saveData = m_uiController->GetReceiveDataText();
-			}
-		}
-	}
-
-	// 根据数据类型和十六进制模式状态选择合适的文件对话框和保存方法
-	if (isBinaryMode && !binaryData.empty())
-	{
-		this->WriteLog("准备保存原始字节数据，大小: " + std::to_string(binaryData.size()) + " 字节");
-
-		// 统一的文件过滤器配置：默认显示所有文件，包含所有文件类型
-		CString filter;
-		CString defaultExt;
-
-		// 无论是否勾选16进制模式，都使用相同的过滤器配置
-		filter = _T("所有文件 (*.*)|*.*|")
-			_T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
-			_T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
-			_T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
-			_T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
-			_T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
-			_T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
-			_T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
-		defaultExt = _T("");
-
-		// 提供多种文件格式选择，包括原始编码的文本文件
-		CFileDialog dlg(FALSE, defaultExt, _T("ReceiveData"),
-			OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-			filter);
-
-		if (dlg.DoModal() == IDOK)
-		{
-			// 【关键修复】在用户确认保存后立即读取最新数据，确保数据完整性
-			if (usingReliableBuffer)
-			{
-				this->WriteLog("使用可靠模式缓存直接保存数据");
-				SaveBinaryDataToFile(dlg.GetPathName(), binaryData);
-				if (reliableExpectedSize > 0 && static_cast<int64_t>(binaryData.size()) != reliableExpectedSize)
-				{
-					CString warnMessage;
-					warnMessage.Format(_T("⚠ 保存完成，但检测到数据长度与预期不一致\n预期: %lld 字节\n实际: %lld 字节"),
-						reliableExpectedSize,
-						static_cast<long long>(binaryData.size()));
-					MessageBox(warnMessage, _T("数据长度告警"), MB_OK | MB_ICONWARNING);
-				}
-				if (m_reliableChannel)
-				{
-					m_reliableChannel->ClearCompletedFileBuffer();
-				}
-			}
-			else if (tempFileAvailable)
-			{
-				this->WriteLog("用户确认保存，开始执行数据稳定性检测");
-
-				const size_t kMaxStabilityChecks = 5;
-				// 【修复保存延迟】缩短稳定性检测间隔时间以减少保存延迟
-				// 5次检查 × 20ms = 100ms总等待时间（原值：5×80ms=400ms）
-				const uint32_t kStabilityIntervalMs = 20;  // 原值：80
-				uint64_t stableBytes = 0;
-				uint64_t stableFileSize = 0;
-
-				// 【Stage3迁移】使用ReceiveCacheService替代稳定性检测
-				this->WriteLog("使用ReceiveCacheService验证数据完整性");
-
-				// 简化的数据验证：检查缓存服务状态
-				bool dataStable = true; // 默认认为数据稳定
-				if (m_receiveCacheService)
-				{
-					// 检查文件完整性
-					dataStable = m_receiveCacheService->VerifyFileIntegrity();
-					this->WriteLog("ReceiveCacheService文件完整性验证结果: " + std::to_string(dataStable));
-				}
-
-				CWaitCursor waitCursor;
-				if (m_uiController)
-				{
-					m_uiController->UpdateSaveButton(false);
-				}
-
-				if (!dataStable)
-				{
-					this->WriteLog("⚠️ 数据完整性检测未通过，建议用户稍后再试");
-					MessageBox(_T("当前仍有数据写入，请等待片刻后再尝试保存。"),
-						_T("数据尚未稳定"), MB_OK | MB_ICONINFORMATION);
-					if (m_uiController)
-					{
-						m_uiController->UpdateSaveButton(true);
-					}
-					return;
-				}
-
-				this->WriteLog("数据稳定性检测通过，立即读取临时文件最新数据");
-
-				// 读取最新的完整数据
-				std::vector<uint8_t> latestData;
-				try
-				{
-					// 【Stage3迁移】使用ReceiveCacheService替代手动缓存管理
-					if (m_receiveCacheService)
-					{
-						latestData = m_receiveCacheService->ReadAllData();
-						this->WriteLog("通过ReceiveCacheService读取数据大小: " + std::to_string(latestData.size()) + " 字节");
-					}
-					else
-					{
-						this->WriteLog("❌ ReceiveCacheService未初始化，无法读取数据");
-						return;
-					}
-
-					// 【数据完整性验证】确保读取到的数据不为空且大小合理
-					if (latestData.empty())
-					{
-						this->WriteLog("❌ 致命错误：从临时文件读取到的数据为空");
-						MessageBox(_T("❌ 数据读取失败\n\n")
-							_T("无法从临时文件中读取到任何数据。\n")
-							_T("这可能是由于文件损坏或访问冲突造成的。\n\n")
-							_T("建议：\n")
-							_T("• 重新启动传输\n")
-							_T("• 检查磁盘空间是否充足"),
-							_T("数据读取错误"), MB_OK | MB_ICONERROR);
-						return;
-					}
-					else if (latestData.size() < 100) // 对于大文件传输，数据应该远大于100字节
-					{
-						this->WriteLog("⚠️ 数据异常：读取到的数据量过小，可能存在问题");
-						int userChoice = MessageBox(
-							CString(_T("⚠️ 数据量异常\n\n")) +
-							CString(_T("检测到数据量异常小（")) +
-							CString(std::to_string(latestData.size()).c_str()) +
-							CString(_T(" 字节），这可能不是完整的传输数据。\n\n")) +
-							CString(_T("是否仍要继续保存？")),
-							_T("数据量异常"),
-							MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2
-						);
-
-						if (userChoice == IDNO)
-						{
-							this->WriteLog("用户取消保存异常数据");
-							return;
-						}
-					}
-				}
-				catch (const std::exception& e)
-				{
-					this->WriteLog("❌ 读取最新数据失败: " + std::string(e.what()));
-					MessageBox(_T("❌ 数据读取异常\n\n")
-						_T("无法读取临时文件中的数据：\n") +
-						CString(e.what()) + _T("\n\n")
-						_T("请检查：\n")
-						_T("• 临时文件是否被其他程序占用\n")
-						_T("• 磁盘空间是否充足\n")
-						_T("• 文件权限是否正确"),
-						_T("读取错误"), MB_OK | MB_ICONERROR);
-					return; // 读取失败时直接返回，不保存错误数据
-				}
-
-				if (stableFileSize > 0 && static_cast<uint64_t>(latestData.size()) != stableFileSize)
-				{
-					this->WriteLog("⚠️ 读取的数据大小与稳定快照不一致，读取值=" +
-						std::to_string(latestData.size()) + "，快照值=" + std::to_string(stableFileSize));
-				}
-
-				SaveBinaryDataToFile(dlg.GetPathName(), latestData);
-
-				// 【修复】三层验证 - Layer 3: 保存后验证文件大小，确保数据完整写入磁盘
-				// Layer 1: 预保存验证（数据稳定性、非空、大小合理）- 已在上方实现
-				// Layer 2: 保存操作（SaveBinaryDataToFile）- 已完成
-				// Layer 3: 保存后验证（重新打开文件检查大小）- 以下实现
-				if (!VerifySavedFileSize(dlg.GetPathName(), latestData.size()))
-				{
-					CString warnMessage;
-					warnMessage.Format(
-						_T("⚠️ 文件保存验证异常\n\n")
-						_T("文件已保存，但验证发现大小与预期不符。\n\n")
-						_T("预期: %lld 字节\n\n")
-						_T("可能原因：\n")
-						_T("• 磁盘空间不足\n")
-						_T("• 文件系统缓存未完全刷新\n")
-						_T("• 文件被其他程序修改\n\n")
-						_T("建议：\n")
-						_T("• 检查保存文件的实际大小\n")
-						_T("• 如不符预期，请重新保存"),
-						static_cast<long long>(latestData.size())
-					);
-					MessageBox(warnMessage, _T("保存验证警告"), MB_OK | MB_ICONWARNING);
-				}
-				else
-				{
-					this->WriteLog("✅ 三层验证全部通过：文件已成功保存并验证，大小 " +
-						std::to_string(latestData.size()) + " 字节");
-				}
-			}
-			else
-			{
-				// 【安全处理】临时文件不可用时的错误处理
-				this->WriteLog("❌ 临时文件不可用，无法保存完整数据");
-				MessageBox(_T("❌ 数据源不可用\n\n")
-					_T("临时缓存文件不可用，无法保存完整的接收数据。\n\n")
-					_T("可能的原因：\n")
-					_T("• 数据尚未完全接收\n")
-					_T("• 临时文件已被清理\n")
-					_T("• 文件访问权限问题\n\n")
-					_T("建议：\n")
-					_T("• 等待传输完成后再保存\n")
-					_T("• 重新启动传输\n")
-					_T("• 切换到内存缓存模式"),
-					_T("保存失败"), MB_OK | MB_ICONERROR);
-			}
-		}
-	}
-	else if (!saveData.IsEmpty())
-	{
-		this->WriteLog("准备保存文本数据，长度: " + std::to_string(saveData.GetLength()) + " 字符");
-
-		// 统一的文件过滤器配置：默认显示所有文件，包含所有文件类型
-		CString filter;
-		CString defaultExt;
-
-		// 无论是否勾选16进制模式，都使用相同的过滤器配置
-		filter = _T("所有文件 (*.*)|*.*|")
-			_T("文本文件 (*.txt;*.log;*.ini;*.cfg;*.conf)|*.txt;*.log;*.ini;*.cfg;*.conf|")
-			_T("二进制文件 (*.bin;*.dat;*.exe)|*.bin;*.dat;*.exe|")
-			_T("图像文件 (*.jpg;*.png;*.bmp;*.gif;*.tiff)|*.jpg;*.png;*.bmp;*.gif;*.tiff|")
-			_T("压缩文件 (*.zip;*.rar;*.7z;*.tar;*.gz)|*.zip;*.rar;*.7z;*.tar;*.gz|")
-			_T("文档文件 (*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx)|*.pdf;*.doc;*.docx;*.xls;*.xlsx;*.ppt;*.pptx|")
-			_T("脚本文件 (*.bat;*.cmd;*.ps1;*.sh;*.py)|*.bat;*.cmd;*.ps1;*.sh;*.py|")
-			_T("源代码 (*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css)|*.cpp;*.h;*.c;*.cs;*.java;*.js;*.html;*.css||");
-		defaultExt = _T("");
-
-		// 文本模式：保存为文本文件
-		CFileDialog dlg(FALSE, defaultExt, _T("ReceiveData"),
-			OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT,
-			filter);
-
-		if (dlg.DoModal() == IDOK)
-		{
-			SaveDataToFile(dlg.GetPathName(), saveData);
-		}
-	}
-	else
-	{
-		this->WriteLog("没有数据可保存");
-		MessageBox(_T("没有数据可保存"), _T("提示"), MB_OK | MB_ICONWARNING);
-	}
-
-	this->WriteLog("=== 保存数据调试信息结束 ===");
 }
 
 void CPortMasterDlg::SaveDataToFile(const CString& filePath, const CString& data)
@@ -1847,7 +1378,7 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 {
 	bool enableSaveButton = true; // 默认启用保存按钮
 
-	bool isReliableMode = (m_radioReliable.GetCheck() == BST_CHECKED);
+	bool isReliableMode = m_uiController->IsReliableModeSelected();
 	// 【阶段3迁移】使用ReceiveCacheService获取接收数据大小
 	uint64_t tempFileSize = m_receiveCacheService ? m_receiveCacheService->GetTotalReceivedBytes() : 0;
 	bool hasTempFileData = (tempFileSize > 0);
@@ -2158,7 +1689,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 		try
 		{
 			const DWORD kUiLogThrottleMs = 1000;  // UI日志默认一秒输出一次
-			DWORD nowTick = ::GetTickCount();
+			ULONGLONG nowTick = ::GetTickCount64();
 			bool shouldLog = m_receiveVerboseLogging;
 
 			if (!shouldLog)
@@ -2186,7 +1717,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			// 更新UI显示的接收统计（与直接落盘的m_totalReceivedBytes区分）
 			m_bytesReceived += updateInfo->dataSize;
 			CString receivedText;
-			receivedText.Format(_T("%u"), m_bytesReceived);
+			receivedText.Format(_T("%llu"), static_cast<unsigned long long>(m_bytesReceived));
 			if (m_uiController)
 		{
 			m_uiController->SetStaticText(IDC_STATIC_RECEIVED, receivedText);
@@ -2204,7 +1735,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 		catch (const std::exception& e)
 		{
 			CString errorMsg;
-			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), CString(e.what()));
+			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), e.what());
 			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
 		}
 
@@ -2238,7 +1769,10 @@ void CPortMasterDlg::SetProgressPercent(int percent, bool forceReset)
 // 新增：传输进度条范围设置消息处理
 LRESULT CPortMasterDlg::OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam)
 {
-	m_progress.SetRange(0, (int)lParam);
+	if (m_statusDisplayManager)
+	{
+		m_statusDisplayManager->SetProgressRange(0, (int)lParam);
+	}
 	return 0;
 }
 
@@ -2341,7 +1875,7 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		const std::vector<uint8_t>& data = m_sendDataCache;
 		m_bytesSent += data.size();
 		CString sentText;
-		sentText.Format(_T("%u"), m_bytesSent);
+		sentText.Format(_T("%llu"), static_cast<unsigned long long>(m_bytesSent));
 		if (m_uiController)
 		{
 			m_uiController->SetStaticText(IDC_STATIC_SENT, sentText);
@@ -2456,7 +1990,7 @@ void CPortMasterDlg::OnConfigurationChanged()
 	catch (const std::exception& e)
 	{
 		CString errorMsg;
-		errorMsg.Format(_T("应用配置变更失败: %s"), CString(e.what()));
+		errorMsg.Format(_T("应用配置变更失败: %s"), e.what());
 		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 	}
 }

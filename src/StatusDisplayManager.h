@@ -66,7 +66,7 @@ private:
 
 	// 节流显示管理
 	bool m_displayUpdatePending;
-	DWORD m_lastDisplayUpdate;
+	ULONGLONG m_lastDisplayUpdate;
 	const DWORD DISPLAY_THROTTLE_MS = 200;  // 显示更新节流间隔(ms)
 
 	// 进度条状态

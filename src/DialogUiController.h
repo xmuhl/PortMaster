@@ -131,7 +131,7 @@ private:
 
 	// 节流状态管理
 	bool m_receiveDisplayPending;                  // 是否有待处理的接收显示更新
-	DWORD m_lastReceiveDisplayUpdate;              // 最后一次更新接收显示的时间戳
+	ULONGLONG m_lastReceiveDisplayUpdate;          // 最后一次更新接收显示的时间戳
 	const DWORD RECEIVE_DISPLAY_THROTTLE_MS = 200; // 接收显示更新节流间隔(ms)
 
 	// 进度条状态

@@ -20,9 +20,6 @@ public:
 	void HandleCopyAll();
 	void HandleSaveAll();
 	void HandleToggleHex();
-	void HandleSelectReliable();
-	void HandleSelectDirect();
-	void HandleSendDataChanged();
 	void HandleDropFiles(HDROP dropInfo);
 
 private:

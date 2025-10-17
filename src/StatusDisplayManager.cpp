@@ -205,15 +205,15 @@ void StatusDisplayManager::SetDisplayUpdatePending(bool pending)
 // 判断是否可以立即更新显示（节流控制）
 bool StatusDisplayManager::CanUpdateDisplay() const
 {
-	DWORD currentTick = ::GetTickCount();
-	DWORD elapsed = currentTick - m_lastDisplayUpdate;
+	ULONGLONG currentTick = ::GetTickCount64();
+	ULONGLONG elapsed = currentTick - m_lastDisplayUpdate;
 	return elapsed >= DISPLAY_THROTTLE_MS;
 }
 
 // 记录本次显示更新时间戳
 void StatusDisplayManager::RecordDisplayUpdate()
 {
-	m_lastDisplayUpdate = ::GetTickCount();
+	m_lastDisplayUpdate = ::GetTickCount64();
 }
 
 // 设置节流显示回调函数
