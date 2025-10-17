@@ -466,36 +466,92 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 		return;
 	}
 
+	// 【阶段B修复】优先使用流式复制，避免大内存拷贝导致崩溃
 	if (m_dialog.m_receiveCacheService && m_dialog.m_receiveCacheService->IsInitialized())
 	{
-		std::vector<uint8_t> cachedData = m_dialog.m_receiveCacheService->ReadAllData();
-		if (!cachedData.empty())
+		try
 		{
-			try
+			m_dialog.WriteLog("SaveReceiveDataToFile: 开始流式保存接收数据");
+
+			size_t bytesWritten = 0;
+			bool copySuccess = m_dialog.m_receiveCacheService->CopyToFile(
+				std::wstring(filePath.GetString()),
+				bytesWritten
+			);
+
+			if (copySuccess)
 			{
-				std::ofstream outFile(filePath, std::ios::binary);
-				outFile.write(reinterpret_cast<const char*>(cachedData.data()), cachedData.size());
-				outFile.close();
+				// 流式复制成功
+				m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存成功，字节数: " + std::to_string(bytesWritten));
 
 				CString msg;
-				msg.Format(_T("接收数据已保存到文件: %s"), static_cast<LPCTSTR>(filePath));
+				if (bytesWritten < 1024)
+				{
+					msg.Format(_T("接收数据已保存到文件: %s (%zu 字节)"),
+						static_cast<LPCTSTR>(filePath), bytesWritten);
+				}
+				else if (bytesWritten < 1024 * 1024)
+				{
+					msg.Format(_T("接收数据已保存到文件: %s (%.1f KB)"),
+						static_cast<LPCTSTR>(filePath), bytesWritten / 1024.0);
+				}
+				else
+				{
+					msg.Format(_T("接收数据已保存到文件: %s (%.2f MB)"),
+						static_cast<LPCTSTR>(filePath), bytesWritten / (1024.0 * 1024.0));
+				}
 				m_dialog.m_staticPortStatus.SetWindowText(msg);
+
+				// 更新保存按钮状态（保存成功后启用按钮）
+				if (m_dialog.m_uiController)
+				{
+					m_dialog.m_uiController->UpdateSaveButton(true);
+				}
+
+				m_dialog.MessageBox(_T("文件保存成功"), _T("提示"), MB_OK | MB_ICONINFORMATION);
 				return;
 			}
-			catch (...)
+			else
 			{
-				m_dialog.MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
-				return;
+				// 流式复制失败，记录日志并退回到备用方法
+				m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存失败，尝试使用备用方法");
 			}
 		}
+		catch (const std::exception& e)
+		{
+			// 捕获异常，记录日志并退回到备用方法
+			m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存异常 - " + std::string(e.what()));
+		}
+		catch (...)
+		{
+			// 捕获所有其他异常
+			m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存发生未知异常");
+		}
 	}
+
+	// 【阶段B修复】备用保存方法：从编辑框获取文本保存
+	// 仅在流式复制失败或缓存服务不可用时使用
+	m_dialog.WriteLog("SaveReceiveDataToFile: 使用备用方法（从编辑框保存）");
 
 	CString receiveData;
 	m_dialog.m_editReceiveData.GetWindowText(receiveData);
 
+	if (receiveData.IsEmpty())
+	{
+		m_dialog.MessageBox(_T("没有可保存的数据"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		return;
+	}
+
 	try
 	{
 		std::ofstream outFile(filePath, std::ios::binary);
+		if (!outFile.is_open())
+		{
+			m_dialog.WriteLog("SaveReceiveDataToFile: 无法打开目标文件进行写入");
+			m_dialog.MessageBox(_T("无法打开文件进行写入"), _T("错误"), MB_OK | MB_ICONERROR);
+			return;
+		}
+
 		CT2A utf8Text(receiveData, CP_UTF8);
 		outFile.write(utf8Text, strlen(utf8Text));
 		outFile.close();
@@ -503,9 +559,23 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 		CString msg;
 		msg.Format(_T("接收数据已保存到文件: %s"), static_cast<LPCTSTR>(filePath));
 		m_dialog.m_staticPortStatus.SetWindowText(msg);
+
+		// 更新保存按钮状态（备用方法保存成功后启用按钮）
+		if (m_dialog.m_uiController)
+		{
+			m_dialog.m_uiController->UpdateSaveButton(true);
+		}
+
+		m_dialog.WriteLog("SaveReceiveDataToFile: 备用方法保存成功");
+	}
+	catch (const std::exception& e)
+	{
+		m_dialog.WriteLog("SaveReceiveDataToFile: 备用方法保存异常 - " + std::string(e.what()));
+		m_dialog.MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 	}
 	catch (...)
 	{
+		m_dialog.WriteLog("SaveReceiveDataToFile: 备用方法保存发生未知异常");
 		m_dialog.MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
 	}
 }

@@ -131,7 +131,8 @@
     <ClInclude Include="Common\ConfigStore.h" />
     <ClInclude Include="Common\RingBuffer.h" />
     <ClInclude Include="Common\DataPresentationService.h" />
-  <ClInclude Include="Common\ReceiveCacheService.h" />
+    <ClInclude Include="Common\ReceiveCacheService.h" />
+    <ClInclude Include="Common\StringUtils.h" />
   <ClInclude Include="src\DialogConfigBinder.h" />
     <ClInclude Include="src\DialogUiController.h" />
     <ClInclude Include="src\PortConfigPresenter.h" />
@@ -159,7 +160,8 @@
     <ClCompile Include="src\TransmissionTask.cpp" />
     <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Common\DataPresentationService.cpp" />
-  <ClCompile Include="Common\ReceiveCacheService.cpp" />
+    <ClCompile Include="Common\ReceiveCacheService.cpp" />
+    <ClCompile Include="Common\StringUtils.cpp" />
     <ClCompile Include="src\DialogConfigBinder.cpp" />
     <ClCompile Include="src\DialogUiController.cpp" />
     <ClCompile Include="src\PortConfigPresenter.cpp" />

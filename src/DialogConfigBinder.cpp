@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "DialogConfigBinder.h"
+#include "../Common/StringUtils.h"
 #pragma warning(push)
 #pragma warning(disable: 4828)  // 禁用字符编码警告
 #include "../resources/resource.h"
@@ -178,17 +179,8 @@ void DialogConfigBinder::BindPortName(const std::string& portName)
 std::string DialogConfigBinder::ReadPortName() const
 {
 	std::wstring portName = GetControlText(IDC_COMBO_PORT);
-	// 使用安全的字符串转换，避免wchar_t到char的直接转换
-	if (portName.empty()) return std::string();
-
-	// 计算所需的缓冲区大小
-	int size = WideCharToMultiByte(CP_UTF8, 0, portName.c_str(), -1, nullptr, 0, nullptr, nullptr);
-	if (size <= 0) return std::string();
-
-	// 转换字符串
-	std::string result(size - 1, 0);
-	WideCharToMultiByte(CP_UTF8, 0, portName.c_str(), -1, &result[0], size, nullptr, nullptr);
-	return result;
+	// 使用安全的字符串转换工具
+	return StringUtils::Utf8EncodeWide(portName);
 }
 
 void DialogConfigBinder::BindBaudRate(int baudRate)

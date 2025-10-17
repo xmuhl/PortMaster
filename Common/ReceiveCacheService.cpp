@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "ReceiveCacheService.h"
+#include "StringUtils.h"
 #include <Shlwapi.h>
 #pragma comment(lib, "Shlwapi.lib")
 
@@ -59,18 +60,8 @@ bool ReceiveCacheService::Initialize()
 		m_memoryCache.clear();
 		m_memoryCacheValid = false;
 
-		// 将wstring转换为string用于日志输出
-		std::string tempFilePathStr;
-		if (!m_tempCacheFilePath.empty())
-		{
-			// 计算所需的缓冲区大小
-			int size = WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, nullptr, 0, nullptr, nullptr);
-			if (size > 0)
-			{
-				tempFilePathStr.resize(size - 1);
-				WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, &tempFilePathStr[0], size, nullptr, nullptr);
-			}
-		}
+		// 将wstring转换为string用于日志输出（使用安全转换）
+		std::string tempFilePathStr = StringUtils::Utf8EncodeWide(m_tempCacheFilePath);
 		Log("临时缓存文件已创建: " + tempFilePathStr);
 		return true;
 	}
@@ -217,6 +208,173 @@ std::vector<uint8_t> ReceiveCacheService::ReadData(uint64_t offset, size_t lengt
 std::vector<uint8_t> ReceiveCacheService::ReadAllData()
 {
 	return ReadData(0, 0); // 0长度表示读取全部数据
+}
+
+bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, size_t& bytesWritten)
+{
+	bytesWritten = 0;
+
+	// 检查临时文件是否初始化
+	if (m_tempCacheFilePath.empty())
+	{
+		Log("CopyToFile: 临时文件未初始化，路径为空");
+		return false;
+	}
+
+	if (!PathFileExistsW(m_tempCacheFilePath.c_str()))
+	{
+		Log("CopyToFile: 临时文件不存在");
+		return false;
+	}
+
+	// 使用互斥锁保护，避免与AppendData冲突
+	std::lock_guard<std::mutex> lock(m_fileMutex);
+
+	try
+	{
+		// 记录开始时间和文件大小
+		uint64_t beforeCopyBytes = m_totalReceivedBytes.load();
+		Log("=== 开始流式复制 ===");
+
+		// 转换目标路径为UTF-8字符串用于日志（使用安全转换）
+		std::string targetPathStr = StringUtils::Utf8EncodeWide(targetPath);
+		Log("目标文件: " + targetPathStr);
+		Log("源文件大小: " + std::to_string(beforeCopyBytes) + " 字节");
+
+		// 刷新写入流，确保所有数据已落盘
+		if (m_tempCacheFile.is_open())
+		{
+			m_tempCacheFile.flush();
+			LogDetail("CopyToFile: 已刷新写入流");
+		}
+
+		// 打开源文件（临时缓存文件）
+		std::ifstream sourceFile(m_tempCacheFilePath, std::ios::in | std::ios::binary);
+		if (!sourceFile.is_open())
+		{
+			Log("CopyToFile: 无法打开源文件进行读取");
+			return false;
+		}
+
+		// 获取源文件大小
+		sourceFile.seekg(0, std::ios::end);
+		std::streamsize fileSize = sourceFile.tellg();
+		sourceFile.seekg(0, std::ios::beg);
+		LogDetail("CopyToFile: 源文件大小 " + std::to_string(fileSize) + " 字节");
+
+		if (fileSize <= 0)
+		{
+			Log("CopyToFile: 源文件为空，无需复制");
+			sourceFile.close();
+			return true; // 空文件也算成功
+		}
+
+		// 打开目标文件
+		std::ofstream targetFile(targetPath, std::ios::out | std::ios::binary | std::ios::trunc);
+		if (!targetFile.is_open())
+		{
+			Log("CopyToFile: 无法打开目标文件进行写入");
+			sourceFile.close();
+			return false;
+		}
+
+		// 使用64KB块大小进行流式复制
+		const size_t CHUNK_SIZE = 65536; // 64KB
+		std::vector<char> buffer(CHUNK_SIZE);
+		size_t totalCopied = 0;
+		size_t targetSize = static_cast<size_t>(fileSize);
+
+		LogDetail("CopyToFile: 开始分块复制，块大小 64KB");
+
+		while (totalCopied < targetSize && !sourceFile.eof())
+		{
+			// 计算本次读取大小
+			size_t currentChunkSize = (CHUNK_SIZE < (targetSize - totalCopied)) ? CHUNK_SIZE : (targetSize - totalCopied);
+
+			// 从源文件读取
+			sourceFile.read(buffer.data(), static_cast<std::streamsize>(currentChunkSize));
+			std::streamsize actualRead = sourceFile.gcount();
+
+			if (actualRead > 0)
+			{
+				// 写入目标文件
+				targetFile.write(buffer.data(), actualRead);
+				if (targetFile.fail())
+				{
+					Log("CopyToFile: 写入目标文件失败");
+					sourceFile.close();
+					targetFile.close();
+					return false;
+				}
+
+				totalCopied += static_cast<size_t>(actualRead);
+
+				// 记录进度（每1MB输出一次）
+				if (totalCopied % (1024 * 1024) == 0 || totalCopied == targetSize)
+				{
+					double progress = (static_cast<double>(totalCopied) / targetSize) * 100.0;
+					LogDetail("CopyToFile: 复制进度 " +
+						std::to_string(totalCopied) + "/" +
+						std::to_string(targetSize) + " 字节 (" +
+						std::to_string(static_cast<int>(progress)) + "%)");
+				}
+			}
+			else
+			{
+				// 无法读取更多数据
+				if (sourceFile.eof())
+				{
+					LogDetail("CopyToFile: 到达源文件末尾");
+					break;
+				}
+				else if (sourceFile.fail())
+				{
+					Log("CopyToFile: 读取源文件时发生错误");
+					sourceFile.close();
+					targetFile.close();
+					return false;
+				}
+			}
+		}
+
+		// 确保数据写入磁盘
+		targetFile.flush();
+
+		// 关闭文件
+		sourceFile.close();
+		targetFile.close();
+
+		// 验证复制结果
+		bytesWritten = totalCopied;
+		if (totalCopied == targetSize)
+		{
+			Log("=== 流式复制成功 ===");
+			Log("成功复制 " + std::to_string(totalCopied) + " 字节");
+		}
+		else
+		{
+			Log("⚠️ 流式复制不完整");
+			Log("预期: " + std::to_string(targetSize) + " 字节");
+			Log("实际: " + std::to_string(totalCopied) + " 字节");
+			return false;
+		}
+
+		// 检测复制过程中是否有新数据写入
+		uint64_t afterCopyBytes = m_totalReceivedBytes.load();
+		if (afterCopyBytes > beforeCopyBytes)
+		{
+			size_t newDataSize = static_cast<size_t>(afterCopyBytes - beforeCopyBytes);
+			Log("⚠️ 检测到复制过程中有新数据写入: " + std::to_string(newDataSize) + " 字节");
+			Log("已保存的数据可能不完整，建议用户等待传输完成后重新保存");
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		Log("CopyToFile: 复制过程中发生异常 - " + std::string(e.what()));
+		return false;
+	}
 }
 
 const std::vector<uint8_t>& ReceiveCacheService::GetMemoryCache() const
@@ -616,19 +774,9 @@ void ReceiveCacheService::LogDetail(const std::string& message)
 void ReceiveCacheService::LogFileStatus(const std::string& context)
 {
 	LogDetail("--- " + context + " ---");
-	// 将wstring转换为string用于日志输出
-		std::string tempFilePathStr;
-		if (!m_tempCacheFilePath.empty())
-		{
-			// 计算所需的缓冲区大小
-			int size = WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, nullptr, 0, nullptr, nullptr);
-			if (size > 0)
-			{
-				tempFilePathStr.resize(size - 1);
-				WideCharToMultiByte(CP_UTF8, 0, m_tempCacheFilePath.c_str(), -1, &tempFilePathStr[0], size, nullptr, nullptr);
-			}
-		}
-		LogDetail("临时文件路径: " + tempFilePathStr);
+	// 将wstring转换为string用于日志输出（使用安全转换）
+	std::string tempFilePathStr = StringUtils::Utf8EncodeWide(m_tempCacheFilePath);
+	LogDetail("临时文件路径: " + tempFilePathStr);
 	LogDetail("文件流打开状态: " + std::string(m_tempCacheFile.is_open() ? "是" : "否"));
 	LogDetail("文件流状态: " + std::string(m_tempCacheFile.good() ? "正常" : "异常"));
 	LogDetail("总接收字节数: " + std::to_string(m_totalReceivedBytes.load()) + " 字节");

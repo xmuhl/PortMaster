@@ -137,6 +137,21 @@ public:
 	std::vector<uint8_t> ReadAllData();
 
 	/**
+	 * @brief 流式复制缓存数据到目标文件
+	 * @param targetPath 目标文件路径（宽字符）
+	 * @param bytesWritten 输出参数：成功写入的字节数
+	 * @return 复制是否成功
+	 *
+	 * 说明：
+	 * - 使用流式I/O，按64KB块大小循环读取和写入，避免大文件内存溢出
+	 * - 复用m_fileMutex，确保与AppendData操作互斥，保证数据一致性
+	 * - 提供详细的进度日志（开始/进度/完成/异常）
+	 * - 若临时文件不存在或未初始化，返回false并记录日志
+	 * - 成功后通过bytesWritten参数返回实际写入的字节数
+	 */
+	bool CopyToFile(const std::wstring& targetPath, size_t& bytesWritten);
+
+	/**
 	 * @brief 获取内存缓存数据（仅读取，不修改）
 	 * @return 内存缓存的常量引用
 	 *
