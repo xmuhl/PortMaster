@@ -42,6 +42,13 @@ void PortMasterDialogEvents::HandleConnect()
 	bool useReliableMode = (m_dialog.m_uiController && m_dialog.m_uiController->IsReliableModeSelected());
 	m_dialog.WriteLog(std::string("OnBnClickedButtonConnect: 使用") + (useReliableMode ? "可靠" : "直通") + "模式");
 
+	// 【第二轮阶段B修复】在连接前设置可靠传输配置
+	if (useReliableMode && m_dialog.m_sessionController)
+	{
+		m_dialog.m_sessionController->SetReliableConfig(m_dialog.m_reliableConfig);
+		m_dialog.WriteLog("OnBnClickedButtonConnect: 可靠传输配置已设置，timeoutMax=" + std::to_string(m_dialog.m_reliableConfig.timeoutMax) + "ms");
+	}
+
 	if (!m_dialog.m_sessionController || !m_dialog.m_sessionController->Connect(m_dialog.m_transportConfig, useReliableMode))
 	{
 		m_dialog.WriteLog("OnBnClickedButtonConnect: 连接失败");

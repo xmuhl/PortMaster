@@ -111,6 +111,16 @@ public:
 	// ========== ReliableChannel管理 ==========
 
 	/**
+	 * @brief 设置可靠传输配置
+	 * @param config 可靠传输配置
+	 *
+	 * 说明：
+	 * - 在Connect之前调用，用于设置超时等参数
+	 * - 配置会在创建ReliableChannel时生效
+	 */
+	void SetReliableConfig(const ReliableConfig& config);
+
+	/**
 	 * @brief 获取ReliableChannel实例
 	 * @return ReliableChannel共享指针，如果未启用可靠模式返回nullptr
 	 *

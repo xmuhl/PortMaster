@@ -687,12 +687,46 @@ void CPortMasterDlg::PerformDataTransmission()
 			std::shared_ptr<ITransport> transport = m_sessionController ?
 				m_sessionController->GetTransport() : nullptr;
 
-			// 验证获取的通道指针
-			if (!reliableChannel || !transport)
+			// 【第二轮阶段A修复】根据模式化通道判定逻辑
+			bool isReliableMode = m_uiController && m_uiController->IsReliableModeSelected();
+
+			if (isReliableMode)
 			{
-				this->WriteLog("PerformDataTransmission: 错误 - 无法从PortSessionController获取有效通道对象");
-				PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
-				return;
+				// 可靠模式：要求reliableChannel非空且IsConnected()为真
+				if (!reliableChannel)
+				{
+					this->WriteLog("PerformDataTransmission: 错误 - 可靠模式下获取可靠通道失败");
+					PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
+					return;
+				}
+
+				if (!reliableChannel->IsConnected())
+				{
+					this->WriteLog("PerformDataTransmission: 错误 - 可靠通道未连接");
+					PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
+					return;
+				}
+
+				this->WriteLog("PerformDataTransmission: 可靠模式验证通过，可靠通道已连接");
+			}
+			else
+			{
+				// 直通模式：仅要求transport非空且IsOpen()为真
+				if (!transport)
+				{
+					this->WriteLog("PerformDataTransmission: 错误 - 直通模式下获取传输通道失败");
+					PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
+					return;
+				}
+
+				if (!transport->IsOpen())
+				{
+					this->WriteLog("PerformDataTransmission: 错误 - 传输通道未打开");
+					PostMessage(WM_USER + 13, (WPARAM)TransportError::NotOpen, 0);
+					return;
+				}
+
+				this->WriteLog("PerformDataTransmission: 直通模式验证通过，传输通道已打开");
 			}
 
 			bool started = m_transmissionCoordinator->Start(
@@ -1359,11 +1393,13 @@ void CPortMasterDlg::InitializeTransportConfig()
 	m_transportConfig.writeTimeout = 1000;
 	m_transportConfig.bufferSize = 4096;
 
-	// 初始化可靠传输配置
+	// 【第二轮阶段B修复】扩展超时窗口，避免心跳线程误判连接超时
 	m_reliableConfig.maxRetries = 3;
 	m_reliableConfig.timeoutBase = 5000;	// 基础超时时间
+	m_reliableConfig.timeoutMax = 15000;	// 【修复】最大超时时间扩展至15秒
 	m_reliableConfig.maxPayloadSize = 1024; // 最大负载大小
 	m_reliableConfig.windowSize = 32;		// 窗口大小 - 增加窗口大小以支持大量数据传输
+	m_reliableConfig.heartbeatInterval = 1000; // 心跳间隔保持1秒
 }
 
 void CPortMasterDlg::UpdateConnectionStatus()

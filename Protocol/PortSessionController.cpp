@@ -128,6 +128,12 @@ void PortSessionController::StopReceiveSession()
 
 // ==================== ReliableChannel管理 ====================
 
+void PortSessionController::SetReliableConfig(const ReliableConfig& config)
+{
+	// 保存配置，在Connect时使用
+	m_reliableConfig = config;
+}
+
 std::shared_ptr<ReliableChannel> PortSessionController::GetReliableChannel()
 {
 	// 注意：ReliableChannel是unique_ptr，但为了兼容现有代码返回shared_ptr
