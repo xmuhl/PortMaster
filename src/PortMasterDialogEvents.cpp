@@ -37,7 +37,8 @@ void PortMasterDialogEvents::HandleConnect()
 {
 	m_dialog.WriteLog("OnBnClickedButtonConnect: 开始连接...");
 
-	m_dialog.InitializeTransportConfig();
+	// 【阶段A修复】从UI构建传输配置,替代硬编码初始化
+	m_dialog.BuildTransportConfigFromUI();
 
 	bool useReliableMode = (m_dialog.m_uiController && m_dialog.m_uiController->IsReliableModeSelected());
 	m_dialog.WriteLog(std::string("OnBnClickedButtonConnect: 使用") + (useReliableMode ? "可靠" : "直通") + "模式");
@@ -60,11 +61,17 @@ void PortMasterDialogEvents::HandleConnect()
 	m_dialog.WriteLog("OnBnClickedButtonConnect: 接收会话已启动");
 
 	m_dialog.m_isConnected = true;
+
+	// 【阶段C修复】连接成功后清除重新连接标志，恢复发送按钮
+	m_dialog.m_requiresReconnect = false;
+
 	m_dialog.UpdateConnectionStatus();
 
 	if (m_dialog.m_uiController)
 	{
 		m_dialog.m_uiController->UpdateConnectionButtons(true);
+		// 恢复发送按钮（已连接且不处于传输状态时启用）
+		m_dialog.m_uiController->UpdateTransmissionButtons(!m_dialog.m_isTransmitting, false);
 	}
 
 	UpdatePortControlsEnabled(false);
@@ -110,6 +117,14 @@ void PortMasterDialogEvents::HandleSend()
 	if (!m_dialog.m_isConnected)
 	{
 		m_dialog.MessageBox(_T("请先连接端口"), _T("提示"), MB_OK | MB_ICONWARNING);
+		return;
+	}
+
+	// 【阶段C修复】检查模式切换标志，若为真则提示用户重新连接
+	if (m_dialog.m_requiresReconnect)
+	{
+		m_dialog.MessageBox(_T("传输模式已切换，当前连接使用的是之前的模式。\n\n请先断开连接，然后重新连接以应用新模式。"),
+			_T("需要重新连接"), MB_OK | MB_ICONWARNING);
 		return;
 	}
 

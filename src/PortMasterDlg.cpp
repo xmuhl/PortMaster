@@ -110,6 +110,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	m_isTransmitting(false),
 	m_transmissionPaused(false),
 	m_transmissionCancelled(false),
+	m_requiresReconnect(false),  // 【阶段C初始化】模式切换标志初始化为false
 	m_receiveThread(),
 	// 【Stage4迁移】移除传输线程初始化，由TransmissionCoordinator管理
 	m_reliableSessionMutex(),
@@ -1114,8 +1115,27 @@ void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t>& data)
 
 void CPortMasterDlg::OnBnClickedRadioReliable()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 【阶段C修复】检测连接状态，若已连接则提示用户重新连接
+	if (m_isConnected)
+	{
+		MessageBox(_T("可靠模式已选择。\n\n当前连接使用的是之前的传输模式，\n请断开并重新连接以应用新模式。"),
+			_T("模式切换提示"), MB_OK | MB_ICONWARNING);
+
+		// 设置重新连接标志
+		m_requiresReconnect = true;
+
+		// 禁用发送和停止按钮，防止错误使用旧连接
+		if (m_uiController)
+		{
+			m_uiController->UpdateTransmissionButtons(false, false);
+			m_uiController->SetStatusText(_T("模式已切换，请重新连接"));
+		}
+	}
+	else
+	{
+		// 未连接时，正常提示模式选择
+		MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	}
 
 	// 更新状态条模式信息
 	if (m_uiController)
@@ -1373,8 +1393,27 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString& filePath, const std::ve
 
 void CPortMasterDlg::OnBnClickedRadioDirect()
 {
-	// TODO: 在此添加控件通知处理程序代码
-	MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	// 【阶段C修复】检测连接状态，若已连接则提示用户重新连接
+	if (m_isConnected)
+	{
+		MessageBox(_T("直通模式已选择。\n\n当前连接使用的是之前的传输模式，\n请断开并重新连接以应用新模式。"),
+			_T("模式切换提示"), MB_OK | MB_ICONWARNING);
+
+		// 设置重新连接标志
+		m_requiresReconnect = true;
+
+		// 禁用发送和停止按钮，防止错误使用旧连接
+		if (m_uiController)
+		{
+			m_uiController->UpdateTransmissionButtons(false, false);
+			m_uiController->SetStatusText(_T("模式已切换，请重新连接"));
+		}
+	}
+	else
+	{
+		// 未连接时，正常提示模式选择
+		MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	}
 
 	// 更新状态条模式信息
 	if (m_uiController)
@@ -1402,8 +1441,127 @@ void CPortMasterDlg::InitializeTransportConfig()
 	m_reliableConfig.heartbeatInterval = 1000; // 心跳间隔保持1秒
 }
 
+// 【阶段A修复】从UI构建传输配置
+void CPortMasterDlg::BuildTransportConfigFromUI()
+{
+	WriteLog("BuildTransportConfigFromUI: 开始从UI读取配置");
+
+	// 1. 调用DialogConfigBinder保存UI配置到ConfigStore
+	if (m_configBinder)
+	{
+		if (m_configBinder->SaveFromUI())
+		{
+			WriteLog("BuildTransportConfigFromUI: DialogConfigBinder::SaveFromUI() 成功");
+		}
+		else
+		{
+			WriteLog("BuildTransportConfigFromUI: 警告 - DialogConfigBinder::SaveFromUI() 失败");
+		}
+	}
+
+	// 2. 获取UI选择的端口类型
+	if (!m_portConfigPresenter)
+	{
+		WriteLog("BuildTransportConfigFromUI: 错误 - PortConfigPresenter未初始化");
+		// 回退到默认串口配置
+		InitializeTransportConfig();
+		return;
+	}
+
+	PortTypeIndex portTypeIndex = m_portConfigPresenter->GetSelectedPortType();
+	WriteLog("BuildTransportConfigFromUI: UI选择的端口类型索引 = " + std::to_string(static_cast<int>(portTypeIndex)));
+
+	// 3. 根据端口类型填充TransportConfig
+	switch (portTypeIndex)
+	{
+	case PortTypeIndex::Serial:
+	{
+		m_transportConfig.portType = PortType::PORT_TYPE_SERIAL;
+		m_transportConfig.portName = m_portConfigPresenter->GetSelectedPort();
+		// 从ConfigStore读取串口配置
+		SerialConfig serialCfg = m_configStore.GetSerialConfig();
+		m_transportConfig.baudRate = serialCfg.baudRate;
+		m_transportConfig.dataBits = serialCfg.dataBits;
+		m_transportConfig.parity = serialCfg.parity;
+		m_transportConfig.stopBits = serialCfg.stopBits;
+
+		WriteLog("BuildTransportConfigFromUI: 串口配置 - 端口=" + m_transportConfig.portName +
+			", 波特率=" + std::to_string(serialCfg.baudRate));
+		break;
+	}
+	case PortTypeIndex::Parallel:
+	{
+		m_transportConfig.portType = PortType::PORT_TYPE_PARALLEL;
+		m_transportConfig.portName = m_portConfigPresenter->GetSelectedPort();
+		WriteLog("BuildTransportConfigFromUI: 并口配置 - 端口=" + m_transportConfig.portName);
+		break;
+	}
+	case PortTypeIndex::UsbPrint:
+	{
+		m_transportConfig.portType = PortType::PORT_TYPE_USB_PRINT;
+		m_transportConfig.portName = m_portConfigPresenter->GetSelectedPort();
+		WriteLog("BuildTransportConfigFromUI: USB打印配置 - 端口=" + m_transportConfig.portName);
+		break;
+	}
+	case PortTypeIndex::NetworkPrint:
+	{
+		m_transportConfig.portType = PortType::PORT_TYPE_NETWORK_PRINT;
+		// 网络打印配置从ConfigStore读取
+		NetworkPrintConfig networkCfg = m_configStore.GetNetworkConfig();
+		m_transportConfig.portName = networkCfg.hostname + ":" + std::to_string(networkCfg.port);
+		WriteLog("BuildTransportConfigFromUI: 网络打印配置 - 地址=" + m_transportConfig.portName);
+		break;
+	}
+	case PortTypeIndex::Loopback:
+	{
+		m_transportConfig.portType = PortType::PORT_TYPE_LOOPBACK;
+		m_transportConfig.portName = "Loopback";
+		// 【阶段B修复】从ConfigStore读取Loopback配置参数
+		LoopbackTestConfig loopbackCfg = m_configStore.GetLoopbackConfig();
+		// 注意：LoopbackTransport会在创建时使用这些参数
+		WriteLog("BuildTransportConfigFromUI: 回路测试配置 - maxQueueSize=" + std::to_string(loopbackCfg.maxQueueSize) +
+			", delayMs=" + std::to_string(loopbackCfg.delayMs) + "ms");
+		break;
+	}
+	default:
+	{
+		WriteLog("BuildTransportConfigFromUI: 警告 - 未知端口类型，使用默认串口配置");
+		InitializeTransportConfig();
+		return;
+	}
+	}
+
+	// 4. 设置通用配置参数
+	m_transportConfig.readTimeout = 1000;
+	m_transportConfig.writeTimeout = 1000;
+	m_transportConfig.bufferSize = 4096;
+
+	// 5. 同步可靠传输配置（保持第二轮修订的配置）
+	m_reliableConfig.maxRetries = 3;
+	m_reliableConfig.timeoutBase = 5000;
+	m_reliableConfig.timeoutMax = 15000;
+	m_reliableConfig.maxPayloadSize = 1024;
+	m_reliableConfig.windowSize = 32;
+	m_reliableConfig.heartbeatInterval = 1000;
+
+	WriteLog("BuildTransportConfigFromUI: 配置构建完成 - portType=" + std::to_string(static_cast<int>(m_transportConfig.portType)) +
+		", portName=" + m_transportConfig.portName);
+}
+
 void CPortMasterDlg::UpdateConnectionStatus()
 {
+	// 【阶段C修复】若模式切换标志为真，保持"模式已切换，请重新连接"状态
+	if (m_requiresReconnect)
+	{
+		if (m_uiController)
+		{
+			m_uiController->SetStatusText(_T("模式已切换，请重新连接"));
+			// 禁用保存按钮，避免错用旧连接
+			m_uiController->UpdateSaveButton(false);
+		}
+		return;
+	}
+
 	// 【阶段1迁移】使用DialogUiController更新连接状态
 	if (m_uiController)
 	{
@@ -1420,63 +1578,31 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 {
 	bool enableSaveButton = true; // 默认启用保存按钮
 
-	bool isReliableMode = m_uiController->IsReliableModeSelected();
-	// 【阶段3迁移】使用ReceiveCacheService获取接收数据大小
-	uint64_t tempFileSize = m_receiveCacheService ? m_receiveCacheService->GetTotalReceivedBytes() : 0;
-	bool hasTempFileData = (tempFileSize > 0);
-
-	uint64_t cachedBytes = 0;
-	size_t memoryCacheSize = 0;
-	bool hasPendingWrites = false;
+	// 【阶段B修复】首先检查传输状态，传输进行中时强制禁用保存按钮
+	if (m_isTransmitting)
 	{
-		std::lock_guard<std::mutex> lock(m_receiveFileMutex);
-		cachedBytes = m_totalReceivedBytes;
-		memoryCacheSize = m_receiveDataCache.size();
-		hasPendingWrites = !m_pendingWrites.empty();
+		enableSaveButton = false;
+		this->WriteLog("传输进行中，禁用保存按钮");
 	}
-
-	// 【阶段5迁移】通过PortSessionController获取ReliableChannel
-	auto reliableChannel = m_sessionController ? m_sessionController->GetReliableChannel() : nullptr;
-
-	if (isReliableMode && reliableChannel)
+	else
 	{
-		bool fileTransferActive = reliableChannel->IsFileTransferActive();
-		bool reliableBufferReady = reliableChannel->HasCompletedFile();
+		// 【阶段B修复】优先依据ReceiveCacheService和内存缓存判断是否有数据可保存
+		uint64_t receivedBytes = m_receiveCacheService ? m_receiveCacheService->GetTotalReceivedBytes() : 0;
+		size_t memoryCacheSize = m_receiveDataCache.size();
 
-		bool hasDataToSave = hasTempFileData ||
-			cachedBytes > 0 ||
-			memoryCacheSize > 0 ||
-			reliableBufferReady ||
-			hasPendingWrites;
+		bool hasDataToSave = (receivedBytes > 0) || (memoryCacheSize > 0);
 
-		if (fileTransferActive)
-		{
-			enableSaveButton = false;
-			this->WriteLog("可靠模式：文件传输进行中，禁用保存按钮");
-		}
-		else if (hasDataToSave)
+		if (hasDataToSave)
 		{
 			enableSaveButton = true;
-			std::string dataSource = "可靠模式：检测到可保存数据，来源[";
-			if (hasTempFileData)
+			std::string dataSource = "检测到可保存数据，来源[";
+			if (receivedBytes > 0)
 			{
-				dataSource += "临时文件:" + std::to_string(tempFileSize) + "B ";
-			}
-			if (cachedBytes > 0)
-			{
-				dataSource += "累计统计:" + std::to_string(cachedBytes) + "B ";
+				dataSource += "接收服务:" + std::to_string(receivedBytes) + "B ";
 			}
 			if (memoryCacheSize > 0)
 			{
 				dataSource += "内存缓存:" + std::to_string(memoryCacheSize) + "B ";
-			}
-			if (reliableBufferReady)
-			{
-				dataSource += "协议缓冲 ";
-			}
-			if (hasPendingWrites)
-			{
-				dataSource += "待写入队列 ";
 			}
 			dataSource += "]";
 			this->WriteLog(dataSource);
@@ -1484,14 +1610,8 @@ void CPortMasterDlg::UpdateSaveButtonStatus()
 		else
 		{
 			enableSaveButton = false;
-			this->WriteLog("可靠模式：所有数据源为空，禁用保存按钮");
+			this->WriteLog("无可保存数据，禁用保存按钮");
 		}
-	}
-	else
-	{
-		// 直通模式：保持原有逻辑，确保用户仍可快速保存当前显示内容
-		enableSaveButton = true;
-		this->WriteLog("直通模式：保持保存按钮可用状态");
 	}
 
 	if (m_uiController)
@@ -1566,9 +1686,17 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
 			m_receiveCacheService->AppendData(data);
 			m_totalReceivedBytes = m_receiveCacheService->GetTotalReceivedBytes();
 
+			// 【阶段A修复】同步内存快照到m_receiveDataCache，确保UI显示数据可用
+			m_receiveDataCache = m_receiveCacheService->GetMemoryCache();
+			m_receiveCacheValid = !m_receiveDataCache.empty();
+
+			// 更新UI统计计数器（基于内存快照）
+			m_bytesReceived = static_cast<uint64_t>(m_receiveDataCache.size());
+
 			if (m_receiveVerboseLogging)
 			{
 				WriteLog("ReceiveCacheService追加数据: " + std::to_string(data.size()) + " 字节，总计: " + std::to_string(m_totalReceivedBytes) + " 字节");
+				WriteLog("内存快照已同步: 缓存大小=" + std::to_string(m_receiveDataCache.size()) + " 字节，缓存有效=" + (m_receiveCacheValid ? "true" : "false"));
 			}
 		}
 		catch (const std::exception& e)
@@ -1757,8 +1885,8 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 				this->WriteLog("ASCII预览: " + updateInfo->asciiPreview);
 			}
 
-			// 更新UI显示的接收统计（与直接落盘的m_totalReceivedBytes区分）
-			m_bytesReceived += updateInfo->dataSize;
+			// 【阶段A修复】直接使用OnTransportDataReceived中已更新的m_bytesReceived快照值
+			// 移除重复累加逻辑，避免显示与统计滞后
 			CString receivedText;
 			receivedText.Format(_T("%llu"), static_cast<unsigned long long>(m_bytesReceived));
 			if (m_uiController)
@@ -1832,9 +1960,14 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 	CString* statusText = reinterpret_cast<CString*>(lParam);
 	if (statusText)
 	{
-		if (m_uiController)
+		// 【阶段B修复】若传输已结束，跳过状态文本更新，避免"正在传输"覆盖完成状态
+		if (m_isTransmitting && m_uiController)
 		{
 			m_uiController->SetStatusText(*statusText);
+		}
+		else
+		{
+			this->WriteLog("传输已结束，忽略状态更新：" + std::string(CW2A(*statusText, CP_UTF8)));
 		}
 		delete statusText;
 	}
@@ -1913,6 +2046,9 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		{
 			m_uiController->SetSendButtonText(_T("发送"));
 		}
+
+		// 【阶段B修复】传输完成后立即更新保存按钮状态
+		UpdateSaveButtonStatus();
 
 		// 更新发送统计
 		const std::vector<uint8_t>& data = m_sendDataCache;

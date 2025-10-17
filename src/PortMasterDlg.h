@@ -157,6 +157,7 @@ private:
 	std::atomic<bool> m_isTransmitting;
 	std::atomic<bool> m_transmissionPaused;  // 新增：传输暂停状态
 	std::atomic<bool> m_transmissionCancelled;  // 新增：传输取消状态
+	std::atomic<bool> m_requiresReconnect;  // 【阶段C新增】模式切换后需要重新连接标志
 	std::thread m_receiveThread;
 	// 【Stage4迁移】移除传输线程，由TransmissionCoordinator管理
 	std::mutex m_reliableSessionMutex;         // 可靠模式进度统计互斥锁
@@ -220,6 +221,7 @@ private:
 
 	// 内部方法
 	void InitializeTransportConfig();
+	void BuildTransportConfigFromUI();  // 【阶段A修复】从UI构建传输配置
 	// 【阶段5迁移】CreateTransport/DestroyTransport/StartReceiveThread/StopReceiveThread已迁移到PortSessionController
 	void UpdateConnectionStatus();
 	void UpdateStatistics();
