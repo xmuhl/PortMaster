@@ -70,8 +70,9 @@ void PortMasterDialogEvents::HandleConnect()
 	if (m_dialog.m_uiController)
 	{
 		m_dialog.m_uiController->UpdateConnectionButtons(true);
-		// 恢复发送按钮（已连接且不处于传输状态时启用）
-		m_dialog.m_uiController->UpdateTransmissionButtons(!m_dialog.m_isTransmitting, false);
+		// 【阶段B修复】连接成功后默认启用"文件"按钮，仅在实际传输中禁用
+		// 修复逻辑：m_isTransmitting初始为false，直接传入false表示非传输状态
+		m_dialog.m_uiController->UpdateTransmissionButtons(false, false);
 	}
 
 	UpdatePortControlsEnabled(false);
