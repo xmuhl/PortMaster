@@ -82,4 +82,72 @@ public:
 	 * - 保持UTF-8编码的完整性
 	 */
 	static std::string SafeTruncateUtf8(const std::string& str, size_t maxLength);
+
+	// ========== 通用安全转换（支持指定代码页） ==========
+
+	/**
+	 * @brief 将多字节字符串安全转换为宽字符字符串（支持指定代码页）
+	 * @param input 输入多字节字符串
+	 * @param codePage 代码页（默认CP_UTF8，可指定CP_ACP等）
+	 * @return 宽字符字符串，转换失败返回空字符串
+	 *
+	 * 说明：
+	 * - 使用MultiByteToWideChar进行转换
+	 * - 支持指定任意代码页（建议使用CP_UTF8）
+	 * - 完整的返回值检查和异常保护
+	 * - 使用std::vector作为缓冲区，确保内存安全
+	 * - 大文件支持：自动处理大数据量的内存分配
+	 *
+	 * 注意：
+	 * - 优先使用WideEncodeUtf8()方法（默认UTF-8编码）
+	 * - 仅在需要处理非UTF-8编码的遗留数据时使用此方法
+	 */
+	static std::wstring SafeMultiByteToWideChar(const std::string& input, UINT codePage = CP_UTF8);
+
+	/**
+	 * @brief 将宽字符字符串安全转换为多字节字符串（支持指定代码页）
+	 * @param input 输入宽字符字符串
+	 * @param codePage 目标代码页（默认CP_UTF8，可指定CP_ACP等）
+	 * @return 多字节字符串，转换失败返回空字符串
+	 *
+	 * 说明：
+	 * - 使用WideCharToMultiByte进行转换
+	 * - 支持指定任意代码页（建议使用CP_UTF8）
+	 * - 完整的返回值检查和异常保护
+	 * - 使用std::vector作为缓冲区，确保内存安全
+	 * - 大文件支持：自动处理大数据量的内存分配
+	 *
+	 * 注意：
+	 * - 优先使用Utf8EncodeWide()方法（默认UTF-8编码）
+	 * - 仅在需要输出非UTF-8编码时使用此方法
+	 */
+	static std::string SafeWideCharToMultiByte(const std::wstring& input, UINT codePage = CP_UTF8);
+
+	// ========== 安全性检查 ==========
+
+	/**
+	 * @brief 检查字符串长度是否在安全范围内
+	 * @param str 待检查的字符串
+	 * @param maxLength 最大允许长度（字节数，默认1MB）
+	 * @return true表示长度安全，false表示超过限制
+	 *
+	 * 说明：
+	 * - 用于在转换前检查字符串长度，避免内存分配失败
+	 * - 默认最大长度为1MB，可根据需要调整
+	 * - 建议在处理大文件或用户输入时使用
+	 */
+	static bool IsStringLengthSafe(const std::string& str, size_t maxLength = 1024 * 1024);
+
+	/**
+	 * @brief 检查宽字符串长度是否在安全范围内
+	 * @param str 待检查的宽字符串
+	 * @param maxLength 最大允许长度（字符数，默认512K字符）
+	 * @return true表示长度安全，false表示超过限制
+	 *
+	 * 说明：
+	 * - 用于在转换前检查宽字符串长度，避免内存分配失败
+	 * - 默认最大长度为512K字符（约1MB UTF-16数据）
+	 * - 建议在处理大文件或用户输入时使用
+	 */
+	static bool IsStringLengthSafe(const std::wstring& str, size_t maxLength = 512 * 1024);
 };

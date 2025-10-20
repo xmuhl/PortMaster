@@ -9,6 +9,7 @@
 #include "../Transport/ITransport.h"
 #include "../Common/CommonTypes.h"
 #include "../Common/ConfigStore.h"
+#include "../Common/StringUtils.h"
 #include <chrono>
 #include <thread>
 #include <shellapi.h>
@@ -88,9 +89,9 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 		// 【阶段B修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
 		if (m_statusDisplayManager)
 		{
-			// 使用CA2W进行UTF-8到Unicode的准确转换
-			CA2W displayMessageW(message.c_str(), CP_UTF8);
-			CString displayMessage((LPCWSTR)displayMessageW);
+			// 使用StringUtils替代MFC宏，避免长日志信息截断风险
+			std::wstring displayMessageW = StringUtils::WideEncodeUtf8(message);
+			CString displayMessage(displayMessageW.c_str());
 			m_statusDisplayManager->LogMessage(displayMessage);
 		}
 	}
@@ -772,8 +773,9 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	// 【修复状态文本重复】直接使用后台传递的完整状态文本，不再追加重复信息
 	// 后台(TransmissionTask)已生成完整状态："正在传输: X/Y 字节 (P%)"
 	// 【回归修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
-	CA2W statusTextW(progress.statusText.c_str(), CP_UTF8);
-	*statusText = (LPCWSTR)statusTextW;  // 直接赋值，不再Format追加
+	// 使用StringUtils替代MFC宏，消除内存风险
+	std::wstring statusTextW = StringUtils::WideEncodeUtf8(progress.statusText);
+	*statusText = statusTextW.c_str();  // 直接赋值，不再Format追加
 	PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
 
 	// 记录详细进度信息（可选，用于调试）
@@ -1013,14 +1015,13 @@ void CPortMasterDlg::UpdateSendCache(const CString& data)
 		}
 		else
 		{
-			// 对于非ASCII字符，使用WideCharToMultiByte进行转换
-			wchar_t wch = ch;
-			char utf8Buf[4] = { 0 };
-			int utf8Len = WideCharToMultiByte(CP_UTF8, 0, &wch, 1, utf8Buf, 4, NULL, NULL);
+			// 对于非ASCII字符，使用StringUtils进行安全转换（统一代码风格）
+			std::wstring singleCharStr(1, ch);
+			std::string utf8Str = StringUtils::Utf8EncodeWide(singleCharStr);
 
-			for (int j = 0; j < utf8Len; j++)
+			for (size_t j = 0; j < utf8Str.length(); j++)
 			{
-				m_sendDataCache.push_back(static_cast<uint8_t>(utf8Buf[j]));
+				m_sendDataCache.push_back(static_cast<uint8_t>(utf8Str[j]));
 			}
 		}
 	}
@@ -1720,8 +1721,9 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
 void CPortMasterDlg::OnTransportError(const std::string& error)
 {
 	// 【阶段B修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
-	CA2W errorMsgW(error.c_str(), CP_UTF8);
-	CString errorMsg((LPCWSTR)errorMsgW);
+	// 使用StringUtils替代MFC宏，消除内存风险
+	std::wstring errorMsgW = StringUtils::WideEncodeUtf8(error);
+	CString errorMsg(errorMsgW.c_str());
 	PostMessage(WM_USER + 2, 0, (LPARAM) new CString(errorMsg));
 }
 

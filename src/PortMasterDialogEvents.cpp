@@ -8,6 +8,7 @@
 #include "PortConfigPresenter.h"
 #include "../Common/DataPresentationService.h"
 #include "../Common/ReceiveCacheService.h"
+#include "../Common/StringUtils.h"
 #include "../Protocol/PortSessionController.h"
 #include "TransmissionCoordinator.h"
 #include <fstream>
@@ -282,9 +283,8 @@ void PortMasterDialogEvents::HandleToggleHex()
 			if (!m_dialog.m_sendCacheValid)
 			{
 				// 缓存无效，尝试从当前显示的十六进制数据中提取
-				// 将CString转换为std::string以使用DataPresentationService
-				CT2A hexStr(currentSendData, CP_UTF8);
-				std::string hexStdString(hexStr);
+				// 使用StringUtils替代MFC宏，避免缓冲区限制
+				std::string hexStdString = StringUtils::Utf8EncodeWide(std::wstring(currentSendData));
 
 				// 直接使用DataPresentationService
 				std::vector<uint8_t> bytes = DataPresentationService::HexToBytes(hexStdString);
@@ -293,10 +293,10 @@ void PortMasterDialogEvents::HandleToggleHex()
 				CString textData;
 				if (!bytes.empty())
 				{
-					// 添加null终止符确保字符串安全
-					bytes.push_back(0);
-					CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
-					textData = CString(utf8Result);
+					// 使用StringUtils安全转换，避免MFC宏的缓冲区限制
+					std::string bytesStr(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+					std::wstring utf8Result = StringUtils::WideEncodeUtf8(bytesStr);
+					textData = CString(utf8Result.c_str());
 				}
 				if (!textData.IsEmpty())
 				{
@@ -345,15 +345,16 @@ void PortMasterDialogEvents::HandleDropFiles(HDROP hDropInfo)
 
 void PortMasterDialogEvents::ApplySendCacheFromHexDisplay(const CString& currentDisplay)
 {
-	CT2A hexStr(currentDisplay, CP_UTF8);
-	std::string hexStdString(hexStr);
+	// 使用StringUtils替代MFC宏，避免缓冲区限制
+	std::string hexStdString = StringUtils::Utf8EncodeWide(std::wstring(currentDisplay));
 	std::vector<uint8_t> bytes = DataPresentationService::HexToBytes(hexStdString);
 
 	if (!bytes.empty())
 	{
-		bytes.push_back(0);
-		CA2T utf8Result(reinterpret_cast<const char*>(bytes.data()), CP_UTF8);
-		CString textData(utf8Result);
+		// 使用StringUtils安全转换，消除内存风险
+		std::string bytesStr(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		std::wstring utf8Result = StringUtils::WideEncodeUtf8(bytesStr);
+		CString textData(utf8Result.c_str());
 		if (!textData.IsEmpty())
 		{
 			m_dialog.UpdateSendCache(textData);
@@ -382,10 +383,10 @@ void PortMasterDialogEvents::CopyReceiveDataToClipboard()
 			{
 				try
 				{
-					std::vector<char> safeData(cachedData.begin(), cachedData.end());
-					safeData.push_back('\0');
-					CA2T utf8Text(safeData.data(), CP_UTF8);
-					copyData = CString(utf8Text);
+					// 使用StringUtils替代MFC宏，确保大数据量转换安全
+					std::string utf8Data(cachedData.begin(), cachedData.end());
+					std::wstring utf8Text = StringUtils::WideEncodeUtf8(utf8Data);
+					copyData = CString(utf8Text.c_str());
 				}
 				catch (...)
 				{
@@ -552,8 +553,9 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 			return;
 		}
 
-		CT2A utf8Text(receiveData, CP_UTF8);
-		outFile.write(utf8Text, strlen(utf8Text));
+		// 使用StringUtils替代MFC宏，确保大数据量安全写入（避免495KB文件崩溃）
+		std::string utf8Text = StringUtils::Utf8EncodeWide(std::wstring(receiveData));
+		outFile.write(utf8Text.c_str(), utf8Text.length());
 		outFile.close();
 
 		CString msg;
@@ -633,49 +635,103 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 	}
 	else
 	{
-		// 文本文件：尝试按系统本地编码解析
-		int wideLen = MultiByteToWideChar(CP_ACP, 0, fileBuffer.get(), static_cast<int>(displaySize), nullptr, 0);
-		CString previewContent;
-		if (wideLen > 0)
+		// 文本文件：使用UTF-8编码解析（项目统一编码标准）
+		try
 		{
-			std::unique_ptr<wchar_t[]> wideStr(new wchar_t[wideLen + 1]);
-			MultiByteToWideChar(CP_ACP, 0, fileBuffer.get(), static_cast<int>(displaySize), wideStr.get(), wideLen);
-			wideStr[wideLen] = 0;
-			previewContent = wideStr.get();
-		}
-		else
-		{
-			for (size_t i = 0; i < displaySize; ++i)
+			// 使用安全的字符串转换方法，避免内存分配失败和编码错误
+			std::string fileContent(fileBuffer.get(), displaySize);
+
+			// 检查字符串长度是否安全
+			if (!StringUtils::IsStringLengthSafe(fileContent))
 			{
-				previewContent += static_cast<TCHAR>(fileBuffer[i]);
+				m_dialog.MessageBox(_T("文件内容过大，无法加载"), _T("错误"), MB_OK | MB_ICONERROR);
+				m_dialog.WriteLog("OnBnClickedButtonLoadFile: 文件内容超过安全长度限制");
+				return;
+			}
+
+			// 使用UTF-8编码转换为宽字符串
+			std::wstring wideContent = StringUtils::SafeMultiByteToWideChar(fileContent, CP_UTF8);
+
+			// 如果UTF-8转换失败，尝试使用系统本地编码（兼容性考虑）
+			if (wideContent.empty() && !fileContent.empty())
+			{
+				m_dialog.WriteLog("OnBnClickedButtonLoadFile: UTF-8转换失败，尝试系统本地编码");
+				wideContent = StringUtils::SafeMultiByteToWideChar(fileContent, CP_ACP);
+			}
+
+			// 转换失败则使用回退方案：直接字符拷贝
+			CString previewContent;
+			if (!wideContent.empty())
+			{
+				previewContent = wideContent.c_str();
+			}
+			else
+			{
+				m_dialog.WriteLog("OnBnClickedButtonLoadFile: 编码转换失败，使用ASCII回退方案");
+				for (size_t i = 0; i < displaySize; ++i)
+				{
+					previewContent += static_cast<TCHAR>(fileBuffer[i]);
+				}
+			}
+
+			m_dialog.UpdateSendCache(previewContent);
+			if (m_dialog.m_checkHex.GetCheck() == BST_CHECKED)
+			{
+				// 使用StringUtils替代MFC宏，避免缓冲区限制
+				std::string utf8Str = StringUtils::Utf8EncodeWide(std::wstring(previewContent));
+				std::string hexResult = DataPresentationService::BytesToHex(
+					reinterpret_cast<const uint8_t*>(utf8Str.c_str()),
+					utf8Str.length());
+				m_dialog.m_editSendData.SetWindowText(CString(hexResult.c_str(), static_cast<int>(hexResult.length())));
+			}
+			else
+			{
+				m_dialog.m_editSendData.SetWindowText(previewContent);
+			}
+
+			// 大文件需要缓存完整内容
+			if (isLargeFile)
+			{
+				std::string fullFileContent(fileBuffer.get(), fileLength);
+
+				// 检查完整文件长度是否安全
+				if (!StringUtils::IsStringLengthSafe(fullFileContent))
+				{
+					m_dialog.WriteLog("OnBnClickedButtonLoadFile: 完整文件内容超过安全长度限制，仅缓存预览部分");
+				}
+				else
+				{
+					// 使用UTF-8编码转换完整内容
+					std::wstring fullWideContent = StringUtils::SafeMultiByteToWideChar(fullFileContent, CP_UTF8);
+
+					// UTF-8转换失败则尝试系统本地编码
+					if (fullWideContent.empty() && !fullFileContent.empty())
+					{
+						fullWideContent = StringUtils::SafeMultiByteToWideChar(fullFileContent, CP_ACP);
+					}
+
+					if (!fullWideContent.empty())
+					{
+						m_dialog.UpdateSendCache(fullWideContent.c_str());
+						m_dialog.WriteLog("OnBnClickedButtonLoadFile: 大文件完整内容已缓存");
+					}
+				}
 			}
 		}
-
-		m_dialog.UpdateSendCache(previewContent);
-		if (m_dialog.m_checkHex.GetCheck() == BST_CHECKED)
+		catch (const std::exception& e)
 		{
-			CT2A utf8Str(previewContent, CP_UTF8);
-			std::string hexResult = DataPresentationService::BytesToHex(
-				reinterpret_cast<const uint8_t*>(utf8Str.m_psz),
-				static_cast<size_t>(strlen(utf8Str.m_psz)));
-			m_dialog.m_editSendData.SetWindowText(CString(hexResult.c_str(), static_cast<int>(hexResult.length())));
+			// 异常保护：确保程序不会因编码转换失败而崩溃
+			CString errorMsg;
+			errorMsg.Format(_T("文件编码转换失败: %s"), CString(e.what()));
+			m_dialog.MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
+			m_dialog.WriteLog("OnBnClickedButtonLoadFile: 编码转换异常 - " + std::string(e.what()));
+			return;
 		}
-		else
+		catch (...)
 		{
-			m_dialog.m_editSendData.SetWindowText(previewContent);
-		}
-
-		// 大文件需要缓存完整内容
-		if (isLargeFile)
-		{
-			int fullWideLen = MultiByteToWideChar(CP_ACP, 0, fileBuffer.get(), static_cast<int>(fileLength), nullptr, 0);
-			if (fullWideLen > 0)
-			{
-				std::unique_ptr<wchar_t[]> fullWideStr(new wchar_t[fullWideLen + 1]);
-				MultiByteToWideChar(CP_ACP, 0, fileBuffer.get(), static_cast<int>(fileLength), fullWideStr.get(), fullWideLen);
-				fullWideStr[fullWideLen] = 0;
-				m_dialog.UpdateSendCache(fullWideStr.get());
-			}
+			m_dialog.MessageBox(_T("文件编码转换时发生未知错误"), _T("错误"), MB_OK | MB_ICONERROR);
+			m_dialog.WriteLog("OnBnClickedButtonLoadFile: 编码转换未知异常");
+			return;
 		}
 	}
 
