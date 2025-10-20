@@ -185,6 +185,18 @@ public:
 	 */
 	std::shared_ptr<ITransport> GetTransport();
 
+	/**
+	 * @brief 获取当前端口名称
+	 * @return 端口名称字符串，如"COM3"、"LPT1"等，未连接时返回空字符串
+	 */
+	std::string GetCurrentPortName() const;
+
+	/**
+	 * @brief 获取当前Transport类型显示名称
+	 * @return Transport类型显示名称，如"Serial Port"、"USB Printer"等
+	 */
+	std::string GetTransportTypeName() const;
+
 private:
 	// ========== 内部方法 ==========
 

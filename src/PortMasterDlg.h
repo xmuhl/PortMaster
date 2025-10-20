@@ -73,7 +73,6 @@ protected:
 	void OnTransmissionCompleted(const TransmissionResult& result);
 	void OnTransmissionLog(const std::string& message);
 
-	
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
 	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
@@ -224,6 +223,8 @@ private:
 	void BuildTransportConfigFromUI();  // 【阶段A修复】从UI构建传输配置
 	// 【阶段5迁移】CreateTransport/DestroyTransport/StartReceiveThread/StopReceiveThread已迁移到PortSessionController
 	void UpdateConnectionStatus();
+	CString GetCurrentPortName();  // 获取当前端口显示名称
+	int GetCurrentProgressPercent();  // 获取当前传输进度百分比
 	void UpdateStatistics();
 
 	// 【可靠模式按钮管控】保存按钮状态控制

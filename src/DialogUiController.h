@@ -89,9 +89,9 @@ public:
 	void UpdateAllButtonStates(bool connected, bool transmitting, bool paused, bool hasSaveData); // 统一更新所有按钮状态
 
 	// 状态文本更新方法
-	void UpdateConnectionStatus(bool connected);   // 更新连接状态文本
+	void UpdateConnectionStatus(const CString& portName, bool connected, const CString& statusExtInfo = _T(""));   // 更新连接状态文本（端口名+连接状态）
 	void UpdateTransmissionMode(bool reliable);    // 更新传输模式文本
-	void UpdateSpeedDisplay(uint32_t sendSpeed, uint32_t receiveSpeed); // 更新速度显示
+	void UpdateProgressDisplay(int progressPercent); // 更新传输进度显示
 	void UpdateSendSourceDisplay(const CString& source); // 更新发送源显示
 	void LogMessage(const CString& message);       // 输出日志消息
 

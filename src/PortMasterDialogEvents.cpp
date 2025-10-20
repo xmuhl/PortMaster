@@ -327,7 +327,6 @@ void PortMasterDialogEvents::HandleToggleHex()
 	}
 }
 
-
 void PortMasterDialogEvents::HandleDropFiles(HDROP hDropInfo)
 {
 	UINT fileCount = DragQueryFile(hDropInfo, 0xFFFFFFFF, nullptr, 0);

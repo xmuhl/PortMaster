@@ -45,20 +45,26 @@ void StatusDisplayManager::InitializeProgress()
 		return;
 
 	// 初始化进度条范围和初始值
-	m_parentDialog->SetDlgItemText(IDC_STATIC_SPEED, _T("0KB/s"));
+	m_parentDialog->SetDlgItemText(IDC_STATIC_SPEED, _T("0%"));
 	SetProgressPercent(0, true);
 	m_progressInitialized = true;
 }
 
-// 更新速度显示
-void StatusDisplayManager::UpdateSpeedDisplay(uint32_t sendSpeed, uint32_t receiveSpeed)
+// 更新传输进度显示
+void StatusDisplayManager::UpdateProgressDisplay(int progressPercent)
 {
 	if (!m_parentDialog)
 		return;
 
-	CString speedText;
-	speedText.Format(_T("%uKB/s"), (sendSpeed + receiveSpeed) / 1024);
-	m_parentDialog->SetDlgItemText(IDC_STATIC_SPEED, speedText);
+	// 边界检查
+	if (progressPercent < 0)
+		progressPercent = 0;
+	if (progressPercent > 100)
+		progressPercent = 100;
+
+	CString progressText;
+	progressText.Format(_T("%d%%"), progressPercent);
+	m_parentDialog->SetDlgItemText(IDC_STATIC_SPEED, progressText);
 }
 
 // 更新发送统计
@@ -85,11 +91,12 @@ void StatusDisplayManager::UpdateReceiveStatistics(uint64_t bytesReceived)
 
 // 更新所有统计信息
 void StatusDisplayManager::UpdateAllStatistics(uint64_t bytesSent, uint64_t bytesReceived,
-											   uint32_t sendSpeed, uint32_t receiveSpeed)
+	uint32_t sendSpeed, uint32_t receiveSpeed)
 {
 	UpdateSendStatistics(bytesSent);
 	UpdateReceiveStatistics(bytesReceived);
-	UpdateSpeedDisplay(sendSpeed, receiveSpeed);
+	// 注释掉速度显示更新，现在使用进度显示
+	// UpdateSpeedDisplay(sendSpeed, receiveSpeed);
 }
 
 // 输出日志消息

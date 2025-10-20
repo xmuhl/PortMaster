@@ -960,7 +960,7 @@ void ReliableChannel::SendThread()
 				WriteVerbose("SendThread: queue is empty, continuing");
 				lock.unlock(); // 显式释放锁
 				continue;
-				}
+			}
 
 			// 获取数据并从队列移除
 			WriteVerbose("SendThread: getting data from queue, queue size: " + std::to_string(m_sendQueue.size()));

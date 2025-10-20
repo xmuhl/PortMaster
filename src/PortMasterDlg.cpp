@@ -143,14 +143,14 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置配置变更回调
 		m_configBinder->SetConfigChangedCallback([this]() {
 			OnConfigurationChanged();
-		});
+			});
 
 		// 设置错误回调
 		m_configBinder->SetErrorCallback([this](const std::string& errorMessage) {
 			CString errorMsg;
 			errorMsg.Format(_T("配置错误: %s"), errorMessage.c_str());
 			MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
-		});
+			});
 	}
 	catch (const std::exception& e)
 	{
@@ -165,7 +165,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置日志回调
 		m_receiveCacheService->SetLogCallback([this](const std::string& message) {
 			this->WriteLog(message);
-		});
+			});
 
 		// 设置详细日志（开发阶段开启）
 		m_receiveCacheService->SetVerboseLogging(true);
@@ -189,17 +189,17 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置进度回调
 		m_transmissionCoordinator->SetProgressCallback([this](const TransmissionProgress& progress) {
 			this->OnTransmissionProgress(progress);
-		});
+			});
 
 		// 设置完成回调
 		m_transmissionCoordinator->SetCompletionCallback([this](const TransmissionResult& result) {
 			this->OnTransmissionCompleted(result);
-		});
+			});
 
 		// 设置日志回调
 		m_transmissionCoordinator->SetLogCallback([this](const std::string& message) {
 			this->OnTransmissionLog(message);
-		});
+			});
 
 		// 配置传输参数
 		m_transmissionCoordinator->SetChunkSize(1024); // 1KB数据块
@@ -219,12 +219,12 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置数据接收回调
 		m_sessionController->SetDataCallback([this](const std::vector<uint8_t>& data) {
 			this->OnTransportDataReceived(data);
-		});
+			});
 
 		// 设置错误回调
 		m_sessionController->SetErrorCallback([this](const std::string& error) {
 			this->OnTransportError(error);
-		});
+			});
 	}
 	catch (const std::exception& e)
 	{
@@ -386,7 +386,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 		// 设置节流显示回调
 		m_uiController->SetThrottledDisplayCallback([this]() {
 			this->UpdateReceiveDisplayFromCache();
-		});
+			});
 	}
 	catch (const std::exception& e)
 	{
@@ -433,7 +433,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 		// 设置节流显示回调（与DialogUiController协同）
 		m_statusDisplayManager->SetThrottledDisplayCallback([this]() {
 			this->UpdateReceiveDisplayFromCache();
-		});
+			});
 	}
 	catch (const std::exception& e)
 	{
@@ -451,6 +451,12 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 	// 启用文件拖拽功能
 	DragAcceptFiles(TRUE);
+
+	// ✅ 修复：初始化按钮状态，确保Stop按钮初始禁用，Send按钮初始启用
+	if (m_uiController)
+	{
+		m_uiController->UpdateTransmissionButtons(false, false);
+	}
 
 	// 初始化ReceiveCacheService（临时缓存文件功能已迁移到服务层）
 	// ReceiveCacheService已在构造函数初始化部分完成
@@ -778,13 +784,8 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	*statusText = statusTextW.c_str();  // 直接赋值，不再Format追加
 	PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
 
-	// 记录详细进度信息（可选，用于调试）
-	if (progress.bytesTransmitted % (progress.totalBytes / 10 + 1) == 0 || progress.progressPercent == 100)
-	{
-		this->WriteLog("传输进度: " + std::to_string(progress.bytesTransmitted) + "/" +
-			std::to_string(progress.totalBytes) + " 字节 (" +
-			std::to_string(progress.progressPercent) + "%)");
-	}
+	// ✅ 删除进度日志记录，保持日志清洁
+	// 不再记录每个数据块的传输进度，以减少日志文件体积
 }
 
 // 【修复线程自阻塞】重构传输完成回调 - 避免在传输线程中直接析构任务对象
@@ -1566,12 +1567,39 @@ void CPortMasterDlg::UpdateConnectionStatus()
 	// 【阶段1迁移】使用DialogUiController更新连接状态
 	if (m_uiController)
 	{
-		m_uiController->UpdateConnectionStatus(m_isConnected);
+		// 获取当前端口名称
+		CString portName = GetCurrentPortName();
+
+		// 传递端口名称和连接状态
+		m_uiController->UpdateConnectionStatus(portName, m_isConnected);
 		m_uiController->UpdateConnectionButtons(m_isConnected);
 	}
 
 	// 【可靠模式按钮管控】根据缺陷分析报告实施按钮状态控制
 	UpdateSaveButtonStatus();
+}
+
+// 获取当前端口显示名称
+CString CPortMasterDlg::GetCurrentPortName()
+{
+	// 优先从PortSessionController获取
+	if (m_sessionController)
+	{
+		std::string portName = m_sessionController->GetCurrentPortName();
+		if (!portName.empty())
+		{
+			return CString(portName.c_str());
+		}
+
+		// 如果端口名为空，尝试获取Transport类型名称
+		std::string transportTypeName = m_sessionController->GetTransportTypeName();
+		if (!transportTypeName.empty())
+		{
+			return CString(transportTypeName.c_str());
+		}
+	}
+
+	return _T("未知端口");
 }
 
 // 【可靠模式按钮管控】更新保存按钮状态的专用函数
@@ -1626,8 +1654,26 @@ void CPortMasterDlg::UpdateStatistics()
 	// 【阶段4迁移】使用StatusDisplayManager更新统计信息
 	if (m_statusDisplayManager)
 	{
-		m_statusDisplayManager->UpdateAllStatistics(m_bytesSent, m_bytesReceived, m_sendSpeed, m_receiveSpeed);
+		// 获取当前传输进度百分比
+		int progressPercent = GetCurrentProgressPercent();
+		m_statusDisplayManager->UpdateProgressDisplay(progressPercent);
+
+		// 仍然更新其他统计信息（可选）
+		// m_statusDisplayManager->UpdateAllStatistics(m_bytesSent, m_bytesReceived, m_sendSpeed, m_receiveSpeed);
 	}
+}
+
+// 获取当前传输进度百分比
+int CPortMasterDlg::GetCurrentProgressPercent()
+{
+	// 方式1：从进度条控件获取
+	CProgressCtrl* progressCtrl = (CProgressCtrl*)GetDlgItem(IDC_PROGRESS);
+	if (progressCtrl && progressCtrl->GetSafeHwnd())
+	{
+		return progressCtrl->GetPos();
+	}
+
+	return 0;
 }
 
 void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
@@ -1757,6 +1803,12 @@ void CPortMasterDlg::OnReliableProgress(int64_t current, int64_t total)
 	// 【修复进度条闪烁】改用消息队列投递进度更新，确保在UI线程执行
 	// 避免非UI线程直接操作控件导致的绘制竞争
 	PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(percent));
+
+	// 【新增】更新进度百分比显示
+	if (m_statusDisplayManager)
+	{
+		m_statusDisplayManager->UpdateProgressDisplay(static_cast<int>(percent));
+	}
 
 	std::lock_guard<std::mutex> lock(m_reliableSessionMutex);
 	m_reliableExpectedBytes = total;
@@ -1892,9 +1944,9 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 			CString receivedText;
 			receivedText.Format(_T("%llu"), static_cast<unsigned long long>(m_bytesReceived));
 			if (m_uiController)
-		{
-			m_uiController->SetStaticText(IDC_STATIC_RECEIVED, receivedText);
-		}
+			{
+				m_uiController->SetStaticText(IDC_STATIC_RECEIVED, receivedText);
+			}
 
 			// 【UI优化】使用节流机制更新显示，避免大文件传输时频繁重绘
 			// 注意：数据已经由ReceiveCacheService直接落盘和更新内存缓存
@@ -1962,14 +2014,13 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 	CString* statusText = reinterpret_cast<CString*>(lParam);
 	if (statusText)
 	{
-		// 【阶段B修复】若传输已结束，跳过状态文本更新，避免"正在传输"覆盖完成状态
-		if (m_isTransmitting && m_uiController)
+		// ✅ 修复：将传输进度信息显示到传输进度栏（IDC_STATIC_SPEED）而非端口栏
+		if (m_isTransmitting)
 		{
-			m_uiController->SetStatusText(*statusText);
-		}
-		else
-		{
-			this->WriteLog("传输已结束，忽略状态更新：" + std::string(CW2A(*statusText, CP_UTF8)));
+			if (m_uiController)
+			{
+				m_uiController->SetStaticText(IDC_STATIC_SPEED, *statusText);
+			}
 		}
 		delete statusText;
 	}
@@ -1992,6 +2043,12 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 			m_uiController->SetStatusText(_T("传输已终止"));
 		}
 		SetProgressPercent(0, true);
+
+		// ✅ 重置传输进度显示
+		if (m_uiController)
+		{
+			m_uiController->SetStaticText(IDC_STATIC_SPEED, _T(""));
+		}
 	}
 	else if (error != TransportError::Success)
 	{
@@ -2036,6 +2093,12 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		// 重置进度条
 		SetProgressPercent(0, true);
 
+		// ✅ 重置传输进度显示
+		if (m_uiController)
+		{
+			m_uiController->SetStaticText(IDC_STATIC_SPEED, _T(""));
+		}
+
 		// 恢复连接状态显示
 		UpdateConnectionStatus();
 	}
@@ -2070,6 +2133,14 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 			m_uiController->SetStatusText(completeStatus);
 		}
 		SetProgressPercent(100);
+
+		// ✅ 传输成功后，延时2秒后清空传输进度显示
+		// 先显示100%让用户看到完成状态，再清空
+		Sleep(2000);
+		if (m_uiController)
+		{
+			m_uiController->SetStaticText(IDC_STATIC_SPEED, _T(""));
+		}
 
 		// 添加传输完成提示对话框
 		CString successMsg;
@@ -2117,6 +2188,13 @@ void CPortMasterDlg::LoadConfigurationFromStore()
 	// 使用DialogConfigBinder加载配置到UI控件
 	if (m_configBinder && m_configBinder->LoadToUI())
 	{
+		// ✅ 修复：配置加载成功后同步模式显示文本，确保IDC_STATIC_MODE显示正确
+		bool useReliableMode = m_configBinder->ReadTransmissionMode();
+		if (m_uiController)
+		{
+			m_uiController->UpdateTransmissionMode(useReliableMode);
+		}
+
 		// 【阶段4迁移】配置加载成功，使用StatusDisplayManager显示日志
 		if (m_statusDisplayManager)
 		{
@@ -2176,10 +2254,6 @@ void CPortMasterDlg::OnConfigurationChanged()
 	}
 }
 
-
-
-
-
 // 【简化保存流程】移除复杂的数据稳定性检测，采用直接保存+后验证模式
 // 原有的 StabilityTracker::IsDataStable 方法已被移除，不再需要复杂的稳定性检测
 
@@ -2220,7 +2294,6 @@ bool CPortMasterDlg::VerifySavedFileSize(const CString& filePath, size_t expecte
 // 【阶段3迁移】ClearTempCacheFile和GetTempCacheFileSize已删除，使用ReceiveCacheService替代
 
 // 【临时文件状态监控与自动恢复】新增机制实现
-
 
 // 文件拖拽处理函数
 void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)

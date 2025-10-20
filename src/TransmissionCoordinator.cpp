@@ -53,13 +53,13 @@ bool TransmissionCoordinator::Start(
 	// 设置任务回调
 	m_currentTask->SetProgressCallback([this](const TransmissionProgress& progress) {
 		OnProgress(progress);
-	});
+		});
 	m_currentTask->SetCompletionCallback([this](const TransmissionResult& result) {
 		OnCompletion(result);
-	});
+		});
 	m_currentTask->SetLogCallback([this](const std::string& message) {
 		OnLog(message);
-	});
+		});
 
 	// 启动任务
 	return m_currentTask->Start(data);

@@ -133,6 +133,9 @@ void DialogUiController::InitializeTransmissionModeRadios()
 		m_controls.radioDirect->SetCheck(BST_UNCHECKED);
 	}
 
+	// ✅ 修复：同步更新模式显示文本，确保IDC_STATIC_MODE初始化时显示"可靠"
+	UpdateTransmissionMode(true);
+
 	// 初始化占用检测复选框 - 默认勾选
 	if (IsControlValid(m_controls.checkOccupy))
 	{
@@ -163,12 +166,18 @@ void DialogUiController::InitializeStatusDisplays()
 
 		if (IsControlValid(m_controls.staticSpeed))
 		{
-			m_controls.staticSpeed->SetWindowText(_T("0KB/s"));
+			m_controls.staticSpeed->SetWindowText(_T("0%"));
 		}
 
 		if (IsControlValid(m_controls.staticSendSource))
 		{
 			m_controls.staticSendSource->SetWindowText(_T("手动输入"));
+		}
+
+		// ✅ 修复：初始化发送按钮文本为"发送"，确保UI状态正确
+		if (IsControlValid(m_controls.btnSend))
+		{
+			m_controls.btnSend->SetWindowText(_T("发送"));
 		}
 
 		// 初始日志消息
@@ -229,14 +238,30 @@ void DialogUiController::UpdateAllButtonStates(bool connected, bool transmitting
 	UpdateSaveButton(hasSaveData);
 }
 
-// 更新连接状态文本
-void DialogUiController::UpdateConnectionStatus(bool connected)
+// 更新连接状态文本（端口名+连接状态）
+void DialogUiController::UpdateConnectionStatus(const CString& portName, bool connected, const CString& statusExtInfo)
 {
 	if (!IsControlValid(m_controls.staticPortStatus))
 		return;
 
-	CString statusText = connected ? _T("已连接") : _T("未连接");
-	m_controls.staticPortStatus->SetWindowText(statusText);
+	CString statusText;
+	if (connected)
+	{
+		statusText = _T("已连接");
+	}
+	else if (!statusExtInfo.IsEmpty())
+	{
+		statusText = statusExtInfo;  // 如"占用"、"错误"等
+	}
+	else
+	{
+		statusText = _T("未连接");
+	}
+
+	// 组合显示：端口名 + 连接状态
+	CString displayText;
+	displayText.Format(_T("%s (%s)"), portName.GetString(), statusText.GetString());
+	m_controls.staticPortStatus->SetWindowText(displayText);
 }
 
 // 更新传输模式文本
@@ -250,14 +275,20 @@ void DialogUiController::UpdateTransmissionMode(bool reliable)
 }
 
 // 更新速度显示
-void DialogUiController::UpdateSpeedDisplay(uint32_t sendSpeed, uint32_t receiveSpeed)
+void DialogUiController::UpdateProgressDisplay(int progressPercent)
 {
 	if (!IsControlValid(m_controls.staticSpeed))
 		return;
 
-	CString speedText;
-	speedText.Format(_T("%uKB/s"), (sendSpeed + receiveSpeed) / 1024);
-	m_controls.staticSpeed->SetWindowText(speedText);
+	// 边界检查
+	if (progressPercent < 0)
+		progressPercent = 0;
+	if (progressPercent > 100)
+		progressPercent = 100;
+
+	CString progressText;
+	progressText.Format(_T("%d%%"), progressPercent);
+	m_controls.staticSpeed->SetWindowText(progressText);
 }
 
 // 更新发送源显示

@@ -20,7 +20,7 @@ public:
 	void Initialize(CPortMasterDlg* parentDialog);
 
 	// 统计信息更新方法
-	void UpdateSpeedDisplay(uint32_t sendSpeed, uint32_t receiveSpeed);
+	void UpdateProgressDisplay(int progressPercent);  // 显示传输进度百分比
 	void UpdateSendStatistics(uint64_t bytesSent);
 	void UpdateReceiveStatistics(uint64_t bytesReceived);
 	void UpdateAllStatistics(uint64_t bytesSent, uint64_t bytesReceived, uint32_t sendSpeed, uint32_t receiveSpeed);

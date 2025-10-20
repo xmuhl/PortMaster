@@ -126,7 +126,8 @@ public:
 		bool isBinary;            // 是否为二进制数据
 
 		DisplayUpdate()
-			: dataSize(0), isBinary(false) {}
+			: dataSize(0), isBinary(false) {
+		}
 	};
 
 	/**

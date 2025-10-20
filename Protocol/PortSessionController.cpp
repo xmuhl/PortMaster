@@ -140,7 +140,7 @@ std::shared_ptr<ReliableChannel> PortSessionController::GetReliableChannel()
 	// 实际上可以考虑将m_reliableChannel改为shared_ptr
 	return std::shared_ptr<ReliableChannel>(m_reliableChannel.get(), [](ReliableChannel*) {
 		// 空删除器，不实际删除（由unique_ptr管理）
-	});
+		});
 }
 
 void PortSessionController::ConfigureReliableLogging(bool verbose)
@@ -168,6 +168,26 @@ void PortSessionController::SetErrorCallback(ErrorCallback callback)
 std::shared_ptr<ITransport> PortSessionController::GetTransport()
 {
 	return m_transport;
+}
+
+std::string PortSessionController::GetCurrentPortName() const
+{
+	if (m_transport)
+	{
+		return m_transport->GetPortName();
+	}
+	return "";
+}
+
+std::string PortSessionController::GetTransportTypeName() const
+{
+	// 简化实现：返回通用的传输类型名称
+	// TODO: 后续可以考虑在ITransport接口中添加GetTransportTypeName方法
+	if (m_transport)
+	{
+		return "端口";
+	}
+	return "未知端口";
 }
 
 // ==================== 内部方法 ====================
