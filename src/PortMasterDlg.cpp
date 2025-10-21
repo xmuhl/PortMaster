@@ -637,7 +637,7 @@ void CPortMasterDlg::PauseTransmission()
 void CPortMasterDlg::ResumeTransmission()
 {
 	// 使用TransmissionCoordinator恢复传输任务
-	if (m_transmissionCoordinator && m_transmissionCoordinator->IsRunning())
+	if (m_transmissionCoordinator && m_transmissionCoordinator->IsPaused())
 	{
 		m_transmissionCoordinator->Resume();
 		this->WriteLog("传输协调器已恢复传输任务");
