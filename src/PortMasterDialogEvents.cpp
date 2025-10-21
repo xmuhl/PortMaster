@@ -98,13 +98,28 @@ void PortMasterDialogEvents::HandleDisconnect()
 
 	m_dialog.m_isConnected = false;
 
+	// 【分类4.1修复】缓存初始化失败时提示用户并禁用保存
 	if (m_dialog.m_receiveCacheService)
 	{
 		m_dialog.m_receiveCacheService->Shutdown();
 		m_dialog.m_totalReceivedBytes = 0;
 		if (!m_dialog.m_receiveCacheService->Initialize())
 		{
+			// 缓存初始化失败，提示用户并禁用保存
 			m_dialog.WriteLog("断开连接后重新初始化接收缓存失败");
+			m_dialog.MessageBox(
+				_T("缓存初始化失败，可能导致数据无法正常接收和保存。\n请检查磁盘空间和权限设置。"),
+				_T("缓存错误"),
+				MB_OK | MB_ICONERROR
+			);
+			// 禁用保存按钮
+			m_dialog.m_btnSaveAll.EnableWindow(FALSE);
+			m_dialog.WriteLog("已禁用保存按钮以防止数据丢失");
+		}
+		else
+		{
+			// 缓存初始化成功，恢复保存按钮（如果需要）
+			m_dialog.m_btnSaveAll.EnableWindow(TRUE);
 		}
 	}
 
@@ -163,7 +178,9 @@ void PortMasterDialogEvents::HandleStop()
 			m_dialog.m_isTransmitting = false;
 			m_dialog.m_transmissionPaused = false;
 
-			m_dialog.ClearAllCacheData();
+			// 【分类4.3修复】停止时保留接收缓存，允许用户保存已接收数据
+			// 缓存清理应在：新文件加载、新连接建立、用户明确清除时执行
+			// m_dialog.ClearAllCacheData();  // 已移除
 
 			m_dialog.m_btnSend.SetWindowText(_T("发送"));
 			m_dialog.m_staticPortStatus.SetWindowText(_T("传输已终止"));
@@ -174,7 +191,7 @@ void PortMasterDialogEvents::HandleStop()
 				m_dialog.m_uiController->UpdateTransmissionButtons(false, false);
 			}
 
-			m_dialog.WriteLog("传输已被用户终止，并清除所有缓存数据");
+			m_dialog.WriteLog("传输已被用户终止，接收缓存已保留，允许用户保存已接收数据");
 		}
 	}
 	else
@@ -422,13 +439,19 @@ void PortMasterDialogEvents::CopyReceiveDataToClipboard()
 
 	if (copyData.IsEmpty())
 	{
+		// 【分类4.2修复】错误时同步状态栏
 		m_dialog.MessageBox(_T("没有可复制的数据"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		m_dialog.m_staticPortStatus.SetWindowText(_T("剪贴板复制失败：无数据"));
+		m_dialog.WriteLog("CopyReceiveDataToClipboard: 无可复制数据");
 		return;
 	}
 
 	if (!OpenClipboard(m_dialog.GetSafeHwnd()))
 	{
+		// 【分类4.2修复】错误时同步状态栏
 		m_dialog.MessageBox(_T("无法打开剪贴板"), _T("错误"), MB_OK | MB_ICONERROR);
+		m_dialog.m_staticPortStatus.SetWindowText(_T("剪贴板操作失败"));
+		m_dialog.WriteLog("CopyReceiveDataToClipboard: 无法打开剪贴板");
 		return;
 	}
 	EmptyClipboard();
@@ -456,7 +479,10 @@ void PortMasterDialogEvents::CopyReceiveDataToClipboard()
 	}
 	CloseClipboard();
 
+	// 【分类4.2修复】成功时同步状态栏
 	m_dialog.MessageBox(_T("接收数据已复制到剪贴板"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+	m_dialog.m_staticPortStatus.SetWindowText(_T("数据已复制到剪贴板"));
+	m_dialog.WriteLog("CopyReceiveDataToClipboard: 数据复制成功");
 }
 
 void PortMasterDialogEvents::SaveReceiveDataToFile()
@@ -608,14 +634,21 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 	}
 
 	// 【分类3.5优化】对超大文件的分块处理
-	const size_t PREVIEW_SIZE = 32 * 1024;  // 预览大小32KB
-	bool isLargeFile = fileLength > PREVIEW_SIZE;
-	size_t readSize = isLargeFile ? PREVIEW_SIZE : static_cast<size_t>(fileLength);
+	// 【分类3.5修复】分离预览大小和完整缓存大小
+	const size_t PREVIEW_SIZE = 32 * 1024;  // 预览大小32KB（UI显示）
+	const ULONGLONG MAX_CACHE_SIZE = 512ULL * 1024 * 1024;  // 完整缓存限制512MB（发送用）
 
-	// 检查内存分配可行性
-	if (readSize > 100 * 1024 * 1024)  // 最多分配100MB用于预览
+	bool isLargeFile = fileLength > PREVIEW_SIZE;
+
+	// 计算实际需要读取的数据量：使用完整缓存大小而非预览大小
+	// 从文件长度和缓存限制中取较小值
+	ULONGLONG readSizeULL = (fileLength < MAX_CACHE_SIZE) ? fileLength : MAX_CACHE_SIZE;
+	size_t readSize = static_cast<size_t>(readSizeULL);
+
+	// 内存安全检查：如果计算出现溢出，标记为大文件
+	if (readSize > MAX_CACHE_SIZE || readSizeULL > MAX_CACHE_SIZE)
 	{
-		readSize = 100 * 1024 * 1024;
+		readSize = static_cast<size_t>(MAX_CACHE_SIZE);
 		isLargeFile = true;
 	}
 

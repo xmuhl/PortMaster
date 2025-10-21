@@ -160,12 +160,6 @@ TransportError SerialTransport::Write(const void* data, size_t size, size_t* wri
 		return TransportError::InvalidParameter;
 	}
 
-	// 处理超过DWORD限制的大文件（分段写入）
-	if (size > MAXDWORD)
-	{
-		size = MAXDWORD;
-	}
-
 	std::lock_guard<std::mutex> lock(m_mutex);
 
 	if (m_state != TransportState::Open)
@@ -178,47 +172,79 @@ TransportError SerialTransport::Write(const void* data, size_t size, size_t* wri
 		return TransportError::NotOpen;
 	}
 
-	DWORD bytesWritten = 0;
-	BOOL result = FALSE;
+	// 【分类3.2修复】实现分段循环写入，支持超过4GB的数据
+	size_t totalWritten = 0;
+	const uint8_t* pData = static_cast<const uint8_t*>(data);
 
-	if (m_config.writeTimeout == 0)
+	while (totalWritten < size)
 	{
-		// 非阻塞写入
-		ResetEvent(m_writeEvent);
-		m_writeOverlapped.Internal = 0;
-		m_writeOverlapped.InternalHigh = 0;
-		m_writeOverlapped.Offset = 0;
-		m_writeOverlapped.OffsetHigh = 0;
+		// 计算本次分块大小（不超过MAXDWORD）
+		DWORD chunkSize = static_cast<DWORD>(
+			(size - totalWritten > MAXDWORD)
+			? MAXDWORD
+			: (size - totalWritten)
+		);
 
-		result = WriteFile(m_hSerial, data, static_cast<DWORD>(size), &bytesWritten, &m_writeOverlapped);
+		DWORD bytesWritten = 0;
+		BOOL result = FALSE;
 
-		if (!result && GetLastError() == ERROR_IO_PENDING)
+		if (m_config.writeTimeout == 0)
 		{
-			// 等待写入完成
-			if (GetOverlappedResult(m_hSerial, &m_writeOverlapped, &bytesWritten, TRUE))
+			// 非阻塞写入
+			ResetEvent(m_writeEvent);
+			m_writeOverlapped.Internal = 0;
+			m_writeOverlapped.InternalHigh = 0;
+			m_writeOverlapped.Offset = 0;
+			m_writeOverlapped.OffsetHigh = 0;
+
+			result = WriteFile(m_hSerial, pData + totalWritten, chunkSize, &bytesWritten, &m_writeOverlapped);
+
+			if (!result && GetLastError() == ERROR_IO_PENDING)
 			{
-				result = TRUE;
+				// 等待写入完成
+				if (GetOverlappedResult(m_hSerial, &m_writeOverlapped, &bytesWritten, TRUE))
+				{
+					result = TRUE;
+				}
 			}
 		}
-	}
-	else
-	{
-		// 阻塞写入
-		result = WriteFile(m_hSerial, data, static_cast<DWORD>(size), &bytesWritten, nullptr);
-	}
+		else
+		{
+			// 阻塞写入
+			result = WriteFile(m_hSerial, pData + totalWritten, chunkSize, &bytesWritten, nullptr);
+		}
 
-	if (!result)
-	{
-		std::string error = CommonUtils::GetLastErrorString();
-		ReportError(TransportError::WriteFailed, "Write failed: " + error);
-		return TransportError::WriteFailed;
-	}
+		if (!result)
+		{
+			std::string error = CommonUtils::GetLastErrorString();
+			ReportError(TransportError::WriteFailed, "Write failed at offset " + std::to_string(totalWritten) + ": " + error);
 
-	UpdateStats(bytesWritten, 0);
+			// 返回已写入的字节数
+			if (written)
+			{
+				*written = totalWritten;
+			}
+			return TransportError::WriteFailed;
+		}
+
+		if (bytesWritten == 0)
+		{
+			// 写入停滞，避免无限循环
+			ReportError(TransportError::WriteFailed, "Write returned 0 bytes");
+			if (written)
+			{
+				*written = totalWritten;
+			}
+			return TransportError::WriteFailed;
+		}
+
+		totalWritten += bytesWritten;
+		UpdateStats(bytesWritten, 0);
+	}
 
 	if (written)
 	{
-		*written = bytesWritten;
+		*written = totalWritten;
 	}
 
 	return TransportError::Success;
@@ -236,67 +262,93 @@ TransportError SerialTransport::Read(void* buffer, size_t size, size_t* read, DW
 		return TransportError::InvalidParameter;
 	}
 
-	// 处理超过DWORD限制的大文件（分段读取）
-	if (size > MAXDWORD)
+	// 【分类3.2修复】实现分段循环读取，支持超过4GB的数据
+	size_t totalRead = 0;
+	uint8_t* pBuffer = static_cast<uint8_t*>(buffer);
+
+	while (totalRead < size)
 	{
-		size = MAXDWORD;
-	}
+		// 计算本次分块大小（不超过MAXDWORD）
+		DWORD chunkSize = static_cast<DWORD>(
+			(size - totalRead > MAXDWORD)
+			? MAXDWORD
+			: (size - totalRead)
+		);
 
-	DWORD bytesRead = 0;
+		DWORD bytesRead = 0;
 
-	if (m_config.asyncMode)
-	{
-		// 异步读取
-		OVERLAPPED overlapped = { 0 };
-		overlapped.hEvent = m_readEvent;
-
-		if (!ReadFile(m_hSerial, buffer, static_cast<DWORD>(size), &bytesRead, &overlapped))
+		if (m_config.asyncMode)
 		{
-			if (GetLastError() == ERROR_IO_PENDING)
+			// 异步读取
+			OVERLAPPED overlapped = { 0 };
+			overlapped.hEvent = m_readEvent;
+
+			if (!ReadFile(m_hSerial, pBuffer + totalRead, chunkSize, &bytesRead, &overlapped))
 			{
-				// 等待读取完成
-				DWORD waitResult = WaitForSingleObject(m_readEvent, timeout);
-				if (waitResult == WAIT_OBJECT_0)
+				if (GetLastError() == ERROR_IO_PENDING)
 				{
-					if (!GetOverlappedResult(m_hSerial, &overlapped, &bytesRead, FALSE))
+					// 等待读取完成
+					DWORD waitResult = WaitForSingleObject(m_readEvent, timeout);
+					if (waitResult == WAIT_OBJECT_0)
+					{
+						if (!GetOverlappedResult(m_hSerial, &overlapped, &bytesRead, FALSE))
+						{
+							m_stats.lastErrorCode = GetLastError();
+							if (read)
+								*read = totalRead;
+							return TransportError::ReadFailed;
+						}
+					}
+					else if (waitResult == WAIT_TIMEOUT)
+					{
+						CancelIoEx(m_hSerial, &overlapped);
+						if (read)
+							*read = totalRead;
+						return TransportError::Timeout;
+					}
+					else
 					{
 						m_stats.lastErrorCode = GetLastError();
+						if (read)
+							*read = totalRead;
 						return TransportError::ReadFailed;
 					}
 				}
-				else if (waitResult == WAIT_TIMEOUT)
-				{
-					CancelIo(m_hSerial);
-					return TransportError::Timeout;
-				}
 				else
 				{
+					m_stats.lastErrorCode = GetLastError();
+					if (read)
+						*read = totalRead;
 					return TransportError::ReadFailed;
 				}
 			}
-			else
+		}
+		else
+		{
+			// 同步读取
+			if (!ReadFile(m_hSerial, pBuffer + totalRead, chunkSize, &bytesRead, NULL))
 			{
 				m_stats.lastErrorCode = GetLastError();
+				if (read)
+					*read = totalRead;
 				return TransportError::ReadFailed;
 			}
 		}
-	}
-	else
-	{
-		// 同步读取
-		if (!ReadFile(m_hSerial, buffer, static_cast<DWORD>(size), &bytesRead, NULL))
+
+		if (bytesRead == 0)
 		{
-			m_stats.lastErrorCode = GetLastError();
-			return TransportError::ReadFailed;
+			// 读取停滞（可能EOF），返回已读数据
+			break;
 		}
+
+		totalRead += bytesRead;
+		UpdateStats(0, bytesRead);
 	}
 
 	if (read)
 	{
-		*read = bytesRead;
+		*read = totalRead;
 	}
-
-	UpdateStats(0, bytesRead);
 
 	return TransportError::Success;
 }
