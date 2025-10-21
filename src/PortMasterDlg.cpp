@@ -1227,29 +1227,35 @@ void CPortMasterDlg::UpdateReceiveCache(const std::vector<uint8_t>& data)
 
 void CPortMasterDlg::OnBnClickedRadioReliable()
 {
-	// 【阶段C修复】检测连接状态，若已连接则提示用户重新连接
+	// 【分类6修复】模式切换时自动执行"断开→重连"并刷新UI
 	if (m_isConnected)
 	{
-		MessageBox(_T("可靠模式已选择。\n\n当前连接使用的是之前的传输模式，\n请断开并重新连接以应用新模式。"),
-			_T("模式切换提示"), MB_OK | MB_ICONWARNING);
+		WriteLog("OnBnClickedRadioReliable: 检测到已连接，执行自动断开→重连");
 
-		// 设置重新连接标志
-		m_requiresReconnect = true;
-
-		// 禁用发送和停止按钮，防止错误使用旧连接
-		if (m_uiController)
+		// 自动断开当前连接
+		if (m_eventDispatcher)
 		{
-			m_uiController->UpdateTransmissionButtons(false, false);
-			m_uiController->SetStatusText(_T("模式已切换，请重新连接"));
+			m_eventDispatcher->HandleDisconnect();
+			WriteLog("OnBnClickedRadioReliable: 已执行断开操作");
+		}
+
+		// 短暂延迟以确保断开完成
+		Sleep(500);
+
+		// 自动重新连接
+		if (m_eventDispatcher)
+		{
+			m_eventDispatcher->HandleConnect();
+			WriteLog("OnBnClickedRadioReliable: 已执行重新连接");
 		}
 	}
 	else
 	{
-		// 未连接时，正常提示模式选择
-		MessageBox(_T("可靠模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		// 未连接时，仅更新模式提示
+		WriteLog("OnBnClickedRadioReliable: 未连接状态，仅更新模式");
 	}
 
-	// 更新状态条模式信息
+	// 更新状态条模式信息并刷新UI
 	if (m_uiController)
 	{
 		m_uiController->SetModeText(_T("可靠"));
@@ -1505,29 +1511,35 @@ void CPortMasterDlg::SaveBinaryDataToFile(const CString& filePath, const std::ve
 
 void CPortMasterDlg::OnBnClickedRadioDirect()
 {
-	// 【阶段C修复】检测连接状态，若已连接则提示用户重新连接
+	// 【分类6修复】模式切换时自动执行"断开→重连"并刷新UI
 	if (m_isConnected)
 	{
-		MessageBox(_T("直通模式已选择。\n\n当前连接使用的是之前的传输模式，\n请断开并重新连接以应用新模式。"),
-			_T("模式切换提示"), MB_OK | MB_ICONWARNING);
+		WriteLog("OnBnClickedRadioDirect: 检测到已连接，执行自动断开→重连");
 
-		// 设置重新连接标志
-		m_requiresReconnect = true;
-
-		// 禁用发送和停止按钮，防止错误使用旧连接
-		if (m_uiController)
+		// 自动断开当前连接
+		if (m_eventDispatcher)
 		{
-			m_uiController->UpdateTransmissionButtons(false, false);
-			m_uiController->SetStatusText(_T("模式已切换，请重新连接"));
+			m_eventDispatcher->HandleDisconnect();
+			WriteLog("OnBnClickedRadioDirect: 已执行断开操作");
+		}
+
+		// 短暂延迟以确保断开完成
+		Sleep(500);
+
+		// 自动重新连接
+		if (m_eventDispatcher)
+		{
+			m_eventDispatcher->HandleConnect();
+			WriteLog("OnBnClickedRadioDirect: 已执行重新连接");
 		}
 	}
 	else
 	{
-		// 未连接时，正常提示模式选择
-		MessageBox(_T("直通模式选择"), _T("提示"), MB_OK | MB_ICONINFORMATION);
+		// 未连接时，仅更新模式提示
+		WriteLog("OnBnClickedRadioDirect: 未连接状态，仅更新模式");
 	}
 
-	// 更新状态条模式信息
+	// 更新状态条模式信息并刷新UI
 	if (m_uiController)
 	{
 		m_uiController->SetModeText(_T("直通"));
