@@ -14,6 +14,7 @@
 #include "PortMasterDialogEvents.h"
 #include "StatusDisplayManager.h"
 #include "../Protocol/PortSessionController.h"
+#include "../Transport/LoopbackTransport.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -191,6 +192,7 @@ private:
 
 	// 传输配置
 	TransportConfig m_transportConfig;
+	LoopbackConfig m_currentLoopbackConfig;  // 【分类6修复】当选择Loopback模式时使用此配置
 	ReliableConfig m_reliableConfig;
 
 	// 统计信息

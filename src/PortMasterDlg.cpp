@@ -1628,11 +1628,28 @@ void CPortMasterDlg::BuildTransportConfigFromUI()
 	{
 		m_transportConfig.portType = PortType::PORT_TYPE_LOOPBACK;
 		m_transportConfig.portName = "Loopback";
-		// 【阶段B修复】从ConfigStore读取Loopback配置参数
+		// 【分类6修复】从ConfigStore读取Loopback配置参数并完整传递
 		LoopbackTestConfig loopbackCfg = m_configStore.GetLoopbackConfig();
-		// 注意：LoopbackTransport会在创建时使用这些参数
-		WriteLog("BuildTransportConfigFromUI: 回路测试配置 - maxQueueSize=" + std::to_string(loopbackCfg.maxQueueSize) +
-			", delayMs=" + std::to_string(loopbackCfg.delayMs) + "ms");
+
+		// 初始化m_currentLoopbackConfig，将LoopbackTestConfig参数映射到LoopbackConfig
+		m_currentLoopbackConfig.portType = PortType::PORT_TYPE_LOOPBACK;
+		m_currentLoopbackConfig.portName = "Loopback";
+		m_currentLoopbackConfig.readTimeout = 1000;
+		m_currentLoopbackConfig.writeTimeout = 1000;
+		m_currentLoopbackConfig.bufferSize = 4096;
+		m_currentLoopbackConfig.asyncMode = true;
+
+		// 传递Loopback特定参数
+		m_currentLoopbackConfig.delayMs = loopbackCfg.delayMs;
+		m_currentLoopbackConfig.errorRate = static_cast<uint32_t>(loopbackCfg.errorRate);
+		m_currentLoopbackConfig.packetLossRate = static_cast<uint32_t>(loopbackCfg.packetLossRate);
+		m_currentLoopbackConfig.enableJitter = loopbackCfg.enableJitter;
+		m_currentLoopbackConfig.jitterMaxMs = static_cast<uint32_t>(loopbackCfg.jitterMaxMs);
+		m_currentLoopbackConfig.maxQueueSize = static_cast<uint32_t>(loopbackCfg.maxQueueSize);
+		m_currentLoopbackConfig.enableLogging = true;
+
+		WriteLog("BuildTransportConfigFromUI: 回路测试配置完整传递 - maxQueueSize=" + std::to_string(m_currentLoopbackConfig.maxQueueSize) +
+			", delayMs=" + std::to_string(m_currentLoopbackConfig.delayMs) + "ms, errorRate=" + std::to_string(m_currentLoopbackConfig.errorRate) + "%");
 		break;
 	}
 	default:

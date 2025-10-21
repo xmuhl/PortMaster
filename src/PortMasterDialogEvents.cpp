@@ -52,7 +52,12 @@ void PortMasterDialogEvents::HandleConnect()
 		m_dialog.WriteLog("OnBnClickedButtonConnect: 可靠传输配置已设置，timeoutMax=" + std::to_string(m_dialog.m_reliableConfig.timeoutMax) + "ms");
 	}
 
-	if (!m_dialog.m_sessionController || !m_dialog.m_sessionController->Connect(m_dialog.m_transportConfig, useReliableMode))
+	// 【分类6修复】选择合适的config对象：Loopback模式使用m_currentLoopbackConfig，其他模式使用m_transportConfig
+	const TransportConfig& selectedConfig = (m_dialog.m_transportConfig.portType == PortType::PORT_TYPE_LOOPBACK)
+		? static_cast<const TransportConfig&>(m_dialog.m_currentLoopbackConfig)
+		: m_dialog.m_transportConfig;
+
+	if (!m_dialog.m_sessionController || !m_dialog.m_sessionController->Connect(selectedConfig, useReliableMode))
 	{
 		m_dialog.WriteLog("OnBnClickedButtonConnect: 连接失败");
 		m_dialog.MessageBox(_T("连接失败"), _T("错误"), MB_OK | MB_ICONERROR);
