@@ -858,6 +858,13 @@ void CPortMasterDlg::PerformDataTransmission()
 
 void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress)
 {
+	// 【第二轮修复】检查窗口句柄有效性，避免PostMessage到已销毁窗口导致宕机
+	if (!IsWindow(GetSafeHwnd()))
+	{
+		// 窗口已销毁，直接返回，避免继续处理
+		return;
+	}
+
 	// 使用PostMessage确保线程安全的UI更新
 	int progressPercent = progress.progressPercent;
 	PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
@@ -871,7 +878,18 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	// 使用StringUtils替代MFC宏，消除内存风险
 	std::wstring statusTextW = StringUtils::WideEncodeUtf8(progress.statusText);
 	*statusText = statusTextW.c_str();  // 直接赋值，不再Format追加
-	PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
+
+	// 【第二轮修复】再次检查窗口有效性
+	if (IsWindow(GetSafeHwnd()))
+	{
+		PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
+	}
+	else
+	{
+		// 窗口已销毁，释放内存并返回
+		delete statusText;
+		return;
+	}
 
 	// ✅ 删除进度日志记录，保持日志清洁
 	// 不再记录每个数据块的传输进度，以减少日志文件体积
@@ -1928,6 +1946,8 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		if (m_uiController)
 		{
 			m_uiController->SetStatusText(completeStatus);
+			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
+			m_uiController->UpdateTransmissionButtons(false, false);
 		}
 		SetProgressPercent(100);
 
@@ -1960,6 +1980,8 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 		if (m_uiController)
 		{
 			m_uiController->SetStatusText(errorStatus);
+			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
+			m_uiController->UpdateTransmissionButtons(false, false);
 		}
 		SetProgressPercent(0, true);
 
@@ -2130,6 +2152,8 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		{
 			m_uiController->SetSendButtonText(_T("发送"));
 			m_uiController->SetStatusText(_T("传输已终止"));
+			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
+			m_uiController->UpdateTransmissionButtons(false, false);
 		}
 		SetProgressPercent(0, true);
 
@@ -2147,6 +2171,8 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		if (m_uiController)
 		{
 			m_uiController->SetSendButtonText(_T("发送"));
+			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
+			m_uiController->UpdateTransmissionButtons(false, false);
 		}
 
 		CString errorMsg;
@@ -2199,6 +2225,8 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		if (m_uiController)
 		{
 			m_uiController->SetSendButtonText(_T("发送"));
+			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
+			m_uiController->UpdateTransmissionButtons(false, false);
 		}
 
 		// 【阶段B修复】传输完成后立即更新保存按钮状态
@@ -2256,6 +2284,8 @@ LRESULT CPortMasterDlg::OnTransmissionError(WPARAM wParam, LPARAM lParam)
 	if (m_uiController)
 	{
 		m_uiController->SetSendButtonText(_T("发送"));
+		// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
+		m_uiController->UpdateTransmissionButtons(false, false);
 	}
 
 	MessageBox(_T("传输过程中发生异常"), _T("错误"), MB_OK | MB_ICONERROR);

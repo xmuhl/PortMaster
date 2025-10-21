@@ -1,0 +1,187 @@
+PortMaster程序关闭宕机问题分析 - 关键发现总结
+
+================================================================================
+问题1：OnTransmissionProgress中的无效窗口PostMessage
+================================================================================
+位置: /mnt/c/Users/huangl/Desktop/PortMaster/src/PortMasterDlg.cpp
+行号: 859-878 (OnTransmissionProgress函数)
+严重性: 致命 (导致系统错误弹窗，程序崩溃)
+
+具体风险行号:
+  - 第863行: PostMessage(WM_USER + 11, ...) - 无效窗口检查
+  - 第874行: PostMessage(WM_USER + 12, ...) - 无效窗口检查
+
+问题描述:
+  当传输任务正在运行时，用户关闭窗口会导致：
+  1. OnCancel() → ShutdownActiveTransmission()
+  2. 后台线程在执行OnTransmissionProgress回调
+  3. 回调线程的PostMessage尝试发送到已销毁的窗口
+  4. Windows系统抛出异常导致宕机
+
+修复状态: ✅ 已修复 (通过提前在OnCancel/OnClose中清理)
+建议改进: 添加 if (!IsWindow(GetSafeHwnd())) return; 检查
+
+================================================================================
+问题2：TransmissionCoordinator::Cancel中的线程安全问题
+================================================================================
+位置: /mnt/c/Users/huangl/Desktop/PortMaster/src/TransmissionCoordinator.cpp
+行号: 84-90 (Cancel方法)
+严重性: 严重 (可能导致死锁或内存崩溃)
+
+具体风险行号:
+  - 第88行: m_currentTask->Cancel() - 不等待线程完成
+  - 第89行: m_currentTask.reset() - 直接释放对象，可能竞态条件
+
+问题描述:
+  Cancel方法没有等待传输线程真正停止就释放对象，导致：
+  1. 任务析构调用Stop()
+  2. Stop()在第126行尝试join()自己
+  3. 后台线程仍在执行，试图访问已释放的对象
+  4. 可能崩溃或死锁
+
+修复状态: ⚠️ 部分修复
+  - TransmissionTask::Stop()在第113-128行有自阻塞检测
+  - ShutdownActiveTransmission()在第567-575行有超时等待
+
+建议改进: 使用shared_ptr<TransmissionTask>而非unique_ptr保护对象生命周期
+
+================================================================================
+问题3：PortSessionController::ReceiveThreadProc中的无限循环
+================================================================================
+位置: /mnt/c/Users/huangl/Desktop/PortMaster/Protocol/PortSessionController.cpp
+行号: 302-341 (ReceiveThreadProc方法)
+严重性: 严重 (可能导致资源泄漏或清理超时)
+
+具体风险行号:
+  - 第306行: while (m_isConnected) - 无超时退出机制
+  - 第314-316行: m_reliableChannel->Receive(...) + OnDataReceived(data)
+  - 第324-325行: m_transport->Read(...) 回调
+  - 第119-127行 (StopReceiveSession): m_receiveThread.join() 可能无限等待
+
+问题描述:
+  接收线程没有超时机制，导致：
+  1. StopReceiveSession()设置m_isConnected = false
+  2. 但如果回调正在执行耗时操作
+  3. join()会被永久阻塞
+  4. 程序无法在2秒内完成关闭
+
+修复状态: ⚠️ 部分修复 (ShutdownActiveTransmission有超时等待)
+建议改进: 使用条件变量替代m_isConnected标志，在StopReceiveSession中通知
+
+================================================================================
+问题4：后台线程在回调中更新UI后立即销毁对象
+================================================================================
+位置: /mnt/c/Users/huangl/Desktop/PortMaster/src/TransmissionTask.cpp
+行号: 329-355 (UpdateProgress和ReportCompletion方法)
+严重性: 致命 (竞态条件导致UAF-Use After Free)
+
+具体风险行号:
+  - 第334行: m_progressCallback(progress) - 后台回调
+  - 第342-354行: ReportCompletion中的m_completionCallback()
+  - TransmissionCoordinator.cpp第89行: m_currentTask.reset()
+
+问题描述:
+  竞态条件导致：
+  1. 后台线程在ReportCompletion()中调用m_completionCallback
+  2. OnTransmissionCompleted()发送PostMessage
+  3. UI线程立即处理消息，调用Cancel()
+  4. Cancel()释放任务对象
+  5. 但后台线程仍在执行，访问已释放的对象
+
+修复状态: ✅ 已修复 (通过隔离销毁时机到ShutdownActiveTransmission)
+建议改进: 使用shared_ptr保护对象生命周期
+
+================================================================================
+问题5：ReliableChannel::Receive中的条件变量死锁
+================================================================================
+位置: /mnt/c/Users/huangl/Desktop/PortMaster/Protocol/ReliableChannel.cpp
+行号: 不详 (需查看ReliableChannel实现)
+严重性: 严重 (可能导致程序无响应/卡死)
+
+问题描述:
+  条件变量模式使用不当，导致：
+  1. 接收线程在Receive()中等待条件变量（锁定互斥锁）
+  2. 主线程在Shutdown()中获取同一互斥锁
+  3. 双方都在等待对方 → 死锁
+  4. ShutdownActiveTransmission()在join()处永久阻塞
+
+修复状态: ⚠️ 部分修复 (有超时等待，但无法恢复)
+建议改进: 在Receive()中使用wait_for()而非wait()，确保线程可被唤醒
+
+================================================================================
+关键函数调用链 - 程序关闭路径
+================================================================================
+
+用户点击X关闭按钮
+  ↓
+CPortMasterDlg::OnCancel() [src/PortMasterDlg.cpp:617]
+  或 CPortMasterDlg::OnClose() [src/PortMasterDlg.cpp:627]
+  ↓
+CPortMasterDlg::ShutdownActiveTransmission() [src/PortMasterDlg.cpp:549]
+  ├→ 第552行: if (m_shutdownInProgress.exchange(true)) return;  // 幂等保护
+  ├→ 第560-578行: m_transmissionCoordinator->Cancel() 并等待最多2秒
+  ├→ 第581-586行: m_sessionController->StopReceiveSession()
+  ├→ 第588-594行: m_receiveCacheService->Shutdown()
+  └→ 第596-602行: m_sessionController->Disconnect()
+
+传输进度回调路径 (后台线程)
+  ↓
+后台传输线程 TransmissionTask::ExecuteTransmission()
+  ↓
+TransmissionTask::UpdateProgress() [src/TransmissionTask.cpp:329]
+  ↓
+m_progressCallback() → CPortMasterDlg::OnTransmissionProgress() [src/PortMasterDlg.cpp:859]
+  ├→ 第863行: PostMessage(WM_USER + 11, ...) - 需要IsWindow检查
+  └→ 第874行: PostMessage(WM_USER + 12, ...) - 需要IsWindow检查
+
+================================================================================
+宕机风险汇总表
+================================================================================
+
+# | 位置 | 行号 | 类型 | 严重性 | 状态 | 修复优先级
+--|------|------|------|--------|------|----------
+1 | PortMasterDlg.cpp | 859-878 | PostMessage无效窗口 | 致命 | 已修复 | 低
+2 | TransmissionCoordinator.cpp | 84-90 | 线程不同步 | 严重 | 部分修复 | 高
+3 | PortSessionController.cpp | 302-341 | 接收超时 | 严重 | 部分修复 | 高
+4 | TransmissionTask.cpp | 329-355 | 竞态条件UAF | 致命 | 已修复 | 低
+5 | ReliableChannel.cpp | - | 条件变量死锁 | 严重 | 部分修复 | 高
+
+================================================================================
+推荐修复优先级
+================================================================================
+
+优先级1 (紧急 - 仍存在宕机风险):
+  ☐ 问题2: 在TransmissionCoordinator::Cancel中等待线程完成
+  ☐ 问题3: 在ReceiveThreadProc中使用条件变量和超时
+  ☐ 问题5: 在ReliableChannel::Receive中使用wait_for
+
+优先级2 (高 - 增强稳定性):
+  ☐ 问题1: 在所有PostMessage前添加IsWindow检查
+  ☐ 问题4: 使用shared_ptr保护任务对象生命周期
+
+优先级3 (中 - 改进设计):
+  ☐ 添加单元测试验证多线程清理流程
+  ☐ 添加死锁检测和超时恢复机制
+  ☐ 完整的线程安全审计
+
+================================================================================
+测试验证清单
+================================================================================
+
+必做测试：
+  [ ] 测试1: 传输过程中快速关闭 (加载100MB文件，50%时关闭)
+  [ ] 测试2: 暂停后立即关闭 (暂停20%时立即关闭)
+  [ ] 测试3: 可靠模式清理 (在可靠模式传输时关闭)
+
+验证标准：
+  ✓ 无系统错误弹窗
+  ✓ 日志中出现完整的"程序关闭："序列
+  ✓ 程序在5秒内正常退出
+  ✓ 无死锁（无无响应状态）
+  ✓ DebugView中无异常日志
+
+================================================================================
+文件生成时间: 2025-10-21
+分析涵盖版本: commit 9ae3e8b (最新修订)
+报告详细版本: docs/程序关闭宕机风险深度分析报告-20251021.md
+================================================================================
