@@ -157,6 +157,7 @@ private:
 	std::atomic<bool> m_transmissionPaused;  // 新增：传输暂停状态
 	std::atomic<bool> m_transmissionCancelled;  // 新增：传输取消状态
 	std::atomic<bool> m_requiresReconnect;  // 【阶段C新增】模式切换后需要重新连接标志
+	std::atomic<bool> m_shutdownInProgress;  // 【阶段二新增】程序关闭时的幂等保护标志
 	std::thread m_receiveThread;
 	// 【Stage4迁移】移除传输线程，由TransmissionCoordinator管理
 	std::mutex m_reliableSessionMutex;         // 可靠模式进度统计互斥锁
@@ -247,8 +248,13 @@ private:
 	// 【数据稳定性检测】保存后验证机制
 	bool VerifySavedFileSize(const CString& filePath, size_t expectedSize);
 
-	// 重写虚函数用于资源清理
+	// 【阶段二修复】程序关闭时传输资源清理（幂等设计）
+	void ShutdownActiveTransmission();
+
+	// 重写虚函数用于资源清理和窗口关闭处理
 	virtual void PostNcDestroy();
+	virtual void OnCancel();
+	virtual void OnClose();
 
 	// 配置管理方法
 	void LoadConfigurationFromStore();

@@ -112,6 +112,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	m_transmissionPaused(false),
 	m_transmissionCancelled(false),
 	m_requiresReconnect(false),  // 【阶段C初始化】模式切换标志初始化为false
+	m_shutdownInProgress(false),  // 【阶段二初始化】程序关闭幂等标志初始化为false
 	m_receiveThread(),
 	// 【Stage4迁移】移除传输线程初始化，由TransmissionCoordinator管理
 	m_reliableSessionMutex(),
@@ -544,56 +545,98 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 	CDialogEx::OnTimer(nIDEvent);
 }
 
+// 【阶段二修复】程序关闭时清理传输资源（幂等设计，防止重复调用）
+void CPortMasterDlg::ShutdownActiveTransmission()
+{
+	// 幂等保护：防止重复调用
+	if (m_shutdownInProgress.exchange(true))
+	{
+		return;  // 已在清理过程中，忽略重复调用
+	}
+
+	try
+	{
+		// 1. 停止所有活跃的传输任务
+		if (m_transmissionCoordinator)
+		{
+			if (m_transmissionCoordinator->IsRunning() || m_transmissionCoordinator->IsPaused())
+			{
+				WriteLog("程序关闭：正在取消活跃的传输任务...");
+				m_transmissionCoordinator->Cancel();
+
+				// 等待传输线程完成（超时保护：最多等待2秒）
+				for (int i = 0; i < 20; ++i)
+				{
+					if (!m_transmissionCoordinator->IsRunning() && !m_transmissionCoordinator->IsPaused())
+					{
+						break;
+					}
+					Sleep(100);  // 每100ms检查一次
+				}
+				WriteLog("程序关闭：传输任务已取消");
+			}
+		}
+
+		// 2. 停止接收会话
+		if (m_sessionController)
+		{
+			WriteLog("程序关闭：正在停止接收会话...");
+			m_sessionController->StopReceiveSession();
+			WriteLog("程序关闭：接收会话已停止");
+		}
+
+		// 3. 清理ReceiveCacheService（临时缓存文件功能已迁移到服务层）
+		if (m_receiveCacheService)
+		{
+			WriteLog("程序关闭：正在关闭临时缓存服务...");
+			m_receiveCacheService->Shutdown();
+			WriteLog("程序关闭：临时缓存服务已关闭");
+		}
+
+		// 4. 断开传输连接
+		if (m_sessionController)
+		{
+			WriteLog("程序关闭：正在断开传输连接...");
+			m_sessionController->Disconnect();
+			WriteLog("程序关闭：传输连接已断开");
+		}
+
+		WriteLog("程序关闭：所有资源已清理完毕");
+	}
+	catch (const std::exception& e)
+	{
+		WriteLog(std::string("程序关闭时发生异常: ") + e.what());
+	}
+	catch (...)
+	{
+		WriteLog("程序关闭时发生未知异常");
+	}
+}
+
+// 【阶段二修复】重载OnCancel方法，在销毁前执行清理
+void CPortMasterDlg::OnCancel()
+{
+	// 窗口句柄仍然有效时执行清理，避免PostMessage到无效窗口
+	ShutdownActiveTransmission();
+
+	// 调用基类实现默认的cancel逻辑
+	CDialogEx::OnCancel();
+}
+
+// 【阶段二修复】重载OnClose方法，在销毁前执行清理
+void CPortMasterDlg::OnClose()
+{
+	// 窗口句柄仍然有效时执行清理，避免PostMessage到无效窗口
+	ShutdownActiveTransmission();
+
+	// 调用基类实现默认的close逻辑
+	CDialogEx::OnClose();
+}
+
 void CPortMasterDlg::PostNcDestroy()
 {
-	// 【Stage4迁移】程序关闭前清理所有活跃的传输任务和资源
-
-	// 1. 停止所有活跃的传输任务
-	if (m_transmissionCoordinator)
-	{
-		if (m_transmissionCoordinator->IsRunning() || m_transmissionCoordinator->IsPaused())
-		{
-			WriteLog("程序关闭：正在取消活跃的传输任务...");
-			m_transmissionCoordinator->Cancel();
-
-			// 等待传输线程完成（超时保护：最多等待2秒）
-			for (int i = 0; i < 20; ++i)
-			{
-				if (!m_transmissionCoordinator->IsRunning() && !m_transmissionCoordinator->IsPaused())
-				{
-					break;
-				}
-				Sleep(100);  // 每100ms检查一次
-			}
-			WriteLog("程序关闭：传输任务已取消");
-		}
-	}
-
-	// 2. 停止接收会话
-	if (m_sessionController)
-	{
-		WriteLog("程序关闭：正在停止接收会话...");
-		m_sessionController->StopReceiveSession();
-		WriteLog("程序关闭：接收会话已停止");
-	}
-
-	// 3. 清理ReceiveCacheService（临时缓存文件功能已迁移到服务层）
-	if (m_receiveCacheService)
-	{
-		WriteLog("程序关闭：正在关闭临时缓存服务...");
-		m_receiveCacheService->Shutdown();
-		WriteLog("程序关闭：临时缓存服务已关闭");
-	}
-
-	// 4. 断开传输连接
-	if (m_sessionController)
-	{
-		WriteLog("程序关闭：正在断开传输连接...");
-		m_sessionController->Disconnect();
-		WriteLog("程序关闭：传输连接已断开");
-	}
-
-	WriteLog("程序关闭：所有资源已清理完毕");
+	// 【阶段二修复】简化PostNcDestroy，所有清理逻辑已移至ShutdownActiveTransmission
+	// 此处仅调用基类实现，避免销毁后继续触发回调
 	CDialogEx::PostNcDestroy();
 }
 
@@ -643,6 +686,8 @@ void CPortMasterDlg::StartTransmission()
 	{
 		m_uiController->SetSendButtonText(_T("中断"));
 		m_uiController->SetStatusText(_T("数据传输已开始"));
+		// 【阶段一修复】启用停止按钮，禁用发送和文件按钮
+		m_uiController->UpdateTransmissionButtons(true, false);
 	}
 
 	// 【Stage4迁移】使用TransmissionCoordinator启动实际传输
@@ -663,6 +708,8 @@ void CPortMasterDlg::PauseTransmission()
 		{
 			m_uiController->SetSendButtonText(_T("继续"));
 			m_uiController->SetStatusText(_T("传输已暂停"));
+			// 【阶段一修复】暂停状态时停止按钮仍保持启用，但标记paused=true
+			m_uiController->UpdateTransmissionButtons(true, true);
 		}
 	}
 	else
@@ -687,6 +734,8 @@ void CPortMasterDlg::ResumeTransmission()
 		{
 			m_uiController->SetSendButtonText(_T("中断"));
 			m_uiController->SetStatusText(_T("传输已恢复"));
+			// 【阶段一修复】恢复状态时停止按钮保持启用，标记paused=false
+			m_uiController->UpdateTransmissionButtons(true, false);
 		}
 	}
 	else
