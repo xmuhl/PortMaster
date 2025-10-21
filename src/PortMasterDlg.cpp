@@ -546,14 +546,54 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 
 void CPortMasterDlg::PostNcDestroy()
 {
-	// 【Stage4迁移】使用TransmissionCoordinator管理传输，无需手动清理线程
+	// 【Stage4迁移】程序关闭前清理所有活跃的传输任务和资源
 
-	// 清理ReceiveCacheService（临时缓存文件功能已迁移到服务层）
-	if (m_receiveCacheService)
+	// 1. 停止所有活跃的传输任务
+	if (m_transmissionCoordinator)
 	{
-		m_receiveCacheService->Shutdown();
+		if (m_transmissionCoordinator->IsRunning() || m_transmissionCoordinator->IsPaused())
+		{
+			WriteLog("程序关闭：正在取消活跃的传输任务...");
+			m_transmissionCoordinator->Cancel();
+
+			// 等待传输线程完成（超时保护：最多等待2秒）
+			for (int i = 0; i < 20; ++i)
+			{
+				if (!m_transmissionCoordinator->IsRunning() && !m_transmissionCoordinator->IsPaused())
+				{
+					break;
+				}
+				Sleep(100);  // 每100ms检查一次
+			}
+			WriteLog("程序关闭：传输任务已取消");
+		}
 	}
 
+	// 2. 停止接收会话
+	if (m_sessionController)
+	{
+		WriteLog("程序关闭：正在停止接收会话...");
+		m_sessionController->StopReceiveSession();
+		WriteLog("程序关闭：接收会话已停止");
+	}
+
+	// 3. 清理ReceiveCacheService（临时缓存文件功能已迁移到服务层）
+	if (m_receiveCacheService)
+	{
+		WriteLog("程序关闭：正在关闭临时缓存服务...");
+		m_receiveCacheService->Shutdown();
+		WriteLog("程序关闭：临时缓存服务已关闭");
+	}
+
+	// 4. 断开传输连接
+	if (m_sessionController)
+	{
+		WriteLog("程序关闭：正在断开传输连接...");
+		m_sessionController->Disconnect();
+		WriteLog("程序关闭：传输连接已断开");
+	}
+
+	WriteLog("程序关闭：所有资源已清理完毕");
 	CDialogEx::PostNcDestroy();
 }
 

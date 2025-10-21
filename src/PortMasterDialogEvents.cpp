@@ -146,7 +146,8 @@ void PortMasterDialogEvents::HandleSend()
 
 void PortMasterDialogEvents::HandleStop()
 {
-	if (m_dialog.m_transmissionCoordinator && m_dialog.m_transmissionCoordinator->IsRunning())
+	if (m_dialog.m_transmissionCoordinator &&
+		(m_dialog.m_transmissionCoordinator->IsRunning() || m_dialog.m_transmissionCoordinator->IsPaused()))
 	{
 		int result = m_dialog.MessageBox(_T("确认终止传输？"), _T("确认终止传输"), MB_YESNO | MB_ICONQUESTION);
 		if (result == IDYES)
