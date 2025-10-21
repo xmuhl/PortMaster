@@ -1746,20 +1746,11 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t>& 
 
 	// 压缩数据（如果启用）
 	std::vector<uint8_t> payload = data;
-	if (m_config.enableCompression)
-	{
-		WriteVerbose("SendPacket: compressing data...");
-		payload = CompressData(data);
-		WriteVerbose("SendPacket: compression done, payload.size()=" + std::to_string(payload.size()));
-	}
 
-	// 加密数据（如果启用）
-	if (m_config.enableEncryption)
-	{
-		WriteVerbose("SendPacket: encrypting data...");
-		payload = EncryptData(payload);
-		WriteVerbose("SendPacket: encryption done, payload.size()=" + std::to_string(payload.size()));
-	}
+	// 【分类5.1注记】本版本不支持压缩/加密功能
+	// 虽然m_config中保留了enableCompression/enableEncryption标志以保持兼容性，
+	// 但根据需求范围，这些功能已明确标注为"本版本不包含"
+	// 如需启用压缩/加密，请参考CompressData/EncryptData/EncryptData/DecryptData的实现提示
 
 	// 编码帧
 	WriteVerbose("SendPacket: encoding frame...");

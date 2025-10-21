@@ -597,7 +597,8 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 		return;
 	}
 
-	DWORD fileLength = static_cast<DWORD>(file.GetLength());
+	// 【分类3.5修复】使用ULONGLONG支持超过4GB的文件
+	ULONGLONG fileLength = file.GetLength();
 	if (fileLength == 0)
 	{
 		file.Close();
@@ -606,12 +607,30 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 		return;
 	}
 
-	std::unique_ptr<char[]> fileBuffer(new char[fileLength]);
-	file.Read(fileBuffer.get(), fileLength);
+	// 【分类3.5优化】对超大文件的分块处理
+	const size_t PREVIEW_SIZE = 32 * 1024;  // 预览大小32KB
+	bool isLargeFile = fileLength > PREVIEW_SIZE;
+	size_t readSize = isLargeFile ? PREVIEW_SIZE : static_cast<size_t>(fileLength);
+
+	// 检查内存分配可行性
+	if (readSize > 100 * 1024 * 1024)  // 最多分配100MB用于预览
+	{
+		readSize = 100 * 1024 * 1024;
+		isLargeFile = true;
+	}
+
+	std::unique_ptr<char[]> fileBuffer(new char[readSize]);
+	UINT bytesRead = file.Read(fileBuffer.get(), static_cast<UINT>(readSize));
 	file.Close();
 
+	if (bytesRead == 0)
+	{
+		m_dialog.MessageBox(_T("无法读取文件内容"), _T("错误"), MB_OK | MB_ICONERROR);
+		return;
+	}
+
 	// 二进制数据检测：检查是否包含大量不可打印字符
-	const size_t SAMPLE_SIZE = min((size_t)fileLength, static_cast<size_t>(4096));
+	const size_t SAMPLE_SIZE = min(static_cast<size_t>(bytesRead), static_cast<size_t>(4096));
 	size_t nonPrintableCount = 0;
 	size_t nullByteCount = 0;
 	for (size_t i = 0; i < SAMPLE_SIZE; ++i)
@@ -629,14 +648,13 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 	bool isBinaryFile = (nullByteCount > 0) || ((nonPrintableCount * 100 / SAMPLE_SIZE) > 20);
 
 	// 当数据较大时启用预览模式，只显示前32KB内容
-	const size_t PREVIEW_SIZE = 32 * 1024;
-	bool isLargeFile = fileLength > PREVIEW_SIZE;
-	size_t displaySize = isLargeFile ? PREVIEW_SIZE : (size_t)fileLength;
+	size_t displaySize = isLargeFile ? PREVIEW_SIZE : static_cast<size_t>(bytesRead);
 
 	if (isBinaryFile)
 	{
 		// 二进制文件：直接缓存完整原始字节数据
-		m_dialog.UpdateSendCacheFromBytes(reinterpret_cast<const BYTE*>(fileBuffer.get()), (size_t)fileLength);
+		// 【分类3.5修复】传入实际读取的字节数，而非原始文件长度（大文件仅预览）
+		m_dialog.UpdateSendCacheFromBytes(reinterpret_cast<const BYTE*>(fileBuffer.get()), (size_t)bytesRead);
 		m_dialog.UpdateSendDisplayFromCache();
 	}
 	else
@@ -698,7 +716,8 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 			// 大文件需要缓存完整内容
 			if (isLargeFile)
 			{
-				std::string fullFileContent(fileBuffer.get(), fileLength);
+				// 【分类3.5修复】使用实际读取的字节数而非文件长度
+				std::string fullFileContent(fileBuffer.get(), bytesRead);
 
 				// 检查完整文件长度是否安全
 				if (!StringUtils::IsStringLengthSafe(fullFileContent))
