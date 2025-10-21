@@ -544,6 +544,15 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 			}
 		}
 	}
+	else if (nIDEvent == 3)
+	{
+		// 【分类6.4优化】异步清空传输速度显示，避免UI卡顿
+		KillTimer(3);
+		if (m_uiController)
+		{
+			m_uiController->SetStaticText(IDC_STATIC_SPEED, _T(""));
+		}
+	}
 
 	CDialogEx::OnTimer(nIDEvent);
 }
@@ -2303,11 +2312,8 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 
 		// ✅ 传输成功后，延时2秒后清空传输进度显示
 		// 先显示100%让用户看到完成状态，再清空
-		Sleep(2000);
-		if (m_uiController)
-		{
-			m_uiController->SetStaticText(IDC_STATIC_SPEED, _T(""));
-		}
+		// 【分类6.4优化】改用SetTimer异步处理，避免UI线程阻塞（Sleep会卡顿）
+		SetTimer(3, 2000, nullptr);  // ID=3: 清空传输速度显示定时器
 
 		// 添加传输完成提示对话框
 		CString successMsg;
