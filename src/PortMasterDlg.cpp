@@ -1632,6 +1632,23 @@ void CPortMasterDlg::BuildTransportConfigFromUI()
 		m_transportConfig.portType = PortType::PORT_TYPE_NETWORK_PRINT;
 		// 网络打印配置从ConfigStore读取
 		NetworkPrintConfig networkCfg = m_configStore.GetNetworkConfig();
+
+		// 【分类7修复】验证hostname:port格式
+		if (m_configBinder)
+		{
+			std::string errorMessage;
+			if (!m_configBinder->ValidateNetworkConfig(networkCfg.hostname, std::to_string(networkCfg.port), errorMessage))
+			{
+				WriteLog("BuildTransportConfigFromUI: 网络配置验证失败 - " + errorMessage);
+				// 触发错误通知（如果已设置错误回调）
+				std::wstring wideError = StringUtils::WideEncodeUtf8(errorMessage);
+				MessageBox((_T("网络配置无效: ") + wideError).c_str(), _T("配置错误"), MB_ICONERROR);
+				// 恢复默认配置
+				InitializeTransportConfig();
+				return;
+			}
+		}
+
 		m_transportConfig.portName = networkCfg.hostname + ":" + std::to_string(networkCfg.port);
 		WriteLog("BuildTransportConfigFromUI: 网络打印配置 - 地址=" + m_transportConfig.portName);
 		break;

@@ -285,6 +285,83 @@ bool DialogConfigBinder::ValidateSerialConfig(const SerialConfig& config, std::s
 	return true;
 }
 
+bool DialogConfigBinder::ValidateNetworkConfig(const std::string& hostname, const std::string& port, std::string& errorMessage) const
+{
+	// 检查hostname不为空
+	if (hostname.empty())
+	{
+		errorMessage = "主机名不能为空";
+		return false;
+	}
+
+	// 检查hostname长度（DNS名称最大63字符）
+	if (hostname.length() > 255)
+	{
+		errorMessage = "主机名过长，最多255个字符";
+		return false;
+	}
+
+	// 简单的hostname/IP格式检查（允许域名、IPv4、IPv6）
+	// 允许的字符：字母、数字、点、短划线、冒号（IPv6）
+	bool hasValidChar = false;
+	for (char c : hostname)
+	{
+		if (std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == ':')
+		{
+			hasValidChar = true;
+		}
+		else if (c != '[' && c != ']')  // IPv6可能包含方括号
+		{
+			errorMessage = "主机名包含非法字符: " + std::string(1, c);
+			return false;
+		}
+	}
+
+	if (!hasValidChar)
+	{
+		errorMessage = "主机名格式无效";
+		return false;
+	}
+
+	// 检查hostname不以点或短划线开头或结尾
+	if (hostname.front() == '.' || hostname.front() == '-' ||
+	    hostname.back() == '.' || hostname.back() == '-')
+	{
+		errorMessage = "主机名不能以点或短划线开头或结尾";
+		return false;
+	}
+
+	// 检查port格式
+	if (!port.empty())
+	{
+		// port应为纯数字
+		if (!std::all_of(port.begin(), port.end(), [](unsigned char c) { return std::isdigit(c); }))
+		{
+			errorMessage = "端口号必须为数字";
+			return false;
+		}
+
+		// 将port字符串转换为数字并检查范围
+		try
+		{
+			int portNum = std::stoi(port);
+			if (portNum < 1 || portNum > 65535)
+			{
+				errorMessage = "端口号必须在1-65535范围内";
+				return false;
+			}
+		}
+		catch (const std::exception&)
+		{
+			errorMessage = "端口号转换失败";
+			return false;
+		}
+	}
+	// 如果port为空，使用默认值9100，这是允许的
+
+	return true;
+}
+
 bool DialogConfigBinder::ValidateUIConfig(const UIConfig& config, std::string& errorMessage) const
 {
 	// 检查窗口尺寸有效性

@@ -224,6 +224,21 @@ public:
 	bool ValidateSerialConfig(const SerialConfig& config, std::string& errorMessage) const;
 
 	/**
+	 * @brief 验证网络配置有效性（hostname:port格式）
+	 * @param hostname 主机名或IP地址
+	 * @param port 端口号字符串
+	 * @param errorMessage 输出错误消息
+	 * @return 验证是否通过
+	 *
+	 * 说明：
+	 * - 检查hostname不为空且符合DNS/IP地址规范
+	 * - 检查port为有效数字且在1-65535范围
+	 * - hostname可为域名或IP地址（IPv4/IPv6）
+	 * - port可省略，使用默认值9100（LPR端口）
+	 */
+	bool ValidateNetworkConfig(const std::string& hostname, const std::string& port, std::string& errorMessage) const;
+
+	/**
 	 * @brief 验证UI配置有效性
 	 * @param config 待验证的UI配置
 	 * @param errorMessage 输出错误消息
