@@ -151,7 +151,8 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置错误回调
 		m_configBinder->SetErrorCallback([this](const std::string& errorMessage) {
 			CString errorMsg;
-			errorMsg.Format(_T("配置错误: %s"), CA2T(errorMessage.c_str()));
+			CA2T convertedMsg(errorMessage.c_str());
+		errorMsg.Format(_T("配置错误: %s"), (LPCTSTR)convertedMsg);
 			MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 			});
 	}
@@ -2073,7 +2074,8 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 		catch (const std::exception& e)
 		{
 			CString errorMsg;
-			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), CA2T(e.what()));
+			CA2T convertedMsg(e.what());
+		errorMsg.Format(_T("处理轻量级UI更新失败: %s"), (LPCTSTR)convertedMsg);
 			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
 		}
 
@@ -2370,7 +2372,8 @@ void CPortMasterDlg::OnConfigurationChanged()
 	catch (const std::exception& e)
 	{
 		CString errorMsg;
-		errorMsg.Format(_T("应用配置变更失败: %s"), CA2T(e.what()));
+		CA2T convertedMsg(e.what());
+		errorMsg.Format(_T("应用配置变更失败: %s"), (LPCTSTR)convertedMsg);
 		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 	}
 }

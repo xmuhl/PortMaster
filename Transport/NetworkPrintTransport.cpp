@@ -332,6 +332,14 @@ TransportError NetworkPrintTransport::StopAsyncRead()
 
 	m_asyncReadRunning = false;
 
+	// 立即关闭socket以唤醒可能阻塞的recv调用
+	if (m_socket != INVALID_SOCKET)
+	{
+		shutdown(m_socket, SD_BOTH);
+		closesocket(m_socket);
+		m_socket = INVALID_SOCKET;
+	}
+
 	if (m_asyncReadThread.joinable())
 	{
 		m_asyncReadThread.join();
@@ -894,13 +902,15 @@ TransportError NetworkPrintTransport::ReceiveLPRResponse(std::string& response)
 	size_t received = 0;
 	TransportError result = ReceiveData(buffer, sizeof(buffer) - 1, &received, m_config.receiveTimeout);
 
-	if (result == TransportError::Success && received > 0)
+	if (result != TransportError::Success || received <= 0)
 	{
-		buffer[received] = '\0';
-		response = buffer;
+		// 空响应或接收失败视为错误
+		return (result != TransportError::Success) ? result : TransportError::ReadFailed;
 	}
 
-	return result;
+	buffer[received] = '\0';
+	response = buffer;
+	return TransportError::Success;
 }
 
 // 生成LPR作业ID

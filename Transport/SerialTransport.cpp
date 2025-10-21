@@ -160,6 +160,12 @@ TransportError SerialTransport::Write(const void* data, size_t size, size_t* wri
 		return TransportError::InvalidParameter;
 	}
 
+	// 处理超过DWORD限制的大文件（分段写入）
+	if (size > MAXDWORD)
+	{
+		size = MAXDWORD;
+	}
+
 	std::lock_guard<std::mutex> lock(m_mutex);
 
 	if (m_state != TransportState::Open)
@@ -228,6 +234,12 @@ TransportError SerialTransport::Read(void* buffer, size_t size, size_t* read, DW
 	if (!buffer || size == 0)
 	{
 		return TransportError::InvalidParameter;
+	}
+
+	// 处理超过DWORD限制的大文件（分段读取）
+	if (size > MAXDWORD)
+	{
+		size = MAXDWORD;
 	}
 
 	DWORD bytesRead = 0;

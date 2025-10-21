@@ -2293,28 +2293,28 @@ void ReliableChannel::UpdateRTT(uint32_t rttMs)
 // 压缩数据
 std::vector<uint8_t> ReliableChannel::CompressData(const std::vector<uint8_t>& data) const
 {
-	// TODO: 实现数据压缩
+	// 本版本不包含数据压缩功能
 	return data;
 }
 
 // 解压缩数据
 std::vector<uint8_t> ReliableChannel::DecompressData(const std::vector<uint8_t>& data) const
 {
-	// TODO: 实现数据解压缩
+	// 本版本不包含数据解压缩功能
 	return data;
 }
 
 // 加密数据
 std::vector<uint8_t> ReliableChannel::EncryptData(const std::vector<uint8_t>& data) const
 {
-	// TODO: 实现数据加密
+	// 本版本不包含数据加密功能
 	return data;
 }
 
 // 解密数据
 std::vector<uint8_t> ReliableChannel::DecryptData(const std::vector<uint8_t>& data) const
 {
-	// TODO: 实现数据解密
+	// 本版本不包含数据解密功能
 	return data;
 }
 
