@@ -67,7 +67,7 @@ private:
 	// 节流显示管理
 	bool m_displayUpdatePending;
 	ULONGLONG m_lastDisplayUpdate;
-	const DWORD DISPLAY_THROTTLE_MS = 200;  // 显示更新节流间隔(ms)
+	static constexpr ULONGLONG DISPLAY_THROTTLE_MS = 200;  // 显示更新节流间隔(ms)
 
 	// 进度条状态
 	int m_lastProgressPercent;

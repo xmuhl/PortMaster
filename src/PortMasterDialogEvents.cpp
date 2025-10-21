@@ -1,4 +1,5 @@
 ﻿// PortMasterDialogEvents.cpp - 对话框事件调度模块实现
+#pragma execution_character_set("utf-8")
 
 #include "pch.h"
 #include "resource.h"

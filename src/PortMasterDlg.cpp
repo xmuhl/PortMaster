@@ -1,5 +1,7 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿// PortMasterDlg.cpp : 实现文件
 //
+#pragma execution_character_set("utf-8")
+
 #include "pch.h"
 #include "framework.h"
 #include "PortMaster.h"
@@ -149,7 +151,7 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 		// 设置错误回调
 		m_configBinder->SetErrorCallback([this](const std::string& errorMessage) {
 			CString errorMsg;
-			errorMsg.Format(_T("配置错误: %s"), errorMessage.c_str());
+			errorMsg.Format(_T("配置错误: %s"), CA2T(errorMessage.c_str()));
 			MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 			});
 	}
@@ -2071,7 +2073,7 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 		catch (const std::exception& e)
 		{
 			CString errorMsg;
-			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), e.what());
+			errorMsg.Format(_T("处理轻量级UI更新失败: %s"), CA2T(e.what()));
 			MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
 		}
 
@@ -2368,7 +2370,7 @@ void CPortMasterDlg::OnConfigurationChanged()
 	catch (const std::exception& e)
 	{
 		CString errorMsg;
-		errorMsg.Format(_T("应用配置变更失败: %s"), e.what());
+		errorMsg.Format(_T("应用配置变更失败: %s"), CA2T(e.what()));
 		MessageBox(errorMsg, _T("配置错误"), MB_OK | MB_ICONWARNING);
 	}
 }

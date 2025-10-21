@@ -1,4 +1,5 @@
 ﻿// PortMasterDlg.h : 头文件
+#pragma execution_character_set("utf-8")
 #pragma once
 #include "afxwin.h"
 #include "../Transport/ITransport.h"

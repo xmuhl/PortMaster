@@ -130,9 +130,9 @@ private:
 	UIControlRefs m_controls;                      // 控件引用集合
 
 	// 节流状态管理
-	bool m_receiveDisplayPending;                  // 是否有待处理的接收显示更新
-	ULONGLONG m_lastReceiveDisplayUpdate;          // 最后一次更新接收显示的时间戳
-	const DWORD RECEIVE_DISPLAY_THROTTLE_MS = 200; // 接收显示更新节流间隔(ms)
+	bool m_receiveDisplayPending;                     // 是否有待处理的接收显示更新
+	ULONGLONG m_lastReceiveDisplayUpdate;             // 最后一次更新接收显示的时间戳
+	static constexpr ULONGLONG RECEIVE_DISPLAY_THROTTLE_MS = 200; // 接收显示更新节流间隔(ms)
 
 	// 进度条状态
 	uint32_t m_lastProgressPercent;                // 最近一次成功更新的进度百分比（单调性保护）

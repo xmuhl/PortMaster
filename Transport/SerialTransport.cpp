@@ -136,6 +136,18 @@ TransportError SerialTransport::Close()
 		m_hSerial = INVALID_HANDLE_VALUE;
 	}
 
+	// 释放事件句柄
+	if (m_readEvent != nullptr)
+	{
+		CloseHandle(m_readEvent);
+		m_readEvent = nullptr;
+	}
+	if (m_writeEvent != nullptr)
+	{
+		CloseHandle(m_writeEvent);
+		m_writeEvent = nullptr;
+	}
+
 	UpdateState(TransportState::Closed);
 
 	return TransportError::Success;
@@ -310,7 +322,7 @@ TransportError SerialTransport::StopAsyncRead()
 		// 取消I/O操作
 		if (m_hSerial != INVALID_HANDLE_VALUE)
 		{
-			CancelIo(m_hSerial);
+			CancelIoEx(m_hSerial, nullptr);
 		}
 
 		m_readThread.join();
