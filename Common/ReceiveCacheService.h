@@ -149,7 +149,7 @@ public:
 	 * - 若临时文件不存在或未初始化，返回false并记录日志
 	 * - 成功后通过bytesWritten参数返回实际写入的字节数
 	 */
-	bool CopyToFile(const std::wstring& targetPath, size_t& bytesWritten);
+	bool CopyToFile(const std::wstring& targetPath, uint64_t& bytesWritten);
 
 	/**
 	 * @brief 获取内存缓存数据（已删除）

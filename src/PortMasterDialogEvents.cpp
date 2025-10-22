@@ -506,7 +506,7 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 		{
 			m_dialog.WriteLog("SaveReceiveDataToFile: 开始流式保存接收数据");
 
-			size_t bytesWritten = 0;
+			uint64_t bytesWritten = 0;
 			bool copySuccess = m_dialog.m_receiveCacheService->CopyToFile(
 				std::wstring(filePath.GetString()),
 				bytesWritten
@@ -520,7 +520,7 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 				CString msg;
 				if (bytesWritten < 1024)
 				{
-					msg.Format(_T("接收数据已保存到文件: %s (%zu 字节)"),
+					msg.Format(_T("接收数据已保存到文件: %s (%llu 字节)"),
 						static_cast<LPCTSTR>(filePath), bytesWritten);
 				}
 				else if (bytesWritten < 1024 * 1024)

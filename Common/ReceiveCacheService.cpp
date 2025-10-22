@@ -210,7 +210,7 @@ std::vector<uint8_t> ReceiveCacheService::ReadAllData()
 	return ReadData(0, 0); // 0长度表示读取全部数据
 }
 
-bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, size_t& bytesWritten)
+bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, uint64_t& bytesWritten)
 {
 	bytesWritten = 0;
 
@@ -281,15 +281,16 @@ bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, size_t& byt
 		// 使用64KB块大小进行流式复制
 		const size_t CHUNK_SIZE = 65536; // 64KB
 		std::vector<char> buffer(CHUNK_SIZE);
-		size_t totalCopied = 0;
-		size_t targetSize = static_cast<size_t>(fileSize);
+		uint64_t totalCopied = 0;
+		uint64_t targetSize = static_cast<uint64_t>(fileSize);
 
 		LogDetail("CopyToFile: 开始分块复制，块大小 64KB");
 
 		while (totalCopied < targetSize && !sourceFile.eof())
 		{
-			// 计算本次读取大小
-			size_t currentChunkSize = (CHUNK_SIZE < (targetSize - totalCopied)) ? CHUNK_SIZE : (targetSize - totalCopied);
+			// 计算本次读取大小（保留size_t用于缓冲区操作）
+			uint64_t remainingBytes = targetSize - totalCopied;
+			size_t currentChunkSize = (remainingBytes < CHUNK_SIZE) ? static_cast<size_t>(remainingBytes) : CHUNK_SIZE;
 
 			// 从源文件读取
 			sourceFile.read(buffer.data(), static_cast<std::streamsize>(currentChunkSize));
@@ -307,7 +308,7 @@ bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, size_t& byt
 					return false;
 				}
 
-				totalCopied += static_cast<size_t>(actualRead);
+				totalCopied += static_cast<uint64_t>(actualRead);
 
 				// 记录进度（每1MB输出一次）
 				if (totalCopied % (1024 * 1024) == 0 || totalCopied == targetSize)
@@ -345,7 +346,7 @@ bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, size_t& byt
 		targetFile.close();
 
 		// 验证复制结果
-		bytesWritten = totalCopied;
+		bytesWritten = static_cast<uint64_t>(totalCopied);
 		if (totalCopied == targetSize)
 		{
 			Log("=== 流式复制成功 ===");
