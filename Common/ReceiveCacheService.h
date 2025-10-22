@@ -152,14 +152,10 @@ public:
 	bool CopyToFile(const std::wstring& targetPath, size_t& bytesWritten);
 
 	/**
-	 * @brief 获取内存缓存数据（仅读取，不修改）
-	 * @return 内存缓存的常量引用
-	 *
-	 * 说明：
-	 * - 返回内存缓存，用于快速访问而不涉及文件I/O
-	 * - 内存缓存作为临时文件的备份，保证数据完整性
+	 * @brief 获取内存缓存数据（已删除）
+	 * 【第七轮修复】内存缓存已完全删除，仅保留文件缓存
 	 */
-	const std::vector<uint8_t>& GetMemoryCache() const;
+	// const std::vector<uint8_t>& GetMemoryCache() const;  // 已删除
 
 	// ========== 文件完整性管理 ==========
 
@@ -212,10 +208,10 @@ public:
 	std::wstring GetFilePath() const;
 
 	/**
-	 * @brief 检查内存缓存是否有效
-	 * @return 内存缓存有效性
+	 * @brief 检查内存缓存是否有效（已删除）
+	 * 【第七轮修复】内存缓存已完全删除，此接口不再有效
 	 */
-	bool IsMemoryCacheValid() const;
+	// bool IsMemoryCacheValid() const;  // 已删除
 
 	// ========== 配置接口 ==========
 
@@ -297,9 +293,9 @@ private:
 	std::wstring m_tempCacheFilePath;           // 临时缓存文件路径（宽字符）
 	bool m_useTempCacheFile;                    // 是否启用临时文件机制
 
-	// 内存缓存
-	std::vector<uint8_t> m_memoryCache;         // 内存缓存（作为备份）
-	bool m_memoryCacheValid;                    // 内存缓存有效性标志
+	// 【第七轮修复】删除内存缓存 - 仅使用文件缓存，避免大数据内存溢出
+	// std::vector<uint8_t> m_memoryCache;      // 已删除 - 不再维护内存镜像
+	// bool m_memoryCacheValid;                 // 已删除 - 不再需要有效性标志
 
 	// 统计信息
 	std::atomic<uint64_t> m_totalReceivedBytes; // 总接收字节数（原子变量）

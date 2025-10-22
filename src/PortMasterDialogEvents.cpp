@@ -546,72 +546,32 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 			}
 			else
 			{
-				// 流式复制失败，记录日志并退回到备用方法
-				m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存失败，尝试使用备用方法");
+				// 【第七轮修复】流式复制失败时，直接提示错误而不使用编辑框回退
+				m_dialog.WriteLog("❌ SaveReceiveDataToFile: 流式保存失败");
+				m_dialog.MessageBox(_T("保存失败。请重新接收后再尝试。"), _T("错误"), MB_OK | MB_ICONERROR);
+				if (m_dialog.m_uiController) m_dialog.m_uiController->UpdateSaveButton(false);
+				return;
 			}
 		}
 		catch (const std::exception& e)
 		{
-			// 捕获异常，记录日志并退回到备用方法
-			m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存异常 - " + std::string(e.what()));
+			// 【第七轮修复】异常处理 - 直接提示错误
+			m_dialog.WriteLog("❌ SaveReceiveDataToFile: 异常 - " + std::string(e.what()));
+			m_dialog.MessageBox(_T("保存失败。请重新接收后再尝试。"), _T("错误"), MB_OK | MB_ICONERROR);
+			if (m_dialog.m_uiController) m_dialog.m_uiController->UpdateSaveButton(false);
+			return;
 		}
 		catch (...)
 		{
-			// 捕获所有其他异常
-			m_dialog.WriteLog("SaveReceiveDataToFile: 流式保存发生未知异常");
-		}
-	}
-
-	// 【阶段B修复】备用保存方法：从编辑框获取文本保存
-	// 仅在流式复制失败或缓存服务不可用时使用
-	m_dialog.WriteLog("SaveReceiveDataToFile: 使用备用方法（从编辑框保存）");
-
-	CString receiveData;
-	m_dialog.m_editReceiveData.GetWindowText(receiveData);
-
-	if (receiveData.IsEmpty())
-	{
-		m_dialog.MessageBox(_T("没有可保存的数据"), _T("提示"), MB_OK | MB_ICONINFORMATION);
-		return;
-	}
-
-	try
-	{
-		std::ofstream outFile(filePath, std::ios::binary);
-		if (!outFile.is_open())
-		{
-			m_dialog.WriteLog("SaveReceiveDataToFile: 无法打开目标文件进行写入");
-			m_dialog.MessageBox(_T("无法打开文件进行写入"), _T("错误"), MB_OK | MB_ICONERROR);
+			// 【第七轮修复】未知异常处理
+			m_dialog.WriteLog("❌ SaveReceiveDataToFile: 未知异常");
+			m_dialog.MessageBox(_T("保存失败。请重新接收后再尝试。"), _T("错误"), MB_OK | MB_ICONERROR);
+			if (m_dialog.m_uiController) m_dialog.m_uiController->UpdateSaveButton(false);
 			return;
 		}
-
-		// 使用StringUtils替代MFC宏，确保大数据量安全写入（避免495KB文件崩溃）
-		std::string utf8Text = StringUtils::Utf8EncodeWide(std::wstring(receiveData));
-		outFile.write(utf8Text.c_str(), utf8Text.length());
-		outFile.close();
-
-		CString msg;
-		msg.Format(_T("接收数据已保存到文件: %s"), static_cast<LPCTSTR>(filePath));
-		m_dialog.m_staticPortStatus.SetWindowText(msg);
-
-		// 更新保存按钮状态（备用方法保存成功后启用按钮）
-		if (m_dialog.m_uiController)
-		{
-			m_dialog.m_uiController->UpdateSaveButton(true);
-		}
-
-		m_dialog.WriteLog("SaveReceiveDataToFile: 备用方法保存成功");
 	}
-	catch (const std::exception& e)
-	{
-		m_dialog.WriteLog("SaveReceiveDataToFile: 备用方法保存异常 - " + std::string(e.what()));
-		m_dialog.MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
-	}
-	catch (...)
-	{
-		m_dialog.WriteLog("SaveReceiveDataToFile: 备用方法保存发生未知异常");
-		m_dialog.MessageBox(_T("保存文件失败"), _T("错误"), MB_OK | MB_ICONERROR);
-	}
+
+
 }
 
 void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
@@ -633,26 +593,41 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 		return;
 	}
 
-	// 【分类3.5优化】对超大文件的分块处理
-	// 【分类3.5修复】分离预览大小和完整缓存大小
+	// 【分类3.5优化 + 第七轮修复】对超大文件的处理改进
+	// 删除虚假的512MB限制声称，尝试加载整个文件（内存允许范围内）
 	const size_t PREVIEW_SIZE = 32 * 1024;  // 预览大小32KB（UI显示）
-	const ULONGLONG MAX_CACHE_SIZE = 512ULL * 1024 * 1024;  // 完整缓存限制512MB（发送用）
 
 	bool isLargeFile = fileLength > PREVIEW_SIZE;
 
-	// 计算实际需要读取的数据量：使用完整缓存大小而非预览大小
-	// 从文件长度和缓存限制中取较小值
-	ULONGLONG readSizeULL = (fileLength < MAX_CACHE_SIZE) ? fileLength : MAX_CACHE_SIZE;
-	size_t readSize = static_cast<size_t>(readSizeULL);
+	// 【第七轮修复】删除512MB人为限制，直接使用文件长度
+	// 如果文件过大导致内存分配失败，将在 try/catch 中捕获并提示用户
+	size_t readSize = static_cast<size_t>(fileLength);
 
-	// 内存安全检查：如果计算出现溢出，标记为大文件
-	if (readSize > MAX_CACHE_SIZE || readSizeULL > MAX_CACHE_SIZE)
+	// 为了安全起见，仍添加一个合理的内存上限（2GB），超过此限制提示用户
+	const size_t ABSOLUTE_LIMIT = 2ULL * 1024 * 1024 * 1024;  // 2GB 绝对上限
+	if (fileLength > ABSOLUTE_LIMIT)
 	{
-		readSize = static_cast<size_t>(MAX_CACHE_SIZE);
-		isLargeFile = true;
+		m_dialog.MessageBox(
+			_T("文件过于巨大（>2GB），无法完整加载到内存。\n请选择较小的文件。"),
+			_T("文件过大"), MB_OK | MB_ICONERROR);
+		file.Close();
+		return;
 	}
 
-	std::unique_ptr<char[]> fileBuffer(new char[readSize]);
+	std::unique_ptr<char[]> fileBuffer;
+	try
+	{
+		fileBuffer = std::make_unique<char[]>(readSize);
+	}
+	catch (const std::bad_alloc&)
+	{
+		m_dialog.MessageBox(
+			_T("内存不足，无法加载此文件。\n请选择较小的文件或增加系统可用内存。"),
+			_T("内存不足"), MB_OK | MB_ICONERROR);
+		m_dialog.WriteLog("LoadDataFromSelectedFile: 内存分配失败，文件大小超过可用内存");
+		file.Close();
+		return;
+	}
 	UINT bytesRead = file.Read(fileBuffer.get(), static_cast<UINT>(readSize));
 	file.Close();
 

@@ -10,7 +10,8 @@
 
 ReceiveCacheService::ReceiveCacheService()
 	: m_useTempCacheFile(false)
-	, m_memoryCacheValid(false)
+	// 【第七轮修复】删除 m_memoryCacheValid 初始化 - 内存缓存已删除
+	// , m_memoryCacheValid(false)
 	, m_totalReceivedBytes(0)
 	, m_totalSentBytes(0)
 	, m_verboseLogging(false)
@@ -57,8 +58,9 @@ bool ReceiveCacheService::Initialize()
 		m_useTempCacheFile = true;
 		m_totalReceivedBytes = 0;
 		m_totalSentBytes = 0;
-		m_memoryCache.clear();
-		m_memoryCacheValid = false;
+	// 【第七轮修复】删除内存缓存初始化 - 仅使用文件缓存
+	// m_memoryCache.clear();
+	// m_memoryCacheValid = false;
 
 		// 将wstring转换为string用于日志输出（使用安全转换）
 		std::string tempFilePathStr = StringUtils::Utf8EncodeWide(m_tempCacheFilePath);
@@ -90,8 +92,10 @@ void ReceiveCacheService::Shutdown()
 	m_useTempCacheFile = false;
 	m_totalReceivedBytes = 0;
 	m_totalSentBytes = 0;
-	m_memoryCache.clear();
-	m_memoryCacheValid = false;
+	// 【第七轮修复】删除内存缓存初始化 - 仅使用文件缓存
+	// 【第七轮修复】删除内存缓存关闭 - 仅使用文件缓存
+	// m_memoryCache.clear();
+	// m_memoryCacheValid = false;
 
 	// 清空待写入队列
 	while (!m_pendingWrites.empty())
@@ -119,25 +123,18 @@ bool ReceiveCacheService::AppendData(const std::vector<uint8_t>& data)
 
 	LogDetail("=== AppendData 开始（接收线程直接落盘）===");
 	LogDetail("接收数据大小: " + std::to_string(data.size()) + " 字节");
-	LogDetail("当前接收缓存大小: " + std::to_string(m_memoryCache.size()) + " 字节");
+	// 【第七轮修复】删除内存缓存日志 - 不再维护内存镜像
+	// LogDetail("当前接收缓存大小: " + std::to_string(m_memoryCache.size()) + " 字节");
 	LogDetail("总接收字节数: " + std::to_string(m_totalReceivedBytes.load()) + " 字节");
 
-	// 1. 立即更新内存缓存（内存缓存作为备份，保证数据完整性）
-	if (!m_memoryCacheValid || m_memoryCache.empty())
-	{
-		LogDetail("初始化接收缓存（首次接收）");
-		m_memoryCache = data;
-	}
-	else
-	{
-		LogDetail("追加数据到接收缓存");
-		size_t oldSize = m_memoryCache.size();
-		m_memoryCache.insert(m_memoryCache.end(), data.begin(), data.end());
-		LogDetail("缓存追加完成: " + std::to_string(oldSize) + " → " + std::to_string(m_memoryCache.size()) + " 字节");
-	}
-	m_memoryCacheValid = true;
+	// 【第七轮修复】删除内存缓存复制逻辑
+	// 原来的代码在每次 AppendData 都复制整个接收数据到内存，导致大数据内存溢出
+	// 现在仅依赖文件缓存，接收数据直接写入磁盘不经过内存缓冲
+	// if (!m_memoryCacheValid || m_memoryCache.empty()) { m_memoryCache = data; }
+	// else { m_memoryCache.insert(m_memoryCache.end(), data.begin(), data.end()); }
+	// m_memoryCacheValid = true;
 
-	// 2. 简化状态检查，仅在文件流关闭时恢复
+	// 简化状态检查，仅在文件流关闭时恢复
 	if (m_useTempCacheFile && !m_tempCacheFile.is_open())
 	{
 		Log("⚠️ 检测到临时文件流关闭，启动自动恢复...");
@@ -147,7 +144,8 @@ bool ReceiveCacheService::AppendData(const std::vector<uint8_t>& data)
 		}
 		else
 		{
-			Log("❌ 临时文件自动恢复失败，数据将仅保存到内存缓存");
+			// 【第七轮修复】修改日志信息 - 不再有内存缓存备份
+			Log("❌ 临时文件自动恢复失败，后续接收数据将丢失");
 		}
 	}
 
@@ -177,15 +175,17 @@ bool ReceiveCacheService::AppendData(const std::vector<uint8_t>& data)
 		catch (const std::exception& e)
 		{
 			Log("临时缓存文件写入异常: " + std::string(e.what()));
-			Log("数据已保存到内存缓存，文件写入失败但不影响数据完整性");
+			// 【第七轮修复】修改日志信息 - 不再有内存缓存备份
+			Log("❌ 文件写入失败，接收的数据将丢失");
 		}
 	}
 	else
 	{
-		LogDetail("临时缓存文件未启用或未打开，仅更新内存缓存");
-		// 即使没有临时文件，也要更新总字节数
+		// 【第七轮修复】修改日志 - 无内存缓存备份
+		LogDetail("⚠️ 临时缓存文件未启用或未打开，接收数据将丢失");
+		// 仍然需要更新总字节数统计
 		m_totalReceivedBytes += data.size();
-		LogDetail("更新总接收字节数（仅内存）: " + std::to_string(m_totalReceivedBytes.load()) + " 字节");
+		LogDetail("更新总接收字节数: " + std::to_string(m_totalReceivedBytes.load()) + " 字节");
 	}
 
 	LogDetail("=== AppendData 结束（数据已强制落盘）===");
@@ -377,10 +377,8 @@ bool ReceiveCacheService::CopyToFile(const std::wstring& targetPath, size_t& byt
 	}
 }
 
-const std::vector<uint8_t>& ReceiveCacheService::GetMemoryCache() const
-{
-	return m_memoryCache;
-}
+// 【第七轮修复】删除 GetMemoryCache() 方法 - 不再提供内存缓存访问接口
+// const std::vector<uint8_t>& ReceiveCacheService::GetMemoryCache() const { return m_memoryCache; }
 
 // ==================== 文件完整性管理 ====================
 
@@ -529,10 +527,8 @@ std::wstring ReceiveCacheService::GetFilePath() const
 	return m_tempCacheFilePath;
 }
 
-bool ReceiveCacheService::IsMemoryCacheValid() const
-{
-	return m_memoryCacheValid;
-}
+// 【第七轮修复】删除 IsMemoryCacheValid() 方法 - 内存缓存已完全删除
+// bool ReceiveCacheService::IsMemoryCacheValid() const { return m_memoryCacheValid; }
 
 // ==================== 配置接口 ====================
 
@@ -780,7 +776,8 @@ void ReceiveCacheService::LogFileStatus(const std::string& context)
 	LogDetail("文件流打开状态: " + std::string(m_tempCacheFile.is_open() ? "是" : "否"));
 	LogDetail("文件流状态: " + std::string(m_tempCacheFile.good() ? "正常" : "异常"));
 	LogDetail("总接收字节数: " + std::to_string(m_totalReceivedBytes.load()) + " 字节");
-	LogDetail("内存缓存大小: " + std::to_string(m_memoryCache.size()) + " 字节");
-	LogDetail("内存缓存有效性: " + std::string(m_memoryCacheValid ? "有效" : "无效"));
+	// 【第七轮修复】删除内存缓存日志 - 不再维护内存镜像
+	// LogDetail("内存缓存大小: " + std::to_string(m_memoryCache.size()) + " 字节");
+	// LogDetail("内存缓存有效性: " + std::string(m_memoryCacheValid ? "有效" : "无效"));
 	LogDetail("实际文件大小: " + std::to_string(GetFileSize()) + " 字节");
 }

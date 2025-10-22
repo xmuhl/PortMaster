@@ -1898,17 +1898,16 @@ void CPortMasterDlg::OnTransportDataReceived(const std::vector<uint8_t>& data)
 			m_receiveCacheService->AppendData(data);
 			m_totalReceivedBytes = m_receiveCacheService->GetTotalReceivedBytes();
 
-			// 【阶段A修复】同步内存快照到m_receiveDataCache，确保UI显示数据可用
-			m_receiveDataCache = m_receiveCacheService->GetMemoryCache();
-			m_receiveCacheValid = !m_receiveDataCache.empty();
-
-			// 更新UI统计计数器（基于内存快照）
-			m_bytesReceived = static_cast<uint64_t>(m_receiveDataCache.size());
+			// 【第七轮修复】删除内存快照同步 - m_memoryCache已删除，仅依赖文件缓存
+			// m_receiveDataCache = m_receiveCacheService->GetMemoryCache();  // 已删除
+			// m_receiveCacheValid = !m_receiveDataCache.empty();  // 已删除
+			// UI预览仍显示前32KB，统计字节数直接使用 GetTotalReceivedBytes()
+			m_bytesReceived = m_totalReceivedBytes;
 
 			if (m_receiveVerboseLogging)
 			{
 				WriteLog("ReceiveCacheService追加数据: " + std::to_string(data.size()) + " 字节，总计: " + std::to_string(m_totalReceivedBytes) + " 字节");
-				WriteLog("内存快照已同步: 缓存大小=" + std::to_string(m_receiveDataCache.size()) + " 字节，缓存有效=" + (m_receiveCacheValid ? "true" : "false"));
+				// 日志信息已简化 - 不再输出内存快照信息
 			}
 		}
 		catch (const std::exception& e)
