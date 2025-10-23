@@ -173,6 +173,12 @@ void PortMasterDialogEvents::HandleStop()
 		int result = m_dialog.MessageBox(_T("确认终止传输？"), _T("确认终止传输"), MB_YESNO | MB_ICONQUESTION);
 		if (result == IDYES)
 		{
+			// 【阶段三修复】先设置UI状态为Cancelling，禁用按钮并显示"正在停止"提示
+			if (m_dialog.m_uiController)
+			{
+				m_dialog.m_uiController->ApplyTransmissionState(TransmissionUiState::Cancelling);
+			}
+
 			m_dialog.m_transmissionCoordinator->Cancel();
 			m_dialog.m_transmissionCancelled = true;
 			m_dialog.m_isTransmitting = false;
@@ -182,16 +188,8 @@ void PortMasterDialogEvents::HandleStop()
 			// 缓存清理应在：新文件加载、新连接建立、用户明确清除时执行
 			// m_dialog.ClearAllCacheData();  // 已移除
 
-			m_dialog.m_btnSend.SetWindowText(_T("发送"));
-			m_dialog.m_staticPortStatus.SetWindowText(_T("传输已终止"));
 			m_dialog.SetProgressPercent(0, true);
-
-			if (m_dialog.m_uiController)
-			{
-				m_dialog.m_uiController->UpdateTransmissionButtons(false, false);
-			}
-
-			m_dialog.WriteLog("传输已被用户终止，接收缓存已保留，允许用户保存已接收数据");
+			m_dialog.WriteLog("传输已被用户终止，正在清理资源...");
 		}
 	}
 	else

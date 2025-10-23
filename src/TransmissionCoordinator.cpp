@@ -83,9 +83,23 @@ void TransmissionCoordinator::Resume()
 
 void TransmissionCoordinator::Cancel()
 {
+	// 【阶段四修复】改为异步取消：不立即reset
 	if (m_currentTask)
 	{
 		m_currentTask->Cancel();
+		// 【关键】不在此处执行m_currentTask.reset()
+		// 这样做可以避免UI线程等待工作线程退出
+		// 工作线程会自行检查Cancelled状态并安全退出
+		// 真实的reset()延迟至完成消息处理时执行（通过OnTransmissionComplete）
+		// 或在关闭程序时由ShutdownActiveTransmission进行清理
+	}
+}
+
+// 【阶段四修复】延迟清理方法
+void TransmissionCoordinator::CleanupTransmissionTask()
+{
+	if (m_currentTask)
+	{
 		m_currentTask.reset();
 	}
 }

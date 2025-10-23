@@ -459,7 +459,8 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// ✅ 修复：初始化按钮状态，确保Stop按钮初始禁用，Send按钮初始启用
 	if (m_uiController)
 	{
-		m_uiController->UpdateTransmissionButtons(false, false);
+		// 【阶段三修复】统一使用状态机驱动UI更新，初始化为Idle状态
+		m_uiController->ApplyTransmissionState(TransmissionUiState::Idle);
 	}
 
 	// 初始化ReceiveCacheService（临时缓存文件功能已迁移到服务层）
@@ -568,7 +569,7 @@ void CPortMasterDlg::ShutdownActiveTransmission()
 
 	try
 	{
-		// 1. 停止所有活跃的传输任务
+		// 1. 停止所有活跃的传输任务（【阶段六修复】改为异步方式）
 		if (m_transmissionCoordinator)
 		{
 			if (m_transmissionCoordinator->IsRunning() || m_transmissionCoordinator->IsPaused())
@@ -576,16 +577,30 @@ void CPortMasterDlg::ShutdownActiveTransmission()
 				WriteLog("程序关闭：正在取消活跃的传输任务...");
 				m_transmissionCoordinator->Cancel();
 
-				// 等待传输线程完成（超时保护：最多等待2秒）
-				for (int i = 0; i < 20; ++i)
+				// 【阶段六修复】改为超时轮询而非阻塞等待，避免窗口卡顿
+				// 最多等待3秒，每200ms检查一次
+				bool taskStopped = false;
+				for (int i = 0; i < 15; ++i)
 				{
 					if (!m_transmissionCoordinator->IsRunning() && !m_transmissionCoordinator->IsPaused())
 					{
+						taskStopped = true;
 						break;
 					}
-					Sleep(100);  // 每100ms检查一次
+					Sleep(200);  // 每200ms检查一次（减少CPU占用）
 				}
-				WriteLog("程序关闭：传输任务已取消");
+
+				if (taskStopped)
+				{
+					WriteLog("程序关闭：传输任务已取消");
+				}
+				else
+				{
+					WriteLog("程序关闭：等待传输任务超时，继续关闭程序");
+				}
+
+				// 【阶段六修复】清理任务资源
+				m_transmissionCoordinator->CleanupTransmissionTask();
 			}
 		}
 
@@ -696,10 +711,9 @@ void CPortMasterDlg::StartTransmission()
 	// 更新按钮文本和状态栏
 	if (m_uiController)
 	{
-		m_uiController->SetSendButtonText(_T("中断"));
 		m_uiController->SetStatusText(_T("数据传输已开始"));
-		// 【阶段一修复】启用停止按钮，禁用发送和文件按钮
-		m_uiController->UpdateTransmissionButtons(true, false);
+		// 【阶段三修复】统一使用状态机驱动UI更新，Running状态自动设置按钮文本为"中断"
+		m_uiController->ApplyTransmissionState(TransmissionUiState::Running);
 	}
 
 	// 【Stage4迁移】使用TransmissionCoordinator启动实际传输
@@ -718,10 +732,9 @@ void CPortMasterDlg::PauseTransmission()
 		// 更新按钮文本和状态栏
 		if (m_uiController)
 		{
-			m_uiController->SetSendButtonText(_T("继续"));
 			m_uiController->SetStatusText(_T("传输已暂停"));
-			// 【阶段一修复】暂停状态时停止按钮仍保持启用，但标记paused=true
-			m_uiController->UpdateTransmissionButtons(true, true);
+			// 【阶段三修复】统一使用状态机驱动UI更新，Paused状态自动设置按钮文本为"继续"
+			m_uiController->ApplyTransmissionState(TransmissionUiState::Paused);
 		}
 	}
 	else
@@ -744,10 +757,9 @@ void CPortMasterDlg::ResumeTransmission()
 		// 更新按钮文本和状态栏
 		if (m_uiController)
 		{
-			m_uiController->SetSendButtonText(_T("中断"));
 			m_uiController->SetStatusText(_T("传输已恢复"));
-			// 【阶段一修复】恢复状态时停止按钮保持启用，标记paused=false
-			m_uiController->UpdateTransmissionButtons(true, false);
+			// 【阶段三修复】统一使用状态机驱动UI更新，Running状态自动设置按钮文本为"中断"
+			m_uiController->ApplyTransmissionState(TransmissionUiState::Running);
 		}
 	}
 	else
@@ -2208,10 +2220,9 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_transmissionPaused = false;
 		if (m_uiController)
 		{
-			m_uiController->SetSendButtonText(_T("发送"));
 			m_uiController->SetStatusText(_T("传输已终止"));
-			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
-			m_uiController->UpdateTransmissionButtons(false, false);
+			// 【阶段三修复】统一使用状态机驱动UI更新，Idle状态自动设置按钮文本为"发送"
+			m_uiController->ApplyTransmissionState(TransmissionUiState::Idle);
 		}
 		SetProgressPercent(0, true);
 
@@ -2228,9 +2239,8 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_transmissionPaused = false;
 		if (m_uiController)
 		{
-			m_uiController->SetSendButtonText(_T("发送"));
-			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
-			m_uiController->UpdateTransmissionButtons(false, false);
+			// 【阶段三修复】统一使用状态机驱动UI更新，Idle状态自动设置按钮文本为"发送"
+			m_uiController->ApplyTransmissionState(TransmissionUiState::Idle);
 		}
 
 		CString errorMsg;
@@ -2282,9 +2292,8 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		m_transmissionPaused = false;
 		if (m_uiController)
 		{
-			m_uiController->SetSendButtonText(_T("发送"));
-			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
-			m_uiController->UpdateTransmissionButtons(false, false);
+			// 【阶段三修复】统一使用状态机驱动UI更新，Idle状态自动设置按钮文本为"发送"
+			m_uiController->ApplyTransmissionState(TransmissionUiState::Idle);
 		}
 
 		// 【阶段B修复】传输完成后立即更新保存按钮状态
@@ -2326,6 +2335,13 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 
 		// 2秒后恢复连接状态显示并重置进度条
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
+	}
+
+	// 【阶段四修复】在传输完全完成后清理任务资源
+	// 这是延迟reset的关键位置，确保工作线程已完全退出
+	if (m_transmissionCoordinator)
+	{
+		m_transmissionCoordinator->CleanupTransmissionTask();
 	}
 
 	return 0;

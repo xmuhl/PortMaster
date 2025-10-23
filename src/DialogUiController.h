@@ -16,6 +16,15 @@ enum UITimerID
 	TIMER_ID_THROTTLED_DISPLAY = 2   // 节流显示更新定时器
 };
 
+// 传输UI状态机 - 统一驱动所有按钮和UI状态转换
+enum class TransmissionUiState
+{
+	Idle = 0,        // 空闲状态（未传输）：发送按钮启用、文本为"发送"
+	Running = 1,     // 运行状态（传输中）：发送按钮启用、文本为"中断"
+	Paused = 2,      // 暂停状态：发送按钮启用、文本为"继续"
+	Cancelling = 3   // 取消中状态：发送/停止按钮禁用、提示"正在停止…"
+};
+
 // UI控件引用结构体 - 集中管理所有控件指针
 struct UIControlRefs
 {
@@ -84,7 +93,8 @@ public:
 
 	// 按钮状态更新方法
 	void UpdateConnectionButtons(bool connected);  // 更新连接/断开按钮状态
-	void UpdateTransmissionButtons(bool transmitting, bool paused); // 更新发送/停止按钮状态
+	void ApplyTransmissionState(TransmissionUiState state); // 【新增】统一按状态驱动UI更新（状态机主入口）
+	void UpdateTransmissionButtons(bool transmitting, bool paused); // 【内部使用】按二值参数更新发送/停止按钮状态
 	void UpdateSaveButton(bool enabled);           // 更新保存按钮状态
 	void UpdateAllButtonStates(bool connected, bool transmitting, bool paused, bool hasSaveData); // 统一更新所有按钮状态
 
@@ -128,6 +138,9 @@ public:
 
 private:
 	UIControlRefs m_controls;                      // 控件引用集合
+
+	// 传输状态机
+	TransmissionUiState m_currentTransmissionState = TransmissionUiState::Idle; // 当前传输UI状态
 
 	// 节流状态管理
 	bool m_receiveDisplayPending;                     // 是否有待处理的接收显示更新

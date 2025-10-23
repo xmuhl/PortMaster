@@ -106,29 +106,19 @@ void TransmissionTask::Cancel()
 
 void TransmissionTask::Stop()
 {
-	// 取消任务
+	// 【阶段四修复】改为异步停止：不在UI线程中同步join
+	// 取消任务（这会设置Cancelled状态，让工作线程自行退出）
 	Cancel();
 
-	// 【回归修复】增强线程安全防护：防止线程自阻塞
-	if (m_workerThread && m_workerThread->joinable())
-	{
-		// 检查当前线程是否是工作线程本身
-		// 如果是，则跳过join()操作，避免线程试图等待自己的死锁问题
-		if (m_workerThread->get_id() == std::this_thread::get_id())
-		{
-			WriteLog("TransmissionTask::Stop - 检测到线程自阻塞风险，跳过join()操作");
-			// 线程自己调用Stop()时，不执行join()，让线程自然结束
-			// 外部析构函数会在适当的时候清理线程对象
-		}
-		else
-		{
-			WriteLog("TransmissionTask::Stop - 等待工作线程安全结束");
-			m_workerThread->join();
-		}
-	}
-	m_workerThread.reset();
+	// 【阶段四修复】删除同步join代码，让工作线程自行安全退出
+	// 工作线程会检查Cancelled状态并主动调用ReportCompletion
+	// 线程清理延迟至完成回调或析构函数进行
 
-	WriteLog("TransmissionTask::Stop - 传输任务已停止");
+	WriteLog("TransmissionTask::Stop - 已请求取消，工作线程将自行安全退出");
+
+	// 【注意】不再在此处执行m_workerThread->join()或reset()
+	// 这样做可以避免UI线程被阻塞，而工作线程会在ExecuteTransmission中
+	// 检查Cancelled状态并自行结束，然后调用ReportCompletion通知UI
 }
 
 TransmissionTaskState TransmissionTask::GetState() const

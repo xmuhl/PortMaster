@@ -199,6 +199,93 @@ void DialogUiController::UpdateConnectionButtons(bool connected)
 	}
 }
 
+// 【新增】统一按状态驱动UI更新 - 状态机主入口
+void DialogUiController::ApplyTransmissionState(TransmissionUiState state)
+{
+	m_currentTransmissionState = state;
+
+	// 根据状态设置按钮和文本
+	switch (state)
+	{
+	case TransmissionUiState::Idle:
+		// 空闲状态：发送按钮启用、文本"发送"，停止按钮禁用，文件按钮启用
+		if (IsControlValid(m_controls.btnSend))
+		{
+			m_controls.btnSend->EnableWindow(TRUE);
+			m_controls.btnSend->SetWindowText(_T("发送"));
+		}
+		if (IsControlValid(m_controls.btnStop))
+		{
+			m_controls.btnStop->EnableWindow(FALSE);
+		}
+		if (IsControlValid(m_controls.btnFile))
+		{
+			m_controls.btnFile->EnableWindow(TRUE);
+		}
+		break;
+
+	case TransmissionUiState::Running:
+		// 运行状态：发送按钮启用、文本"中断"，停止按钮启用，文件按钮禁用
+		if (IsControlValid(m_controls.btnSend))
+		{
+			m_controls.btnSend->EnableWindow(TRUE);
+			m_controls.btnSend->SetWindowText(_T("中断"));
+		}
+		if (IsControlValid(m_controls.btnStop))
+		{
+			m_controls.btnStop->EnableWindow(TRUE);
+		}
+		if (IsControlValid(m_controls.btnFile))
+		{
+			m_controls.btnFile->EnableWindow(FALSE);
+		}
+		break;
+
+	case TransmissionUiState::Paused:
+		// 暂停状态：发送按钮启用、文本"继续"，停止按钮启用，文件按钮禁用
+		if (IsControlValid(m_controls.btnSend))
+		{
+			m_controls.btnSend->EnableWindow(TRUE);
+			m_controls.btnSend->SetWindowText(_T("继续"));
+		}
+		if (IsControlValid(m_controls.btnStop))
+		{
+			m_controls.btnStop->EnableWindow(TRUE);
+		}
+		if (IsControlValid(m_controls.btnFile))
+		{
+			m_controls.btnFile->EnableWindow(FALSE);
+		}
+		break;
+
+	case TransmissionUiState::Cancelling:
+		// 取消中状态：发送/停止按钮禁用，状态栏提示"正在停止…"
+		if (IsControlValid(m_controls.btnSend))
+		{
+			m_controls.btnSend->EnableWindow(FALSE);
+		}
+		if (IsControlValid(m_controls.btnStop))
+		{
+			m_controls.btnStop->EnableWindow(FALSE);
+		}
+		if (IsControlValid(m_controls.btnFile))
+		{
+			m_controls.btnFile->EnableWindow(FALSE);
+		}
+		// 更新状态栏提示
+		if (IsControlValid(m_controls.staticPortStatus))
+		{
+			m_controls.staticPortStatus->SetWindowText(_T("正在停止…"));
+		}
+		break;
+
+	default:
+		// 未知状态，恢复为空闲
+		ApplyTransmissionState(TransmissionUiState::Idle);
+		break;
+	}
+}
+
 // 更新发送/停止按钮状态
 void DialogUiController::UpdateTransmissionButtons(bool transmitting, bool paused)
 {

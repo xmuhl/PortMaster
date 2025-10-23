@@ -1,0 +1,21 @@
+{
+  "schema": "memory_document_v2",
+  "metadata": {
+    "id": "tags-index",
+    "title": "Tags Index",
+    "documentType": "generic",
+    "path": "tags/index.json",
+    "tags": ["index", "meta"],
+    "lastModified": "2025-10-22T10:01:47.103Z",
+    "createdAt": "2025-10-22T10:01:47.103Z",
+    "version": 1
+  },
+  "content": {
+    "sections": [
+      {
+        "title": "Tags List",
+        "content": "[List and description of tags]"
+      }
+    ]
+  }
+}
