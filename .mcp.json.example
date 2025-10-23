@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json.schemastore.org/mcp.json",
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/mnt/c/Users/huangl/Desktop/PortMaster"
+      ],
+      "description": "文件系统深度访问 - 提供实时文件监控、智能缓存和代码搜索"
+    },
+    "claude-context": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@zilliz/claude-context-mcp"
+      ],
+      "env": {
+        "OPENAI_API_KEY": "YOUR_OPENAI_API_KEY_HERE",
+        "MILVUS_TOKEN": "YOUR_ZILLIZ_CLOUD_TOKEN_HERE"
+      },
+      "description": "代码库语义搜索 - 混合搜索（BM25+向量），减少40% token使用",
+      "disabled": true
+    },
+    "github": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-github"
+      ],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "YOUR_GITHUB_TOKEN_HERE"
+      },
+      "description": "GitHub集成 - 管理Issues、PRs、CI工作流（注意：此包已废弃）",
+      "disabled": true
+    },
+    "memory-bank": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@memory-bank/mcp",
+        "--docs",
+        "/mnt/c/Users/huangl/Desktop/PortMaster/docs"
+      ],
+      "description": "跨会话记忆系统 - 保持长期上下文，适合多轮修订工作"
+    }
+  }
+}
