@@ -194,7 +194,12 @@ void StatusDisplayManager::StopThrottledDisplayTimer()
 	if (!m_parentDialog)
 		return;
 
-	m_parentDialog->KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+	// 【修复】在析构过程中避免调用KillTimer，防止调试错误
+	// 检查窗口句柄是否仍然有效
+	if (::IsWindow(m_parentDialog->GetSafeHwnd()))
+	{
+		m_parentDialog->KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+	}
 }
 
 // 查询是否有待处理的显示更新

@@ -496,7 +496,12 @@ void DialogUiController::StopThrottledDisplayTimer()
 	if (!IsControlValid(m_controls.parentDialog))
 		return;
 
-	m_controls.parentDialog->KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+	// 【修复】在析构过程中避免调用KillTimer，防止调试错误
+	// 双重检查：既有IsControlValid检查，也有窗口句柄有效性检查
+	if (::IsWindow(m_controls.parentDialog->GetSafeHwnd()))
+	{
+		m_controls.parentDialog->KillTimer(TIMER_ID_THROTTLED_DISPLAY);
+	}
 }
 
 // 查询是否有待处理的显示更新
