@@ -658,8 +658,8 @@ void CPortMasterDlg::ShutdownActiveTransmission()
 					WriteLog("程序关闭：等待传输任务超时，继续关闭程序");
 				}
 
-				// 【阶段六修复】清理任务资源
-				m_transmissionCoordinator->CleanupTransmissionTask();
+				// 【激进修复】程序关闭时也禁用CleanupTransmissionTask，避免调试错误
+				// m_transmissionCoordinator->CleanupTransmissionTask(); // 暂时注释掉
 			}
 		}
 
