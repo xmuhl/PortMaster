@@ -1,0 +1,231 @@
+# AI Development System - Default Configuration
+# This file contains default settings for the AI development system
+
+# System Settings
+system:
+  name: "AI Development System"
+  version: "1.0.0"
+  debug_mode: false
+  log_level: "INFO"
+  temp_directory: "temp"
+  output_directory: "output"
+
+# Build Configuration
+build:
+  enabled: true
+  timeout: 300
+  parallel_jobs: 1
+  clean_command: null
+  artifacts:
+    - "build/"
+    - "dist/"
+    - "target/"
+    - "bin/"
+    - "*.exe"
+    - "*.jar"
+    - "*.dll"
+    - "*.so"
+
+# Test Configuration
+test:
+  enabled: true
+  timeout: 600
+  parallel_jobs: 1
+  coverage_threshold: 80.0
+  collect_coverage: true
+  coverage_formats:
+    - "json"
+    - "xml"
+    - "html"
+  test_patterns:
+    python:
+      - "test_*.py"
+      - "*_test.py"
+      - "tests/test_*.py"
+    javascript:
+      - "*.test.js"
+      - "*.test.ts"
+      - "**/__tests__/**/*.js"
+    java:
+      - "**/*Test.java"
+      - "**/*Tests.java"
+    cpp:
+      - "**/*_test.cpp"
+      - "**/*_test.cc"
+
+# Static Analysis Configuration
+static_analysis:
+  enabled: true
+  timeout: 300
+  tools:
+    python:
+      - "pylint"
+      - "flake8"
+      - "mypy"
+    javascript:
+      - "eslint"
+      - "jshint"
+    java:
+      - "spotbugs"
+      - "checkstyle"
+    cpp:
+      - "cppcheck"
+      - "clang-tidy"
+  complexity_threshold: 10
+  duplicate_threshold: 5
+  security_scan: true
+
+# Performance Analysis Configuration
+performance:
+  enabled: true
+  timeout: 300
+  profile_memory: true
+  profile_cpu: true
+  complexity_analysis: true
+  benchmarks:
+    enabled: false
+    iterations: 10
+    warmup_iterations: 3
+
+# Error Pattern Analysis Configuration
+error_patterns:
+  enabled: true
+  custom_patterns_file: null
+  max_issues_per_file: 100
+  severity_levels:
+    - "critical"
+    - "high"
+    - "medium"
+    - "low"
+    - "info"
+
+# Reporting Configuration
+reporting:
+  enabled: true
+  output_formats:
+    - "json"
+    - "markdown"
+    - "html"
+  output_directory: "reports"
+  include_metrics: true
+  include_charts: true
+  dashboard: true
+  templates_directory: "templates"
+
+# CI/CD Integration Configuration
+cicd:
+  enabled: false
+  platform: null  # auto-detect if null
+  auto_trigger: false
+  webhook_url: null
+  environments:
+    - "development"
+    - "staging"
+    - "production"
+
+# Notification Configuration
+notifications:
+  enabled: false
+  email:
+    enabled: false
+    smtp_server: null
+    smtp_port: 587
+    username: null
+    password: null
+    recipients: []
+  slack:
+    enabled: false
+    webhook_url: null
+    channel: "#general"
+  teams:
+    enabled: false
+    webhook_url: null
+
+# Project-Specific Settings
+project:
+  type: null  # auto-detect if null
+  language: null  # auto-detect if null
+  build_system: null  # auto-detect if null
+  test_framework: null  # auto-detect if null
+  source_directories:
+    - "src/"
+    - "lib/"
+    - "app/"
+  test_directories:
+    - "tests/"
+    - "test/"
+    - "__tests__/"
+  exclude_patterns:
+    - ".git/"
+    - "node_modules/"
+    - "__pycache__/"
+    - "*.pyc"
+    - ".vs/"
+    - "bin/"
+    - "obj/"
+    - "Debug/"
+    - "Release/"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  file: "ai_dev_system.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  max_file_size: 10485760  # 10MB
+  backup_count: 5
+  console_output: true
+
+# Performance Configuration
+performance:
+  enable_profiling: false
+  memory_limit: "1GB"
+  timeout_multiplier: 1.5
+  parallel_processing: true
+  cache_results: true
+  cache_directory: "cache"
+
+# Security Configuration
+security:
+  scan_secrets: true
+  scan_dependencies: true
+  scan_credentials: true
+  exclude_patterns:
+    - "*.key"
+    - "*.pem"
+    - "*.p12"
+    - "id_rsa"
+    - "id_dsa"
+
+# Custom Rules and Patterns
+custom_rules:
+  enabled: false
+  rules_file: null
+  patterns_file: null
+
+# Integration Settings
+integrations:
+  git:
+    enabled: true
+    auto_commit: false
+    commit_message_template: "AI Dev System: {action} - {summary}"
+    create_tags: false
+    tag_template: "ai-dev-{timestamp}"
+
+  ide:
+    enabled: false
+    vs_code:
+      enabled: false
+      extensions:
+        - "ms-python.python"
+        - "ms-vscode.cpptools"
+        - "redhat.java"
+        - "esbenp.prettier-vscode"
+
+# Advanced Settings
+advanced:
+  experimental_features: false
+  ai_assistance: false
+  learning_mode: false
+  auto_fix: false
+  max_fix_attempts: 3
+  backup_before_fix: true

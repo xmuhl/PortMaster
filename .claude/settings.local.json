@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell:*)",
+      "Bash(cmd.exe /c \"GitBackup-Menu.cmd\")",
+      "Bash(cmd.exe:*)",
+      "Bash(python3:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(sed:*)",
+      "Bash(./AutoTest.exe)",
+      "Bash(git log:*)",
+      "Bash(tree:*)",
+      "Bash(/mnt/c/Users/huangl/Desktop/PortMaster/AutoTest/AutoTest.exe:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)",
+      "Bash(awk:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

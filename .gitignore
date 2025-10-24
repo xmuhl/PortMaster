@@ -39,12 +39,9 @@ node_modules/
 dist/
 coverage/
 
-# —— Python 可选 ——
+# —— Python 可选 —— 
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 *.egg-info/
-
-# —— MCP配置（包含API密钥） ——
-.mcp.json
