@@ -17,7 +17,23 @@ TransmissionTask::TransmissionTask()
 
 TransmissionTask::~TransmissionTask()
 {
-	Stop();
+	// 【修复】在析构中避免调用WriteLog，防止回调对象已销毁导致调试错误
+	try {
+		// 直接设置取消状态，不调用WriteLog避免调试错误
+		std::lock_guard<std::mutex> lock(m_stateMutex);
+		if (m_state == TransmissionTaskState::Running || m_state == TransmissionTaskState::Paused) {
+			m_state = TransmissionTaskState::Cancelled;
+		}
+
+		// 重置工作线程，不调用WriteLog避免调试错误
+		if (m_workerThread && m_workerThread->joinable()) {
+			m_workerThread->detach();
+		}
+		m_workerThread.reset();
+	}
+	catch (...) {
+		// 析构函数中忽略所有异常
+	}
 }
 
 bool TransmissionTask::Start(const std::vector<uint8_t>& data)

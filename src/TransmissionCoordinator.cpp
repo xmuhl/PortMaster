@@ -100,6 +100,8 @@ void TransmissionCoordinator::CleanupTransmissionTask()
 {
 	if (m_currentTask)
 	{
+		// 【修复】安全清理任务，直接重置智能指针
+		// TransmissionTask析构函数已修复为不调用WriteLog，避免调试错误
 		m_currentTask.reset();
 	}
 }
