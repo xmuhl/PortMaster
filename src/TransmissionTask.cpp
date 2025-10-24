@@ -19,17 +19,31 @@ TransmissionTask::~TransmissionTask()
 {
 	// 【修复】在析构中避免调用WriteLog，防止回调对象已销毁导致调试错误
 	try {
-		// 直接设置取消状态，不调用WriteLog避免调试错误
-		std::lock_guard<std::mutex> lock(m_stateMutex);
-		if (m_state == TransmissionTaskState::Running || m_state == TransmissionTaskState::Paused) {
+		// 首先设置取消状态，让工作线程自行退出
+		{
+			std::lock_guard<std::mutex> lock(m_stateMutex);
 			m_state = TransmissionTaskState::Cancelled;
 		}
 
-		// 重置工作线程，不调用WriteLog避免调试错误
-		if (m_workerThread && m_workerThread->joinable()) {
-			m_workerThread->detach();
+		// 安全地等待工作线程结束
+		if (m_workerThread) {
+			// 给工作线程一点时间自行退出
+			for (int i = 0; i < 10 && m_workerThread->joinable(); ++i) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+				// 检查线程是否已经结束
+				if (!m_workerThread->joinable()) {
+					break;
+				}
+			}
+
+			// 如果线程仍在运行，detach它而不是join，避免阻塞
+			if (m_workerThread->joinable()) {
+				m_workerThread->detach();
+			}
+
+			// 最后重置智能指针
+			m_workerThread.reset();
 		}
-		m_workerThread.reset();
 	}
 	catch (...) {
 		// 析构函数中忽略所有异常
@@ -345,26 +359,38 @@ void TransmissionTask::ReportCompletion(TransmissionTaskState finalState, Transp
 {
 	m_state = finalState;
 
-	if (m_completionCallback)
-	{
-		TransmissionResult result;
-		result.finalState = finalState;
-		result.errorCode = errorCode;
-		result.bytesTransmitted = m_bytesTransmitted.load();
-		result.errorMessage = errorMsg;
+	// 【修复】安全调用完成回调，防止在析构过程中访问无效对象
+	try {
+		if (m_completionCallback)
+		{
+			TransmissionResult result;
+			result.finalState = finalState;
+			result.errorCode = errorCode;
+			result.bytesTransmitted = m_bytesTransmitted.load();
+			result.errorMessage = errorMsg;
 
-		auto endTime = std::chrono::steady_clock::now();
-		result.duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - m_startTime);
+			auto endTime = std::chrono::steady_clock::now();
+			result.duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - m_startTime);
 
-		m_completionCallback(result);
+			m_completionCallback(result);
+		}
+	}
+	catch (...) {
+		// 忽略回调过程中的异常，避免程序崩溃
 	}
 }
 
 void TransmissionTask::WriteLog(const std::string& message)
 {
-	if (m_logCallback)
-	{
-		m_logCallback(message);
+	// 【修复】安全调用日志回调，防止在析构过程中访问无效对象
+	try {
+		if (m_logCallback)
+		{
+			m_logCallback(message);
+		}
+	}
+	catch (...) {
+		// 忽略日志回调过程中的异常，避免程序崩溃
 	}
 }
 
