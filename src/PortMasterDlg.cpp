@@ -71,13 +71,16 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 		static const std::vector<std::string> keywords = {
 			"开始", "成功", "失败", "错误", "异常", "取消", "暂停", "恢复",
 			"连接", "断开", "传输任务", "按钮状态", "保存数据", "清空缓存",
-			"OnBnClicked", "析构", "初始化", "退出", "WriteLog", "打开文件", "关闭文件"
+			"OnBnClicked", "析构", "初始化", "退出", "WriteLog", "打开文件", "关闭文件",
+			"传输完成", "传输失败", "可靠传输", "直接传输", "协调传输任务"
 		};
 
 		// 【排除冗余UI更新信息】过滤掉高频次的UI更新日志
 		static const std::vector<std::string> excludeKeywords = {
 			"轻量级UI更新完成", "UI更新完成", "界面更新", "进度更新", "显示更新",
-			"定时器", "状态栏", "进度条", "刷新", "重绘", "UpdateUI", "ThrottledUpdate"
+			"定时器", "状态栏", "进度条", "刷新", "重绘", "UpdateUI", "ThrottledUpdate",
+			"AppendData 开始", "强制同步写入成功", "字节", "追加数据", "接收数据大小",
+			"接收到数据大小", "UTF-8转换后字节长度", "原始字节数据大小", "数据大小:"
 		};
 
 		// 检查是否应该排除（优先级最高）
