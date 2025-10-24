@@ -67,6 +67,51 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 {
 	try
 	{
+		// 【调试日志优化】仅在关键步骤节点输出调试信息
+		static const std::vector<std::string> keywords = {
+			"开始", "成功", "失败", "错误", "异常", "取消", "暂停", "恢复",
+			"连接", "断开", "传输任务", "按钮状态", "保存数据", "清空缓存",
+			"OnBnClicked", "析构", "初始化", "退出", "WriteLog", "打开文件", "关闭文件"
+		};
+
+		// 【排除冗余UI更新信息】过滤掉高频次的UI更新日志
+		static const std::vector<std::string> excludeKeywords = {
+			"轻量级UI更新完成", "UI更新完成", "界面更新", "进度更新", "显示更新",
+			"定时器", "状态栏", "进度条", "刷新", "重绘", "UpdateUI", "ThrottledUpdate"
+		};
+
+		// 检查是否应该排除（优先级最高）
+		bool shouldExclude = false;
+		for (const auto& exclude : excludeKeywords) {
+			if (message.find(exclude) != std::string::npos) {
+				shouldExclude = true;
+				break;
+			}
+		}
+
+		// 如果没有被排除，检查是否包含关键词
+		bool shouldLog = !shouldExclude;
+		if (shouldLog) {
+			shouldLog = false;
+			for (const auto& keyword : keywords) {
+				if (message.find(keyword) != std::string::npos) {
+					shouldLog = true;
+					break;
+				}
+			}
+		}
+
+		// 如果不符合条件，直接返回（不写入日志）
+		if (!shouldLog) {
+			// 即使不写入日志文件，仍然更新状态栏显示重要信息
+			if (m_statusDisplayManager) {
+				std::wstring displayMessageW = StringUtils::WideEncodeUtf8(message);
+				CString displayMessage(displayMessageW.c_str());
+				m_statusDisplayManager->LogMessage(displayMessage);
+			}
+			return;
+		}
+
 		// 获取当前时间
 		auto now = std::chrono::system_clock::now();
 		auto time_t = std::chrono::system_clock::to_time_t(now);
@@ -318,7 +363,18 @@ BOOL CPortMasterDlg::OnInitDialog()
 {
 	CDialogEx::OnInitDialog();
 
-	// 将“关于...”菜单项添加到系统菜单中。
+	// 【程序启动时清空日志文件】避免反复测试导致日志文件过长
+	try {
+		std::ofstream logFile("PortMaster_debug.log", std::ios::out | std::ios::trunc);
+		if (logFile.is_open()) {
+			logFile.close();
+		}
+	}
+	catch (...) {
+		// 忽略清空日志文件的错误，不影响程序启动
+	}
+
+	// 将"关于..."菜单项添加到系统菜单中。
 
 	// IDM_ABOUTBOX 必须在系统命令范围内。
 	ASSERT((IDM_ABOUTBOX & 0xFFF0) == IDM_ABOUTBOX);
