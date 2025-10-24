@@ -17,37 +17,29 @@ TransmissionTask::TransmissionTask()
 
 TransmissionTask::~TransmissionTask()
 {
-	// 【修复】在析构中避免调用WriteLog，防止回调对象已销毁导致调试错误
-	try {
-		// 首先设置取消状态，让工作线程自行退出
-		{
-			std::lock_guard<std::mutex> lock(m_stateMutex);
-			m_state = TransmissionTaskState::Cancelled;
-		}
+	// 【修复】完全安全的析构策略
+	// 1. 首先禁用所有回调，防止在析构中调用
+	m_logCallback = nullptr;
+	m_completionCallback = nullptr;
+	m_progressCallback = nullptr;
 
-		// 安全地等待工作线程结束
-		if (m_workerThread) {
-			// 给工作线程一点时间自行退出
-			for (int i = 0; i < 10 && m_workerThread->joinable(); ++i) {
-				std::this_thread::sleep_for(std::chrono::milliseconds(10));
-				// 检查线程是否已经结束
-				if (!m_workerThread->joinable()) {
-					break;
-				}
-			}
-
-			// 如果线程仍在运行，detach它而不是join，避免阻塞
-			if (m_workerThread->joinable()) {
-				m_workerThread->detach();
-			}
-
-			// 最后重置智能指针
-			m_workerThread.reset();
-		}
+	// 2. 设置取消状态
+	{
+		std::lock_guard<std::mutex> lock(m_stateMutex);
+		m_state = TransmissionTaskState::Cancelled;
 	}
-	catch (...) {
-		// 析构函数中忽略所有异常
+
+	// 3. 安全处理工作线程
+	if (m_workerThread) {
+		// 如果线程仍在运行，直接detach，不等待
+		if (m_workerThread->joinable()) {
+			m_workerThread->detach();
+		}
+		// 重置智能指针，但不调用join()
+		m_workerThread = nullptr;
 	}
+
+	// 4. 其他资源由智能指针自动清理
 }
 
 bool TransmissionTask::Start(const std::vector<uint8_t>& data)

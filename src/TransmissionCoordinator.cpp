@@ -98,11 +98,38 @@ void TransmissionCoordinator::Cancel()
 // 【阶段四修复】延迟清理方法
 void TransmissionCoordinator::CleanupTransmissionTask()
 {
+	// 【调试】CleanupTransmissionTask 开始
+	if (m_logCallback) {
+		m_logCallback("=== TransmissionCoordinator::CleanupTransmissionTask 开始 ===");
+	}
+
 	if (m_currentTask)
 	{
+		// 【调试】准备重置智能指针
+		if (m_logCallback) {
+			m_logCallback("CleanupTransmissionTask: 准备重置 m_currentTask 智能指针");
+		}
+
 		// 【修复】安全清理任务，直接重置智能指针
 		// TransmissionTask析构函数已修复为不调用WriteLog，避免调试错误
 		m_currentTask.reset();
+
+		// 【调试】智能指针重置完成
+		if (m_logCallback) {
+			m_logCallback("CleanupTransmissionTask: m_currentTask 智能指针重置完成");
+		}
+	}
+	else
+	{
+		// 【调试】当前任务为空
+		if (m_logCallback) {
+			m_logCallback("CleanupTransmissionTask: m_currentTask 为空，无需清理");
+		}
+	}
+
+	// 【调试】CleanupTransmissionTask 结束
+	if (m_logCallback) {
+		m_logCallback("=== TransmissionCoordinator::CleanupTransmissionTask 结束 ===");
 	}
 }
 

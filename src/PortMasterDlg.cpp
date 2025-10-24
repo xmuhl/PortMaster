@@ -981,6 +981,8 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 // 【修复线程自阻塞】重构传输完成回调 - 避免在传输线程中直接析构任务对象
 void CPortMasterDlg::OnTransmissionCompleted(const TransmissionResult& result)
 {
+	// 【调试】OnTransmissionCompleted 开始
+	this->WriteLog("=== OnTransmissionCompleted 开始 ===");
 	this->WriteLog("传输任务完成: 状态=" + std::to_string(static_cast<int>(result.finalState)) +
 		", 错误码=" + std::to_string(static_cast<int>(result.errorCode)) +
 		", 传输字节=" + std::to_string(result.bytesTransmitted) +
@@ -990,10 +992,14 @@ void CPortMasterDlg::OnTransmissionCompleted(const TransmissionResult& result)
 	// 原因：当前回调在传输线程中执行，直接reset()会导致线程试图join自己，造成死锁
 
 	// 通过PostMessage通知UI线程处理传输结果
+	this->WriteLog("OnTransmissionCompleted: 准备发送 WM_USER + 13 消息");
 	PostMessage(WM_USER + 13, (WPARAM)result.errorCode, 0);
+	this->WriteLog("OnTransmissionCompleted: WM_USER + 13 消息已发送");
 
 	// 【新增】通过PostMessage安全地清理传输任务对象（在UI线程中执行）
+	this->WriteLog("OnTransmissionCompleted: 准备发送 WM_USER + 15 消息");
 	PostMessage(WM_USER + 15, 0, 0);
+	this->WriteLog("OnTransmissionCompleted: WM_USER + 15 消息已发送");
 
 	// 根据结果状态显示相应信息
 	switch (result.finalState)
@@ -1011,6 +1017,8 @@ void CPortMasterDlg::OnTransmissionCompleted(const TransmissionResult& result)
 		this->WriteLog("传输结束，状态未知");
 		break;
 	}
+
+	this->WriteLog("=== OnTransmissionCompleted 结束 ===");
 }
 
 void CPortMasterDlg::OnTransmissionLog(const std::string& message)
@@ -1069,10 +1077,21 @@ void CPortMasterDlg::ClearAllCacheData()
 
 void CPortMasterDlg::OnBnClickedButtonStop()
 {
+	// 【调试】停止按钮点击开始
+	this->WriteLog("=== OnBnClickedButtonStop 开始 ===");
+
 	if (m_eventDispatcher)
 	{
+		this->WriteLog("OnBnClickedButtonStop: 调用 m_eventDispatcher->HandleStop()");
 		m_eventDispatcher->HandleStop();
+		this->WriteLog("OnBnClickedButtonStop: m_eventDispatcher->HandleStop() 完成");
 	}
+	else
+	{
+		this->WriteLog("OnBnClickedButtonStop: m_eventDispatcher 为空");
+	}
+
+	this->WriteLog("=== OnBnClickedButtonStop 结束 ===");
 }
 
 void CPortMasterDlg::OnBnClickedButtonFile()
@@ -2400,9 +2419,13 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 	// 这是延迟reset的关键位置，确保工作线程已完全退出
 	if (m_transmissionCoordinator)
 	{
+		this->WriteLog("=== 开始 CleanupTransmissionTask ===");
+		this->WriteLog("CleanupTransmissionTask: 准备调用");
 		m_transmissionCoordinator->CleanupTransmissionTask();
+		this->WriteLog("CleanupTransmissionTask: 调用完成");
 	}
 
+	this->WriteLog("=== OnTransmissionComplete 即将 return 0 ===");
 	return 0;
 }
 
