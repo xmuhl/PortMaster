@@ -2,7 +2,7 @@
   "schema": "tag_index_v1",
   "metadata": {
     "indexType": "global",
-    "lastUpdated": "2025-10-22T10:26:36.325Z",
+    "lastUpdated": "2025-10-24T09:41:23.132Z",
     "documentCount": 2,
     "tagCount": 2
   },
@@ -11,10 +11,10 @@
       "tag": "index",
       "documents": [
         {
-          "id": "fc301976-b7ed-46e5-a542-ed0b6ef158e4",
+          "id": "7d1458c3-40a2-470b-acb1-4856790c40f7",
           "path": "tags/index.json",
           "title": "Tags Index",
-          "lastModified": "2025-10-22T10:01:47.119Z"
+          "lastModified": "2025-10-24T07:26:47.646Z"
         }
       ]
     },
@@ -22,10 +22,10 @@
       "tag": "meta",
       "documents": [
         {
-          "id": "fc301976-b7ed-46e5-a542-ed0b6ef158e4",
+          "id": "7d1458c3-40a2-470b-acb1-4856790c40f7",
           "path": "tags/index.json",
           "title": "Tags Index",
-          "lastModified": "2025-10-22T10:01:47.119Z"
+          "lastModified": "2025-10-24T07:26:47.646Z"
         }
       ]
     }

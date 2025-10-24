@@ -2415,14 +2415,13 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
 	}
 
-	// 【阶段四修复】在传输完全完成后清理任务资源
-	// 这是延迟reset的关键位置，确保工作线程已完全退出
+	// 【激进修复】暂时禁用CleanupTransmissionTask，避免程序闪退
+	// 让TransmissionTask自然析构，但避免在UI线程中显式调用
 	if (m_transmissionCoordinator)
 	{
-		this->WriteLog("=== 开始 CleanupTransmissionTask ===");
-		this->WriteLog("CleanupTransmissionTask: 准备调用");
-		m_transmissionCoordinator->CleanupTransmissionTask();
-		this->WriteLog("CleanupTransmissionTask: 调用完成");
+		this->WriteLog("=== 暂时跳过 CleanupTransmissionTask，避免程序闪退 ===");
+		// m_transmissionCoordinator->CleanupTransmissionTask(); // 暂时注释掉
+		this->WriteLog("跳过 CleanupTransmissionTask 调用");
 	}
 
 	this->WriteLog("=== OnTransmissionComplete 即将 return 0 ===");
