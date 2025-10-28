@@ -222,7 +222,7 @@ private:
     StatusTextCallback m_statusTextCallback;
 
     // 线程安全
-    mutable std::mutex m_mutex;
+    mutable std::recursive_mutex m_mutex;
 };
 
 /**
@@ -236,5 +236,5 @@ public:
 private:
     SmartProgressManagerSingleton() = default;
     static std::unique_ptr<SmartProgressManager> s_instance;
-    static std::mutex s_mutex;
+    static std::recursive_mutex s_mutex;
 };

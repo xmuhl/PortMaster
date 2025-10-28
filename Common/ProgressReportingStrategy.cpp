@@ -6,7 +6,7 @@
 
 // 静态成员初始化
 std::unique_ptr<SmartProgressManager> SmartProgressManagerSingleton::s_instance = nullptr;
-std::mutex SmartProgressManagerSingleton::s_mutex;
+std::recursive_mutex SmartProgressManagerSingleton::s_mutex;
 
 SmartProgressManager::SmartProgressManager()
     : m_currentStrategy(ProgressReportingStrategy::SenderDriven)
@@ -21,7 +21,7 @@ WorkModeDetection SmartProgressManager::DetectWorkMode(PortType portType,
                                                      const std::string& portName,
                                                      bool useReliableMode)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     WorkModeDetection detection;
 
@@ -69,7 +69,7 @@ WorkModeDetection SmartProgressManager::DetectWorkMode(PortType portType,
 
 void SmartProgressManager::SetProgressReportingStrategy(ProgressReportingStrategy strategy)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_currentStrategy = strategy;
 
     std::string strategyName = (strategy == ProgressReportingStrategy::SenderDriven) ? "发送方驱动" : "接收方驱动";
@@ -83,13 +83,13 @@ void SmartProgressManager::SetProgressReportingStrategy(ProgressReportingStrateg
 
 ProgressReportingStrategy SmartProgressManager::GetCurrentStrategy() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_currentStrategy;
 }
 
 void SmartProgressManager::HandleSenderProgress(const TransmissionProgress& progress)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     // 总是更新状态文本（"X/Y 字节"信息在所有模式下都有价值）
     UpdateStatusText(progress.statusText);
@@ -105,7 +105,7 @@ void SmartProgressManager::HandleSenderProgress(const TransmissionProgress& prog
 
 void SmartProgressManager::HandleReceiverProgress(size_t receivedBytes, size_t totalBytes)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     m_actualReceivedBytes = receivedBytes;
     if (totalBytes > 0)
@@ -129,7 +129,7 @@ void SmartProgressManager::HandleReceiverProgress(size_t receivedBytes, size_t t
 
 void SmartProgressManager::MarkSendComplete()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_sendComplete = true;
 
     if (m_currentStrategy == ProgressReportingStrategy::SenderDriven)
@@ -147,7 +147,7 @@ void SmartProgressManager::MarkSendComplete()
 
 void SmartProgressManager::MarkReceiveComplete()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_receiveComplete = true;
 
     if (m_currentStrategy == ProgressReportingStrategy::ReceiverDriven)
@@ -165,7 +165,7 @@ void SmartProgressManager::MarkReceiveComplete()
 
 void SmartProgressManager::Reset()
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     m_sendComplete = false;
     m_receiveComplete = false;
@@ -179,37 +179,37 @@ void SmartProgressManager::Reset()
 
 void SmartProgressManager::SetProgressDataCallback(ProgressDataCallback callback)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_progressDataCallback = callback;
 }
 
 void SmartProgressManager::SetStatusTextCallback(StatusTextCallback callback)
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     m_statusTextCallback = callback;
 }
 
 bool SmartProgressManager::IsLoopbackTest() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_lastDetection.isLoopbackTest;
 }
 
 bool SmartProgressManager::IsSendComplete() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_sendComplete;
 }
 
 bool SmartProgressManager::IsReceiveComplete() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
     return m_receiveComplete;
 }
 
 bool SmartProgressManager::IsTransmissionComplete() const
 {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::lock_guard<std::recursive_mutex> lock(m_mutex);
 
     if (m_currentStrategy == ProgressReportingStrategy::SenderDriven)
     {
@@ -288,7 +288,7 @@ bool SmartProgressManager::ShouldUseReceiverDrivenStrategy(PortType portType,
 
 SmartProgressManager& SmartProgressManagerSingleton::GetInstance()
 {
-    std::lock_guard<std::mutex> lock(s_mutex);
+    std::lock_guard<std::recursive_mutex> lock(s_mutex);
 
     if (!s_instance)
     {
