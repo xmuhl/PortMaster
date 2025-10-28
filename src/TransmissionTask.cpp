@@ -93,8 +93,9 @@ void TransmissionTask::Pause()
 		m_state = TransmissionTaskState::Paused;
 		WriteLog("TransmissionTask::Pause - 传输任务已暂停");
 
-		size_t transmitted = m_bytesTransmitted.load();
-		UpdateProgress(transmitted, m_totalBytes, "传输已暂停");
+		// 【修复】移除此处的同步回调，避免UI线程与工作线程死锁
+		// size_t transmitted = m_bytesTransmitted.load();
+		// UpdateProgress(transmitted, m_totalBytes, "传输已暂停");
 	}
 }
 
@@ -107,8 +108,9 @@ void TransmissionTask::Resume()
 		m_state = TransmissionTaskState::Running;
 		WriteLog("TransmissionTask::Resume - 传输任务已恢复");
 
-		size_t transmitted = m_bytesTransmitted.load();
-		UpdateProgress(transmitted, m_totalBytes, "传输已恢复");
+		// 【修复】移除此处的同步回调，避免UI线程与工作线程死锁
+		// size_t transmitted = m_bytesTransmitted.load();
+		// UpdateProgress(transmitted, m_totalBytes, "传输已恢复");
 	}
 }
 
@@ -121,8 +123,9 @@ void TransmissionTask::Cancel()
 		m_state = TransmissionTaskState::Cancelled;
 		WriteLog("TransmissionTask::Cancel - 传输任务已取消");
 
-		size_t transmitted = m_bytesTransmitted.load();
-		UpdateProgress(transmitted, m_totalBytes, "传输已取消");
+		// 【修复】移除此处的同步回调，避免UI线程与工作线程死锁
+		// size_t transmitted = m_bytesTransmitted.load();
+		// UpdateProgress(transmitted, m_totalBytes, "传输已取消");
 	}
 }
 
