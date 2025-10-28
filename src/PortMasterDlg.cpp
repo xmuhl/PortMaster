@@ -755,6 +755,9 @@ void CPortMasterDlg::OnBnClickedButtonSend()
 
 void CPortMasterDlg::StartTransmission()
 {
+	// 【修复】在开始新的传输前，清空所有旧的接收数据和状态
+	ClearAllCacheData();
+
 	// 基于缓存的架构：检查缓存有效性
 	if (!m_sendCacheValid || m_sendDataCache.empty())
 	{
