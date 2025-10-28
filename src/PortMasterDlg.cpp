@@ -758,6 +758,18 @@ void CPortMasterDlg::StartTransmission()
 	// 【修复】在开始新的传输前，清空所有旧的接收数据和状态
 	ClearAllCacheData();
 
+	// 新增：为回路测试设置同步标志
+	m_isLoopbackTest = (m_transportConfig.portType == PortType::PORT_TYPE_LOOPBACK);
+	m_sendComplete = false;
+	if (m_isLoopbackTest)
+	{
+		m_expectedReceiveBytes = m_sendDataCache.size();
+	}
+	else
+	{
+		m_expectedReceiveBytes = 0;
+	}
+
 	// 基于缓存的架构：检查缓存有效性
 	if (!m_sendCacheValid || m_sendDataCache.empty())
 	{
@@ -953,38 +965,30 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 	// 【第二轮修复】检查窗口句柄有效性，避免PostMessage到已销毁窗口导致宕机
 	if (!IsWindow(GetSafeHwnd()))
 	{
-		// 窗口已销毁，直接返回，避免继续处理
 		return;
 	}
 
-	// 使用PostMessage确保线程安全的UI更新
-	int progressPercent = progress.progressPercent;
-	PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
-
-	// 更新状态文本
+	// 1. 总是更新状态文本 (e.g., "X/Y 字节")
 	CString* statusText = new CString();
-
-	// 【修复状态文本重复】直接使用后台传递的完整状态文本，不再追加重复信息
-	// 后台(TransmissionTask)已生成完整状态："正在传输: X/Y 字节 (P%)"
-	// 【回归修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
-	// 使用StringUtils替代MFC宏，消除内存风险
 	std::wstring statusTextW = StringUtils::WideEncodeUtf8(progress.statusText);
-	*statusText = statusTextW.c_str();  // 直接赋值，不再Format追加
+	*statusText = statusTextW.c_str();
 
-	// 【第二轮修复】再次检查窗口有效性
 	if (IsWindow(GetSafeHwnd()))
 	{
 		PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
 	}
 	else
 	{
-		// 窗口已销毁，释放内存并返回
 		delete statusText;
 		return;
 	}
 
-	// ✅ 删除进度日志记录，保持日志清洁
-	// 不再记录每个数据块的传输进度，以减少日志文件体积
+	// 2. 仅在非回路测试中，才由发送方驱动进度条
+	if (!m_isLoopbackTest)
+	{
+		int progressPercent = progress.progressPercent;
+		PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
+	}
 }
 
 // 【修复线程自阻塞】重构传输完成回调 - 避免在传输线程中直接析构任务对象
@@ -2245,6 +2249,40 @@ LRESULT CPortMasterDlg::OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lPa
 				m_uiController->SetStaticText(IDC_STATIC_RECEIVED, receivedText);
 			}
 
+			// 【回路测试同步逻辑】由接收方驱动进度条，并检查最终完成条件
+			if (m_isLoopbackTest)
+			{
+				if (m_expectedReceiveBytes > 0)
+				{
+					// 1. 根据接收进度更新进度条
+					int percent = static_cast<int>((m_bytesReceived * 100) / m_expectedReceiveBytes);
+					if (percent > 100) percent = 100;
+					if (m_uiController) m_uiController->SetProgressPercent(percent);
+
+					// 2. 检查是否达到真正的完成条件（发送完毕 && 接收完毕）
+					if (m_sendComplete && m_bytesReceived >= m_expectedReceiveBytes)
+					{
+						// 所有数据已收到，触发真正的完成UI
+						if (m_uiController) m_uiController->SetProgressPercent(100);
+
+						CString successMsg;
+						successMsg.Format(_T("回路测试完成！\n\n已成功发送并接收 %llu 字节数据"), m_bytesReceived);
+						MessageBox(successMsg, _T("测试完成"), MB_OK | MB_ICONINFORMATION);
+
+						// 执行其他UI清理
+						m_isTransmitting = false;
+						m_transmissionPaused = false;
+						if (m_uiController) m_uiController->ApplyTransmissionState(TransmissionUiState::Idle);
+						UpdateSaveButtonStatus();
+						SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
+
+						// 重置标志位，为下一次测试做准备
+						m_isLoopbackTest = false;
+						m_sendComplete = false;
+					}
+				}
+			}
+
 			// 【UI优化】使用节流机制更新显示，避免大文件传输时频繁重绘
 			// 注意：数据已经由ReceiveCacheService直接落盘和更新内存缓存
 			ThrottledUpdateReceiveDisplay();
@@ -2324,6 +2362,13 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 // 新增：传输完成消息处理
 LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 {
+	// 在回路测试中，此消息仅标记发送方完成，真正的“完成”由接收方确认
+	if (m_isLoopbackTest)
+	{
+		m_sendComplete = true;
+		return 0;
+	}
+
 	TransportError error = static_cast<TransportError>(wParam);
 
 	if (m_transmissionCancelled)

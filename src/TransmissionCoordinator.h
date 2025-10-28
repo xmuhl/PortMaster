@@ -4,6 +4,7 @@
 #include "TransmissionTask.h"
 #include "../Protocol/ReliableChannel.h"
 #include "../Transport/ITransport.h"
+#include "../Common/ProgressReportingStrategy.h"
 #include <memory>
 #include <functional>
 #include <string>
@@ -69,6 +70,8 @@ public:
 	 * @param data 待传输的数据
 	 * @param reliableChannel 可靠传输通道（如果使用可靠模式）
 	 * @param transport 原始传输通道（如果使用直接模式）
+	 * @param portType 端口类型（用于智能进度策略检测）
+	 * @param portName 端口名称（用于智能进度策略检测）
 	 * @return 启动是否成功
 	 *
 	 * 说明：
@@ -76,10 +79,13 @@ public:
 	 * - 如果reliableChannel可用且已连接，使用可靠模式
 	 * - 否则使用直接模式
 	 * - 启动前会检查是否有正在运行的任务，如有则忽略
+	 * - 启动时会自动检测工作模式并配置智能进度报告策略
 	 */
 	bool Start(const std::vector<uint8_t>& data,
 		std::shared_ptr<ReliableChannel> reliableChannel,
-		std::shared_ptr<ITransport> transport);
+		std::shared_ptr<ITransport> transport,
+		PortType portType = PortType::PORT_TYPE_SERIAL,
+		const std::string& portName = "");
 
 	/**
 	 * @brief 暂停当前传输任务
@@ -211,6 +217,18 @@ public:
 	 * @param intervalMs 更新间隔（毫秒）
 	 */
 	void SetProgressUpdateInterval(int intervalMs);
+
+	// ========== 智能进度报告接口 ==========
+
+	/**
+	 * @brief 获取智能进度管理器引用
+	 * @return 智能进度管理器引用
+	 *
+	 * 说明：
+	 * - 用于配置智能进度报告策略的回调函数
+	 * - 应在启动传输前设置好回调函数
+	 */
+	SmartProgressManager& GetProgressManager();
 
 private:
 	// ========== 内部方法 ==========

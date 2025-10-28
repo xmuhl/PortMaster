@@ -534,7 +534,10 @@ void PortMasterDialogEvents::SaveReceiveDataToFile()
 					msg.Format(_T("接收数据已保存到文件: %s (%.2f MB)"),
 						static_cast<LPCTSTR>(filePath), bytesWritten / (1024.0 * 1024.0));
 				}
-				m_dialog.m_staticPortStatus.SetWindowText(msg);
+				if (m_dialog.m_statusDisplayManager)
+				{
+					m_dialog.m_statusDisplayManager->LogMessage(msg);
+				}
 
 				// 更新保存按钮状态（保存成功后启用按钮）
 				if (m_dialog.m_uiController)

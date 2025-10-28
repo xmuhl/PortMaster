@@ -108,6 +108,11 @@ private:
 	// 【阶段1迁移】接收窗口更新节流机制已迁移到DialogUiController
 	ULONGLONG m_lastUiLogTick;        // 最近一次输出轻量级UI日志的时间戳
 
+	// 回路测试进度同步标志
+	bool m_isLoopbackTest;      // 当前是否为回路测试模式
+	bool m_sendComplete;        // 发送方是否已完成发送
+	size_t m_expectedReceiveBytes; // 回路测试时期望接收的总字节数
+
 	DECLARE_MESSAGE_MAP()
 
 public:
