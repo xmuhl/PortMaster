@@ -2453,8 +2453,9 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 // 新增：传输完成消息处理
 LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 {
-	// 在回路测试中，此消息仅标记发送方完成，真正的“完成”由接收方确认
-	if (m_isLoopbackTest)
+	// 在回路测试中，此消息仅标记发送方完成，真正的"完成"由接收方确认
+	// 但如果传输被取消，需要立即处理UI重置
+	if (m_isLoopbackTest && !m_transmissionCancelled)
 	{
 		m_sendComplete = true;
 		return 0;
