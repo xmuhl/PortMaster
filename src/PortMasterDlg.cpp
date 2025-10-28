@@ -186,6 +186,9 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 
+	// 【新增】初始化智能进度管理器
+	m_smartProgressManager = &SmartProgressManagerSingleton::GetInstance();
+
 	// 初始化DialogConfigBinder
 	try
 	{
@@ -508,6 +511,31 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 	// 初始化事件调度器
 	m_eventDispatcher = std::make_unique<PortMasterDialogEvents>(*this);
+
+	// 【新增】初始化智能进度管理器回调函数
+	if (m_smartProgressManager)
+	{
+		// 设置进度数据回调（更新进度条）
+		m_smartProgressManager->SetProgressDataCallback([this](int progressPercent) {
+			// 确保在UI线程中更新进度条
+			if (IsWindow(GetSafeHwnd()))
+			{
+				PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
+			}
+		});
+
+		// 设置状态文本回调（更新状态显示）
+		m_smartProgressManager->SetStatusTextCallback([this](const std::string& statusText) {
+			// 确保在UI线程中更新状态文本
+			if (IsWindow(GetSafeHwnd()))
+			{
+				CString* statusTextCStr = new CString();
+				std::wstring statusTextW = StringUtils::WideEncodeUtf8(statusText);
+				*statusTextCStr = statusTextW.c_str();
+				PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusTextCStr));
+			}
+		});
+	}
 
 	// 初始化传输配置
 	InitializeTransportConfig();
@@ -930,10 +958,62 @@ void CPortMasterDlg::PerformDataTransmission()
 				this->WriteLog("PerformDataTransmission: 直通模式验证通过，传输通道已打开");
 			}
 
+			// 【新增】获取端口类型和端口名称用于智能进度检测
+			PortType portType = PortType::PORT_TYPE_SERIAL; // 默认值
+			std::string portName = "";
+
+			// 从PortConfigPresenter获取当前选择的端口信息
+			if (m_portConfigPresenter)
+			{
+				// 获取端口类型索引并转换为PortType枚举
+				PortTypeIndex portTypeIndex = m_portConfigPresenter->GetSelectedPortType();
+				switch (portTypeIndex)
+				{
+				case PortTypeIndex::Serial:
+					portType = PortType::PORT_TYPE_SERIAL;
+					break;
+				case PortTypeIndex::Parallel:
+					portType = PortType::PORT_TYPE_PARALLEL;
+					break;
+				case PortTypeIndex::UsbPrint:
+					portType = PortType::PORT_TYPE_USB_PRINT;
+					break;
+				case PortTypeIndex::NetworkPrint:
+					portType = PortType::PORT_TYPE_NETWORK_PRINT;
+					break;
+				case PortTypeIndex::Loopback:
+					portType = PortType::PORT_TYPE_LOOPBACK;
+					break;
+				default:
+					portType = PortType::PORT_TYPE_SERIAL;
+					break;
+				}
+
+				// 获取端口名称（使用ComboBox当前选择）
+				CString portNameCStr;
+				if (m_comboPort.GetCurSel() >= 0)
+				{
+					m_comboPort.GetLBText(m_comboPort.GetCurSel(), portNameCStr);
+				}
+
+				if (!portNameCStr.IsEmpty())
+				{
+					// 转换CString为std::string
+					CT2CA portNameAnsi(portNameCStr);
+					portName = std::string(portNameAnsi);
+				}
+			}
+
+			this->WriteLog("PerformDataTransmission: 智能进度检测 - 端口类型=" + std::to_string(static_cast<int>(portType)) +
+						  ", 端口名称=" + (portName.empty() ? "未指定" : portName) +
+						  ", 可靠模式=" + std::string(isReliableMode ? "是" : "否"));
+
 			bool started = m_transmissionCoordinator->Start(
 				data,
 				reliableChannel,
-				transport
+				transport,
+				portType,
+				portName
 			);
 
 			if (!started)
@@ -968,26 +1048,37 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 		return;
 	}
 
-	// 1. 总是更新状态文本 (e.g., "X/Y 字节")
-	CString* statusText = new CString();
-	std::wstring statusTextW = StringUtils::WideEncodeUtf8(progress.statusText);
-	*statusText = statusTextW.c_str();
-
-	if (IsWindow(GetSafeHwnd()))
+	// 【重构】使用智能进度报告策略
+	if (m_smartProgressManager)
 	{
-		PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
+		// 通过智能进度管理器处理发送方进度
+		// 智能管理器会根据当前策略决定是否更新进度条
+		m_smartProgressManager->HandleSenderProgress(progress);
 	}
 	else
 	{
-		delete statusText;
-		return;
-	}
+		// 【兼容性回退】如果智能进度管理器未初始化，使用原有逻辑
+		// 1. 总是更新状态文本 (e.g., "X/Y 字节")
+		CString* statusText = new CString();
+		std::wstring statusTextW = StringUtils::WideEncodeUtf8(progress.statusText);
+		*statusText = statusTextW.c_str();
 
-	// 2. 仅在非回路测试中，才由发送方驱动进度条
-	if (!m_isLoopbackTest)
-	{
-		int progressPercent = progress.progressPercent;
-		PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
+		if (IsWindow(GetSafeHwnd()))
+		{
+			PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
+		}
+		else
+		{
+			delete statusText;
+			return;
+		}
+
+		// 2. 仅在非回路测试中，才由发送方驱动进度条
+		if (!m_isLoopbackTest)
+		{
+			int progressPercent = progress.progressPercent;
+			PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
+		}
 	}
 }
 

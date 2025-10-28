@@ -161,6 +161,7 @@
     <ClCompile Include="src\TransmissionTask.cpp" />
     <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Common\DataPresentationService.cpp" />
+    <ClCompile Include="Common\ProgressReportingStrategy.cpp" />
     <ClCompile Include="Common\ReceiveCacheService.cpp" />
     <ClCompile Include="Common\StringUtils.cpp" />
     <ClCompile Include="src\DialogConfigBinder.cpp" />

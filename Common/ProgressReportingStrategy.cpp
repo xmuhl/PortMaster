@@ -1,3 +1,4 @@
+#include "pch.h"
 #include "ProgressReportingStrategy.h"
 #include <algorithm>
 #include <sstream>
@@ -223,7 +224,7 @@ bool SmartProgressManager::IsTransmissionComplete() const
 void SmartProgressManager::UpdateProgressBar(int progressPercent)
 {
     // 确保进度在有效范围内
-    progressPercent = std::max(0, std::min(100, progressPercent));
+    progressPercent = (std::max)(0, (std::min)(100, progressPercent));
 
     if (m_progressDataCallback)
     {

@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "TransmissionCoordinator.h"
+#include "../Common/ProgressReportingStrategy.h"
 
 // ==================== 构造与析构 ====================
 
@@ -24,7 +25,9 @@ TransmissionCoordinator::~TransmissionCoordinator()
 bool TransmissionCoordinator::Start(
 	const std::vector<uint8_t>& data,
 	std::shared_ptr<ReliableChannel> reliableChannel,
-	std::shared_ptr<ITransport> transport)
+	std::shared_ptr<ITransport> transport,
+	PortType portType,
+	const std::string& portName)
 {
 	// 检查是否已有任务在运行
 	if (m_currentTask && !m_currentTask->IsCompleted())
@@ -38,6 +41,50 @@ bool TransmissionCoordinator::Start(
 		return false;
 	}
 
+	// 【新增】智能进度报告策略初始化
+	SmartProgressManager& progressManager = SmartProgressManagerSingleton::GetInstance();
+
+	// 检测工作模式并配置进度报告策略
+	bool useReliableMode = (reliableChannel != nullptr);
+	WorkModeDetection detection = progressManager.DetectWorkMode(portType, portName, useReliableMode);
+
+	// 记录检测结果
+	if (m_logCallback)
+	{
+		m_logCallback("=== 智能进度报告策略检测结果 ===");
+		m_logCallback("端口类型: " + std::to_string(static_cast<int>(portType)));
+		m_logCallback("端口名称: " + (portName.empty() ? "未指定" : portName));
+		m_logCallback("可靠模式: " + std::string(useReliableMode ? "是" : "否"));
+		m_logCallback("检测原因: " + detection.detectionReason);
+		m_logCallback("选用策略: " + std::string(detection.strategy == ProgressReportingStrategy::SenderDriven ? "发送方驱动" : "接收方驱动"));
+		m_logCallback("================================");
+	}
+
+	// 重置进度管理器状态
+	progressManager.Reset();
+
+	// 配置进度管理器回调
+	progressManager.SetProgressDataCallback([this](int progressPercent) {
+		// 转发到外部进度回调
+		if (m_progressCallback)
+		{
+			TransmissionProgress progress;
+			progress.progressPercent = progressPercent;
+			progress.bytesTransmitted = 0; // 此处由具体策略填充
+			progress.totalBytes = 0;
+			progress.statusText = "智能进度报告";
+			m_progressCallback(progress);
+		}
+	});
+
+	progressManager.SetStatusTextCallback([this](const std::string& statusText) {
+		// 转发到外部日志回调
+		if (m_logCallback)
+		{
+			m_logCallback("状态更新: " + statusText);
+		}
+	});
+
 	// 创建任务
 	m_currentTask = CreateTask(reliableChannel, transport);
 	if (!m_currentTask)
@@ -50,14 +97,30 @@ bool TransmissionCoordinator::Start(
 	m_currentTask->SetRetrySettings(m_maxRetries, m_retryDelayMs);
 	m_currentTask->SetProgressUpdateInterval(m_progressUpdateIntervalMs);
 
-	// 设置任务回调
+	// 设置任务回调（集成智能进度管理）
 	m_currentTask->SetProgressCallback([this](const TransmissionProgress& progress) {
+		// 先通过智能进度管理器处理
+		SmartProgressManager& progressManager = SmartProgressManagerSingleton::GetInstance();
+		progressManager.HandleSenderProgress(progress);
+
+		// 再转发到外部回调
 		OnProgress(progress);
 		});
+
 	m_currentTask->SetCompletionCallback([this](const TransmissionResult& result) {
+		// 通知智能进度管理器发送完成
+		SmartProgressManager& progressManager = SmartProgressManagerSingleton::GetInstance();
+		if (result.finalState == TransmissionTaskState::Completed)
+		{
+			progressManager.MarkSendComplete();
+		}
+
+		// 转发到外部回调
 		OnCompletion(result);
 		});
+
 	m_currentTask->SetLogCallback([this](const std::string& message) {
+		// 转发到外部回调
 		OnLog(message);
 		});
 
@@ -192,6 +255,13 @@ void TransmissionCoordinator::SetRetrySettings(int maxRetries, int retryDelayMs)
 void TransmissionCoordinator::SetProgressUpdateInterval(int intervalMs)
 {
 	m_progressUpdateIntervalMs = intervalMs;
+}
+
+// ==================== 智能进度报告接口 ====================
+
+SmartProgressManager& TransmissionCoordinator::GetProgressManager()
+{
+	return SmartProgressManagerSingleton::GetInstance();
 }
 
 // ==================== 内部方法 ====================

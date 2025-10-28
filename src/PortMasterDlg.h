@@ -15,6 +15,7 @@
 #include "StatusDisplayManager.h"
 #include "../Protocol/PortSessionController.h"
 #include "../Transport/LoopbackTransport.h"
+#include "../Common/ProgressReportingStrategy.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -108,10 +109,14 @@ private:
 	// 【阶段1迁移】接收窗口更新节流机制已迁移到DialogUiController
 	ULONGLONG m_lastUiLogTick;        // 最近一次输出轻量级UI日志的时间戳
 
-	// 回路测试进度同步标志
-	bool m_isLoopbackTest;      // 当前是否为回路测试模式
-	bool m_sendComplete;        // 发送方是否已完成发送
-	size_t m_expectedReceiveBytes; // 回路测试时期望接收的总字节数
+	// 【重构】智能进度报告管理
+	SmartProgressManager* m_smartProgressManager;  // 智能进度管理器指针
+	WorkModeDetection m_lastModeDetection;         // 最近一次工作模式检测结果
+
+	// 【兼容性保留】回路测试进度同步标志（已弃用，保留以防兼容性问题）
+	bool m_isLoopbackTest;      // 当前是否为回路测试模式（已弃用，使用m_smartProgressManager代替）
+	bool m_sendComplete;        // 发送方是否已完成发送（已弃用）
+	size_t m_expectedReceiveBytes; // 回路测试时期望接收的总字节数（已弃用）
 
 	DECLARE_MESSAGE_MAP()
 
