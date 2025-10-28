@@ -1054,6 +1054,28 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 		// 通过智能进度管理器处理发送方进度
 		// 智能管理器会根据当前策略决定是否更新进度条
 		m_smartProgressManager->HandleSenderProgress(progress);
+
+		// 【修复】确保UI更新消息被发送
+		CString* statusText = new CString();
+		std::wstring statusTextW = StringUtils::WideEncodeUtf8(progress.statusText);
+		*statusText = statusTextW.c_str();
+
+		if (IsWindow(GetSafeHwnd()))
+		{
+			PostMessage(WM_USER + 12, 0, reinterpret_cast<LPARAM>(statusText));
+		}
+		else
+		{
+			delete statusText;
+			return;
+		}
+
+		// 在发送方驱动模式下，也需要更新进度条
+		if (!m_isLoopbackTest) // 保持原有逻辑，只在非回路测试时由发送方驱动
+		{
+			int progressPercent = progress.progressPercent;
+			PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
+		}
 	}
 	else
 	{
@@ -2438,12 +2460,10 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 	if (statusText)
 	{
 		// ✅ 修复：将传输进度信息显示到传输进度栏（IDC_STATIC_SPEED）而非端口栏
-		if (m_isTransmitting)
+		// 移除过于严格的m_isTransmitting条件判断，确保状态栏能正确更新
+		if (m_uiController)
 		{
-			if (m_uiController)
-			{
-				m_uiController->SetStaticText(IDC_STATIC_SPEED, *statusText);
-			}
+			m_uiController->SetStaticText(IDC_STATIC_SPEED, *statusText);
 		}
 		delete statusText;
 	}

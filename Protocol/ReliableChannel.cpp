@@ -384,7 +384,7 @@ bool ReliableChannel::Send(const std::vector<uint8_t>& data)
 	m_sendQueue.push(data);
 	m_sendCondition.notify_one();
 
-	WriteLog("Send: data queued successfully, queue size=" + std::to_string(m_sendQueue.size()));
+	// WriteLog("Send: data queued successfully, queue size=" + std::to_string(m_sendQueue.size()));
 	return true;
 }
 
