@@ -20,6 +20,7 @@
 #include <atomic>
 #include <fstream>
 #include <chrono>
+#include <future>
 
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
@@ -77,10 +78,10 @@ protected:
 
 	// 基于缓存的格式转换函数
 	void UpdateSendDisplayFromCache();						   // 从发送缓存更新显示
-	void UpdateReceiveDisplayFromCache();					   // 从接收缓存更新显示
+	void TriggerAsyncDisplayUpdate();					   // 从接收缓存更新显示
 
 	// 进度条管理函数
-	void SetProgressPercent(int percent, bool forceReset = false);  // 设置进度条百分比
+	// void SetProgressPercent(int percent, bool forceReset = false);  // 设置进度条百分比
 	void ThrottledUpdateReceiveDisplay();					   // 【UI优化】节流的接收显示更新
 	void UpdateSendCache(const CString& data);				   // 更新发送缓存
 	void UpdateSendCacheFromBytes(const BYTE* data, size_t length); // 直接从字节数据更新发送缓存（避免编码转换）
@@ -97,6 +98,7 @@ protected:
 	// 【简化保存流程】移除复杂的数据稳定性检测，采用直接保存+后验证模式
 
 private:
+	std::vector<std::future<void>> m_asyncFutures; // 用于存储std::async的future，避免阻塞
 	// 二进制数据显示状态管理
 	bool m_binaryDataDetected;  // 是否检测到二进制数据
 	CString m_binaryDataPreview;  // 二进制数据预览内容（静态）
@@ -291,6 +293,7 @@ private:
 	afx_msg LRESULT OnTransmissionComplete(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionError(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnUpdateReceiveDisplay(WPARAM wParam, LPARAM lParam);
 
 	friend class PortMasterDialogEvents;
 

@@ -330,6 +330,8 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC_SEND_SOURCE, m_staticSendSource);
 }
 
+#define WM_USER_UPDATE_RECEIVE_DISPLAY (WM_USER + 20)
+
 BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
@@ -358,6 +360,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_MESSAGE(WM_USER + 13, &CPortMasterDlg::OnTransmissionComplete)
 	ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
 	ON_MESSAGE(WM_USER + 15, &CPortMasterDlg::OnCleanupTransmissionTask)
+	ON_MESSAGE(WM_USER_UPDATE_RECEIVE_DISPLAY, &CPortMasterDlg::OnUpdateReceiveDisplay)
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -448,7 +451,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 		// 设置节流显示回调
 		m_uiController->SetThrottledDisplayCallback([this]() {
-			this->UpdateReceiveDisplayFromCache();
+			this->TriggerAsyncDisplayUpdate();
 			});
 	}
 	catch (const std::exception& e)
@@ -495,7 +498,7 @@ BOOL CPortMasterDlg::OnInitDialog()
 
 		// 设置节流显示回调（与DialogUiController协同）
 		m_statusDisplayManager->SetThrottledDisplayCallback([this]() {
-			this->UpdateReceiveDisplayFromCache();
+			this->TriggerAsyncDisplayUpdate();
 			});
 	}
 	catch (const std::exception& e)
@@ -597,8 +600,8 @@ void CPortMasterDlg::OnTimer(UINT_PTR nIDEvent)
 
 			if (m_uiController->IsDisplayUpdatePending())
 			{
-				// 执行延迟的显示更新
-				UpdateReceiveDisplayFromCache();
+				// 执行延迟的异步更新
+				TriggerAsyncDisplayUpdate();
 				m_uiController->RecordDisplayUpdate();
 				m_uiController->SetDisplayUpdatePending(false);
 			}
@@ -765,7 +768,10 @@ void CPortMasterDlg::StartTransmission()
 	m_transmissionCancelled = false;
 
 	// 重置进度条（仅在开始新传输时重置）
-	SetProgressPercent(0, true);
+	if (m_uiController)
+	{
+		m_uiController->SetProgressPercent(0, true);
+	}
 
 	// 更新按钮文本和状态栏
 	if (m_uiController)
@@ -1148,30 +1154,51 @@ void CPortMasterDlg::UpdateSendDisplayFromCache()
 		}
 	}
 }
-void CPortMasterDlg::UpdateReceiveDisplayFromCache()
+void CPortMasterDlg::TriggerAsyncDisplayUpdate()
 {
-	// 使用DataPresentationService准备显示数据
-	if (m_receiveCacheValid && !m_receiveDataCache.empty())
-	{
-		bool hexMode = m_uiController->IsHexDisplayEnabled();
-		DataPresentationService::DisplayUpdate update =
-			DataPresentationService::PrepareDisplay(m_receiveDataCache, hexMode);
+    // 清理已完成的 future，避免列表无限增长
+    m_asyncFutures.erase(
+        std::remove_if(m_asyncFutures.begin(), m_asyncFutures.end(),
+            [](const std::future<void>& f) {
+                return f.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+            }),
+        m_asyncFutures.end()
+    );
 
-		// 转换为CString并设置到编辑框
-		CString displayText(update.content.c_str(), static_cast<int>(update.content.length()));
-		if (m_uiController)
-		{
-			m_uiController->SetReceiveDataText(displayText);
-		}
-	}
-	else
-	{
-		// 缓存无效或为空，清空显示
-		if (m_uiController)
-		{
-			m_uiController->SetReceiveDataText(_T(""));
-		}
-	}
+    // 启动异步任务，并存储future以避免阻塞
+    m_asyncFutures.push_back(std::async(std::launch::async, [this] {
+        try
+        {
+            if (!m_receiveCacheService || !m_uiController) return;
+
+            // 1. 在后台读取有限数据 (可能阻塞)
+            const size_t MAX_DISPLAY_SIZE = 32768; 
+            std::vector<uint8_t> data = m_receiveCacheService->ReadData(0, MAX_DISPLAY_SIZE);
+
+            if (data.empty()) return;
+
+            // 2. 格式化数据
+            bool hexMode = m_uiController->IsHexDisplayEnabled();
+            DataPresentationService::DisplayUpdate update = DataPresentationService::PrepareDisplay(data, hexMode);
+
+            // 3. 在堆上创建 CString
+            CString* displayText = new CString(update.content.c_str());
+
+            // 4. 通过 PostMessage 将结果安全地发送到UI线程
+            if (IsWindow(GetSafeHwnd()))
+            {
+                PostMessage(WM_USER_UPDATE_RECEIVE_DISPLAY, 0, (LPARAM)displayText);
+            }
+            else
+            {
+                delete displayText; // 窗口销毁，自行清理
+            }
+        }
+        catch (const std::exception& e)
+        {
+            WriteLog(std::string("TriggerAsyncDisplayUpdate 后台任务异常: ") + e.what());
+        }
+    }));
 }
 void CPortMasterDlg::ThrottledUpdateReceiveDisplay()
 {
@@ -1192,8 +1219,8 @@ void CPortMasterDlg::ThrottledUpdateReceiveDisplay()
 	}
 	else
 	{
-		// 超过节流间隔，立即更新显示
-		UpdateReceiveDisplayFromCache();
+		// 超过节流间隔，立即触发异步更新
+		TriggerAsyncDisplayUpdate();
 		m_uiController->RecordDisplayUpdate();
 		m_uiController->SetDisplayUpdatePending(false);
 
@@ -2096,7 +2123,10 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
 			m_uiController->UpdateTransmissionButtons(false, false);
 		}
-		SetProgressPercent(100);
+		if (m_uiController)
+		{
+			m_uiController->SetProgressPercent(100);
+		}
 
 		// 2秒后恢复连接状态显示，但保持进度条100%状态
 		SetTimer(TIMER_ID_CONNECTION_STATUS, 2000, NULL);
@@ -2130,7 +2160,10 @@ void CPortMasterDlg::OnReliableComplete(bool success)
 			// 【第二轮修复】禁用停止按钮，启用发送和文件按钮
 			m_uiController->UpdateTransmissionButtons(false, false);
 		}
-		SetProgressPercent(0, true);
+		if (m_uiController)
+		{
+			m_uiController->SetProgressPercent(0, true);
+		}
 
 		MessageBox(_T("传输失败"), _T("错误"), MB_OK | MB_ICONERROR);
 
@@ -2157,7 +2190,10 @@ void CPortMasterDlg::OnReliableStateChanged(bool connected)
 		{
 			m_uiController->SetStatusText(_T("连接断开"));
 		}
-		SetProgressPercent(0, true);
+		if (m_uiController)
+		{
+			m_uiController->SetProgressPercent(0, true);
+		}
 	}
 }
 
@@ -2241,14 +2277,7 @@ LRESULT CPortMasterDlg::OnTransportErrorMessage(WPARAM wParam, LPARAM lParam)
 	return 0;
 }
 
-void CPortMasterDlg::SetProgressPercent(int percent, bool forceReset)
-{
-	// 【阶段1迁移】使用DialogUiController管理进度条
-	if (m_uiController)
-	{
-		m_uiController->SetProgressPercent(percent, forceReset);
-	}
-}
+	// 【UI优化】节流的接收显示更新
 
 // 新增：传输进度条范围设置消息处理
 LRESULT CPortMasterDlg::OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam)
@@ -2263,7 +2292,10 @@ LRESULT CPortMasterDlg::OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam
 // 新增：传输进度条更新消息处理
 LRESULT CPortMasterDlg::OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lParam)
 {
-	SetProgressPercent(static_cast<int>(lParam));
+	if (m_uiController)
+	{
+		m_uiController->SetProgressPercent(static_cast<int>(lParam));
+	}
 	return 0;
 }
 
@@ -2302,7 +2334,10 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 			// 【阶段三修复】统一使用状态机驱动UI更新，Idle状态自动设置按钮文本为"发送"
 			m_uiController->ApplyTransmissionState(TransmissionUiState::Idle);
 		}
-		SetProgressPercent(0, true);
+		if (m_uiController)
+		{
+			m_uiController->SetProgressPercent(0, true);
+		}
 
 		// ✅ 重置传输进度显示
 		if (m_uiController)
@@ -2352,7 +2387,10 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		MessageBox(errorMsg, errorTitle, MB_OK | MB_ICONERROR);
 
 		// 重置进度条
-		SetProgressPercent(0, true);
+		if (m_uiController)
+		{
+			m_uiController->SetProgressPercent(0, true);
+		}
 
 		// ✅ 重置传输进度显示
 		if (m_uiController)
@@ -2394,7 +2432,10 @@ LRESULT CPortMasterDlg::OnTransmissionComplete(WPARAM wParam, LPARAM lParam)
 		{
 			m_uiController->SetStatusText(completeStatus);
 		}
-		SetProgressPercent(100);
+		if (m_uiController)
+		{
+			m_uiController->SetProgressPercent(100);
+		}
 
 		// ✅ 传输成功后，延时2秒后清空传输进度显示
 		// 先显示100%让用户看到完成状态，再清空
@@ -2561,6 +2602,24 @@ bool CPortMasterDlg::VerifySavedFileSize(const CString& filePath, size_t expecte
 
 	CloseHandle(hFile);
 	return success;
+}
+
+LRESULT CPortMasterDlg::OnUpdateReceiveDisplay(WPARAM wParam, LPARAM lParam)
+{
+    // 该函数在UI线程中执行
+    CString* displayText = reinterpret_cast<CString*>(lParam);
+    if (displayText)
+    {
+        // 1. 直接使用准备好的字符串更新UI控件
+        if (m_uiController)
+        {
+            m_uiController->SetReceiveDataText(*displayText);
+        }
+
+        // 2. 释放从后台线程传递过来的内存
+        delete displayText;
+    }
+    return 0;
 }
 
 // 【阶段3迁移】ClearTempCacheFile和GetTempCacheFileSize已删除，使用ReceiveCacheService替代

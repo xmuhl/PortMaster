@@ -82,3 +82,7 @@ Analysis of project documents (`docs/PortMaster_代码全量分析报告.md`) re
     2.  Building locally with `autobuild_x86_debug.bat` and ensuring no errors/warnings.
     3.  Committing changes with a conventional commit message format (e.g., `fix: ...`, `feat: ...`).
 - **Code Style:** The code follows standard C++/MFC conventions, including PascalCase for classes/methods and the use of `CString`.
+
+## 4. Agent Directives
+
+- **File Generation:** All generated non-source-code files (e.g., reports, analysis documents, diagrams) must be saved in the `docs/` directory.

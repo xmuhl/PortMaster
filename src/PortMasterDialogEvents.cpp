@@ -188,7 +188,10 @@ void PortMasterDialogEvents::HandleStop()
 			// 缓存清理应在：新文件加载、新连接建立、用户明确清除时执行
 			// m_dialog.ClearAllCacheData();  // 已移除
 
-			m_dialog.SetProgressPercent(0, true);
+			if (m_dialog.m_uiController)
+			{
+				m_dialog.m_uiController->SetProgressPercent(0, true);
+			}
 			m_dialog.WriteLog("传输已被用户终止，正在清理资源...");
 		}
 	}
@@ -345,7 +348,7 @@ void PortMasterDialogEvents::HandleToggleHex()
 	// 只有在接收缓存有效时才更新接收显示，避免模式切换时错误填充接收框
 	if (m_dialog.m_receiveCacheValid && !m_dialog.m_receiveDataCache.empty())
 	{
-		m_dialog.UpdateReceiveDisplayFromCache();
+		m_dialog.TriggerAsyncDisplayUpdate();
 	}
 }
 
