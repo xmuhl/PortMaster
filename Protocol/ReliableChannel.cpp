@@ -973,22 +973,32 @@ void ReliableChannel::SendThread()
 			lock.unlock(); // 显式释放锁
 		}
 
-		// 在没有锁的情况下处理发送
+		// 【修复】将AllocateSequence和SendPacket合并到一个临界区内，避免重复锁定
 		try
 		{
+			WriteVerbose("SendThread: entering critical section for sequence allocation and packet sending...");
+
+			// 合并到一个临界区内，只获取一次m_windowMutex锁
+			std::unique_lock<std::mutex> lock(m_windowMutex);
+
 			WriteVerbose("SendThread: allocating sequence number...");
-			// 分配序列号并发送
-			uint16_t sequence = AllocateSequence();
+			// 分配序列号（使用内部版本，避免重复锁定）
+			uint16_t sequence = AllocateSequenceLocked(lock);
 			WriteVerbose("SendThread: allocated sequence " + std::to_string(sequence) + ", sending packet...");
-			if (!SendPacket(sequence, data))
+
+			// 发送数据包（使用内部版本，避免重复锁定）
+			if (!SendPacketLocked(lock, sequence, data))
 			{
-				WriteVerbose("SendThread: SendPacket failed");
+				WriteVerbose("SendThread: SendPacketLocked failed");
 				ReportError("发送数据包失败");
 			}
 			else
 			{
-				WriteVerbose("SendThread: SendPacket succeeded");
+				WriteVerbose("SendThread: SendPacketLocked succeeded");
 			}
+
+			// lock会在作用域结束时自动释放
+			WriteVerbose("SendThread: exiting critical section");
 		}
 		catch (const std::exception& e)
 		{
@@ -1845,6 +1855,108 @@ bool ReliableChannel::SendPacket(uint16_t sequence, const std::vector<uint8_t>& 
 	return true;
 }
 
+// 【新增】内部版本：要求调用方必须已经持有m_windowMutex锁
+bool ReliableChannel::SendPacketLocked(std::unique_lock<std::mutex>& lock, uint16_t sequence, const std::vector<uint8_t>& data, FrameType type)
+{
+	WriteVerbose("SendPacketLocked called: sequence=" + std::to_string(sequence) +
+		", data.size()=" + std::to_string(data.size()) +
+		", type=" + std::to_string(static_cast<int>(type)));
+
+	// 压缩数据（如果启用）
+	std::vector<uint8_t> payload = data;
+
+	// 编码帧
+	WriteVerbose("SendPacketLocked: encoding frame...");
+	std::vector<uint8_t> frameData;
+	switch (type)
+	{
+	case FrameType::FRAME_DATA:
+		frameData = m_frameCodec->EncodeDataFrame(sequence, payload);
+		break;
+	case FrameType::FRAME_START:
+		frameData = m_frameCodec->EncodeFrame(type, sequence, payload);
+		break;
+	case FrameType::FRAME_END:
+		frameData = m_frameCodec->EncodeEndFrame(sequence);
+		break;
+	case FrameType::FRAME_HEARTBEAT:
+		frameData = m_frameCodec->EncodeHeartbeatFrame(sequence);
+		break;
+	default:
+		WriteLog("SendPacketLocked: ERROR - unknown frame type " + std::to_string(static_cast<int>(type)));
+		return false;
+	}
+
+	WriteVerbose("SendPacketLocked: frame encoded, frameData.size()=" + std::to_string(frameData.size()));
+
+	// 发送数据
+	WriteVerbose("SendPacketLocked: writing to transport...");
+	size_t written = 0;
+	if (m_transport->Write(frameData.data(), frameData.size(), &written) != TransportError::Success || written != frameData.size())
+	{
+		WriteLog("SendPacketLocked: ERROR - transport write failed or incomplete");
+		return false;
+	}
+
+	WriteVerbose("SendPacketLocked: transport write succeeded, " + std::to_string(written) + " bytes written");
+
+	// 更新统计
+	{
+		std::lock_guard<std::mutex> statsLock(m_statsMutex); // 使用不同的锁名避免冲突
+		m_stats.packetsSent++;
+		m_stats.bytesSent += frameData.size();
+		WriteVerbose("SendPacketLocked: stats updated - packetsSent=" + std::to_string(m_stats.packetsSent) +
+			", bytesSent=" + std::to_string(m_stats.bytesSent));
+	}
+
+	// 对于数据帧，需要保存到发送窗口（调用方已持有m_windowMutex锁）
+	if (type == FrameType::FRAME_DATA)
+	{
+		WriteVerbose("SendPacketLocked: saving to send window (caller already holds lock)...");
+
+		// 确保窗口大小有效
+		if (m_config.windowSize == 0 || m_sendWindow.empty())
+		{
+			WriteLog("SendPacketLocked: ERROR - window not initialized or size is 0");
+			ReportError("发送窗口未初始化或大小为0");
+			return false;
+		}
+
+		uint16_t index = sequence % m_config.windowSize;
+		WriteVerbose("SendPacketLocked: calculated index=" + std::to_string(index) +
+			", windowSize=" + std::to_string(m_config.windowSize));
+
+		// 边界检查
+		if (index >= m_sendWindow.size())
+		{
+			WriteLog("SendPacketLocked: ERROR - index out of bounds: " + std::to_string(index) +
+				" >= " + std::to_string(m_sendWindow.size()));
+			ReportError("发送窗口索引越界: " + std::to_string(index) + " >= " + std::to_string(m_sendWindow.size()));
+			return false;
+		}
+
+		WriteVerbose("SendPacketLocked: setting window slot " + std::to_string(index) + " to inUse=true");
+		m_sendWindow[index].inUse = true;
+
+		if (!m_sendWindow[index].packet)
+		{
+			WriteVerbose("SendPacketLocked: creating new packet for slot " + std::to_string(index));
+			m_sendWindow[index].packet = std::make_shared<Packet>();
+		}
+
+		m_sendWindow[index].packet->sequence = sequence;
+		m_sendWindow[index].packet->data = data; // 保存原始数据
+		m_sendWindow[index].packet->timestamp = std::chrono::steady_clock::now();
+		m_sendWindow[index].packet->retryCount = 0;
+		m_sendWindow[index].packet->acknowledged = false;
+
+		WriteVerbose("SendPacketLocked: window slot " + std::to_string(index) + " updated successfully");
+	}
+
+	WriteVerbose("SendPacketLocked: completed successfully");
+	return true;
+}
+
 // 发送ACK
 bool ReliableChannel::SendAck(uint16_t sequence)
 {
@@ -2195,32 +2307,40 @@ uint16_t ReliableChannel::AllocateSequence()
 
 	std::unique_lock<std::mutex> lock(m_windowMutex);
 
-	WriteLog("AllocateSequence: sendWindow.size()=" + std::to_string(m_sendWindow.size()) +
+	return AllocateSequenceLocked(lock);
+}
+
+// 【新增】内部版本：要求调用方必须已经持有m_windowMutex锁
+uint16_t ReliableChannel::AllocateSequenceLocked(std::unique_lock<std::mutex>& lock)
+{
+	WriteLog("AllocateSequenceLocked called (caller already holds lock)");
+
+	WriteLog("AllocateSequenceLocked: sendWindow.size()=" + std::to_string(m_sendWindow.size()) +
 		", windowSize=" + std::to_string(m_config.windowSize));
 
 	// 确保窗口已初始化
 	if (m_sendWindow.empty() || m_config.windowSize == 0)
 	{
-		WriteLog("AllocateSequence: ERROR - window not initialized or size is 0");
+		WriteLog("AllocateSequenceLocked: ERROR - window not initialized or size is 0");
 		ReportError("发送窗口未初始化或大小为0");
 		return 0;
 	}
 
 	while (!m_shutdown.load() && m_connected.load() && IsSendWindowFullLocked())
 	{
-		WriteLog("AllocateSequence: send window full (sendBase=" + std::to_string(m_sendBase) +
+		WriteLog("AllocateSequenceLocked: send window full (sendBase=" + std::to_string(m_sendBase) +
 			", sendNext=" + std::to_string(m_sendNext) + "), waiting for availability");
 
 		m_windowCondition.wait(lock, [this]() {
 			return m_shutdown.load() || !m_connected.load() || !IsSendWindowFullLocked();
 			});
 
-		WriteLog("AllocateSequence: wake, current sendBase=" + std::to_string(m_sendBase) +
+		WriteLog("AllocateSequenceLocked: wake, current sendBase=" + std::to_string(m_sendBase) +
 			", sendNext=" + std::to_string(m_sendNext));
 	}
 
 	uint16_t sequence = m_sendNext;
-	WriteLog("AllocateSequence: returning sequence " + std::to_string(sequence) +
+	WriteLog("AllocateSequenceLocked: returning sequence " + std::to_string(sequence) +
 		", next will be " + std::to_string((m_sendNext + 1) % 65536));
 	m_sendNext = (m_sendNext + 1) % 65536;
 	return sequence;
@@ -2490,19 +2610,24 @@ bool ReliableChannel::EnsureSessionStarted()
 		std::chrono::system_clock::now().time_since_epoch()).count();
 	metadata.sessionId = sessionId;
 
-	// 分配序列号用于START控制帧
-	uint16_t sequence = AllocateSequence();
-	m_handshakeSequence.store(sequence);
-	WriteLog("EnsureSessionStarted: allocated sequence=" + std::to_string(sequence) + " for handshake START frame");
+	// 【修复】统一管理锁操作，避免递归锁定
+	uint16_t sequence;
+	std::vector<uint8_t> frameData;
 
-	// 编码开始帧
-	WriteLog("EnsureSessionStarted: encoding handshake START frame");
-	std::vector<uint8_t> frameData = m_frameCodec->EncodeStartFrame(sequence, metadata);
-	WriteLog("EnsureSessionStarted: frame encoded, size=" + std::to_string(frameData.size()));
-
-	// 将START帧存储到发送窗口中以支持ACK匹配
 	{
-		std::lock_guard<std::mutex> lock(m_windowMutex);
+		std::unique_lock<std::mutex> lock(m_windowMutex);
+
+		// 分配序列号用于START控制帧（使用内部版本，避免重复锁定）
+		sequence = AllocateSequenceLocked(lock);
+		m_handshakeSequence.store(sequence);
+		WriteLog("EnsureSessionStarted: allocated sequence=" + std::to_string(sequence) + " for handshake START frame");
+
+		// 编码开始帧
+		WriteLog("EnsureSessionStarted: encoding handshake START frame");
+		frameData = m_frameCodec->EncodeStartFrame(sequence, metadata);
+		WriteLog("EnsureSessionStarted: frame encoded, size=" + std::to_string(frameData.size()));
+
+		// 将START帧存储到发送窗口中以支持ACK匹配
 		uint16_t index = sequence % m_config.windowSize;
 
 		if (index < m_sendWindow.size())

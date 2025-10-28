@@ -151,6 +151,7 @@ private:
 	void ProcessHeartbeatFrame(const Frame& frame);
 
 	bool SendPacket(uint16_t sequence, const std::vector<uint8_t>& data, FrameType type = FrameType::FRAME_DATA);
+	bool SendPacketLocked(std::unique_lock<std::mutex>& lock, uint16_t sequence, const std::vector<uint8_t>& data, FrameType type = FrameType::FRAME_DATA); // 内部版本，要求调用方已持有锁
 	bool SendAck(uint16_t sequence);
 	bool SendNak(uint16_t sequence);
 	bool SendHeartbeat();
@@ -163,6 +164,7 @@ private:
 	void UpdateReceiveWindow(uint16_t sequence);
 
 	uint16_t AllocateSequence();
+	uint16_t AllocateSequenceLocked(std::unique_lock<std::mutex>& lock); // 内部版本，要求调用方已持有锁
 	bool IsSendWindowFullLocked() const;
 	bool IsSequenceInWindow(uint16_t sequence, uint16_t base, uint16_t windowSize) const;
 	uint16_t GetWindowDistance(uint16_t from, uint16_t to) const;
