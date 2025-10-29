@@ -1,6 +1,6 @@
 //{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ Éú³ÉµÄ°üº¬ÎÄ¼þ¡£
-// ¹© PortMaster.rc Ê¹ÓÃ
+// Microsoft Visual C++ ï¿½ï¿½ï¿½ÉµÄ°ï¿½ï¿½ï¿½ï¿½Ä¼ï¿½ï¿½ï¿½
+// ï¿½ï¿½ PortMaster.rc Ê¹ï¿½ï¿½
 //
 #define IDM_ABOUTBOX                    0x0010
 #define IDD_ABOUTBOX                    100
@@ -58,6 +58,11 @@
 #define IDC_STATIC_RECEIVED             1048
 #define IDC_EDIT_SEND                   1049
 #define IDC_EDIT_SEND_HISTORY           1050
+#define IDD_NETWORK_PRINTER_CONFIG       1051
+#define IDC_EDIT_NETWORK_IP              1052
+#define IDC_EDIT_NETWORK_PORT            1053
+#define IDC_COMBO_NETWORK_PROTOCOL       1054
+#define IDC_BUTTON_TEST_NETWORK          1055
 
 // Next default values for new objects
 //

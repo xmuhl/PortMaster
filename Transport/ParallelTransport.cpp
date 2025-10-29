@@ -448,6 +448,99 @@ std::vector<std::string> ParallelTransport::EnumerateParallelPorts()
 	return ports;
 }
 
+// 增强版并口枚举（获取设备描述）
+std::vector<PortInfo> ParallelTransport::EnumerateParallelPortsWithInfo()
+{
+	std::vector<PortInfo> portInfos;
+
+	// 检查常见的并口名称
+	std::vector<std::string> commonPorts = { "LPT1", "LPT2", "LPT3", "LPT4" };
+
+	for (const auto& port : commonPorts)
+	{
+		PortInfo info;
+		info.portType = PortType::PORT_TYPE_PARALLEL;
+		info.portName = port;
+
+		// 获取设备信息
+		info.displayName = GetParallelDeviceInfo(port);
+		info.description = "并口设备：" + info.displayName;
+
+		// 检测端口状态
+		info.status = CheckParallelPortStatus(port);
+
+		// 设置状态文本
+		switch (info.status)
+		{
+			case PortStatus::Available:
+			case PortStatus::Connected:
+				info.statusText = "已连接";
+				break;
+			case PortStatus::Offline:
+				info.statusText = "未连接";
+				break;
+			case PortStatus::Busy:
+				info.statusText = "忙碌";
+				break;
+			default:
+				info.statusText = "未知";
+				break;
+		}
+
+		portInfos.push_back(info);
+	}
+
+	return portInfos;
+}
+
+// 获取并口设备信息
+std::string ParallelTransport::GetParallelDeviceInfo(const std::string& portName)
+{
+	// 并口设备信息获取比较简单，主要是查询系统信息
+	// 这里可以扩展为使用WMI查询详细设备信息
+
+	// 检查端口是否可用，如果可用则返回设备信息
+	if (IsParallelPortAvailable(portName))
+	{
+		// 这里可以进一步查询设备描述
+		return "并口设备 (" + portName + ")";
+	}
+
+	return "未知设备 (" + portName + ")";
+}
+
+// 检测并口状态
+PortStatus ParallelTransport::CheckParallelPortStatus(const std::string& portName)
+{
+	std::string devicePath = "\\\\.\\" + portName;
+
+	// 尝试打开句柄检测端口是否可用
+	HANDLE hPort = CreateFileA(
+		devicePath.c_str(),
+		GENERIC_WRITE,
+		0,
+		nullptr,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL,
+		nullptr
+	);
+
+	if (hPort != INVALID_HANDLE_VALUE)
+	{
+		// 端口可以打开，标记为可用
+		CloseHandle(hPort);
+		return PortStatus::Available;
+	}
+
+	// 无法打开端口
+	DWORD error = ::GetLastError();
+	if (error == ERROR_FILE_NOT_FOUND || error == ERROR_ACCESS_DENIED)
+	{
+		return PortStatus::Offline;
+	}
+	return PortStatus::Error;
+}
+
 // 检查并口是否可用
 bool ParallelTransport::IsParallelPortAvailable(const std::string& portName)
 {

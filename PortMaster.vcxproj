@@ -166,6 +166,7 @@
     <ClCompile Include="Common\StringUtils.cpp" />
     <ClCompile Include="src\DialogConfigBinder.cpp" />
     <ClCompile Include="src\DialogUiController.cpp" />
+    <ClCompile Include="src\NetworkPrinterConfigDialog.cpp" />
     <ClCompile Include="src\PortConfigPresenter.cpp" />
     <ClCompile Include="src\StatusDisplayManager.cpp" />
     <ClCompile Include="src\TransmissionCoordinator.cpp" />

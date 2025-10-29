@@ -10,6 +10,7 @@
 #include <sstream>
 #include <algorithm>
 #include <iomanip>
+#include <map>
 
 // 应用程序版本信息
 #define APP_VERSION_MAJOR 1
@@ -92,6 +93,34 @@ enum class PortType
 	PORT_TYPE_USB_PRINT,     // USB打印
 	PORT_TYPE_NETWORK_PRINT, // 网络打印
 	PORT_TYPE_LOOPBACK       // 回路测试
+};
+
+// 端口状态
+enum class PortStatus
+{
+ Unknown = 0,
+ Available = 1,      // 端口存在且可用
+ Connected = 2,      // 端口已连接设备
+ Busy = 4,           // 端口忙碌
+ Offline = 8,        // 端口离线
+ Error = 16          // 端口错误
+};
+
+// 端口信息结构
+struct PortInfo
+{
+ PortType portType;              // 端口类型
+ std::string portName;           // 端口名：COM1, LPT1, USB001
+ std::string displayName;        // 友好名称：CH340 (COM3)
+ std::string description;        // 详细描述：USB-Serial CH340 on COM3
+ std::string deviceId;           // 设备ID：USB\VID_1a86&PID_7523...
+ PortStatus status;              // 端口状态
+ std::string statusText;         // 状态文本：已连接、忙碌、离线
+ std::map<std::string, std::string> properties; // 其他属性（速度、型号等）
+
+ // 辅助方法
+ bool IsConnected() const { return (int)status & (int)PortStatus::Connected; }
+ bool IsAvailable() const { return (int)status & (int)PortStatus::Available; }
 };
 
 // 网络协议类型

@@ -629,6 +629,181 @@ std::vector<std::string> SerialTransport::EnumerateSerialPorts()
 	return ports;
 }
 
+// 增强版串口枚举（获取设备描述）
+std::vector<PortInfo> SerialTransport::EnumerateSerialPortsWithInfo()
+{
+	std::vector<PortInfo> portInfos;
+
+	// 使用SetupAPI枚举串口
+	HDEVINFO hDevInfo = SetupDiGetClassDevs(&GUID_DEVCLASS_PORTS, NULL, NULL, DIGCF_PRESENT);
+
+	if (hDevInfo != INVALID_HANDLE_VALUE)
+	{
+		SP_DEVINFO_DATA devInfoData;
+		devInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+		for (DWORD i = 0; SetupDiEnumDeviceInfo(hDevInfo, i, &devInfoData); i++)
+		{
+			HKEY hKey = SetupDiOpenDevRegKey(hDevInfo, &devInfoData, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+			if (hKey != INVALID_HANDLE_VALUE)
+			{
+				char portName[256];
+				DWORD size = sizeof(portName);
+				DWORD type = 0;
+
+				if (RegQueryValueExA(hKey, "PortName", NULL, &type, (LPBYTE)portName, &size) == ERROR_SUCCESS)
+				{
+					if (type == REG_SZ && strncmp(portName, "COM", 3) == 0)
+					{
+						PortInfo info;
+						info.portType = PortType::PORT_TYPE_SERIAL;
+						info.portName = portName;
+
+						// 获取设备友好名称
+						info.displayName = GetDeviceFriendlyName(portName);
+						info.description = "串口设备：" + info.displayName;
+
+						// 检测端口状态
+						info.status = CheckSerialPortStatus(portName);
+
+						// 设置状态文本
+						switch (info.status)
+						{
+							case PortStatus::Available:
+							case PortStatus::Connected:
+								info.statusText = "已连接";
+								break;
+							case PortStatus::Offline:
+								info.statusText = "未连接";
+								break;
+							case PortStatus::Busy:
+								info.statusText = "忙碌";
+								break;
+							default:
+								info.statusText = "未知";
+								break;
+						}
+
+						portInfos.push_back(info);
+					}
+				}
+
+				RegCloseKey(hKey);
+			}
+		}
+
+		SetupDiDestroyDeviceInfoList(hDevInfo);
+	}
+
+	// 按端口号排序
+	std::sort(portInfos.begin(), portInfos.end(), [](const PortInfo& a, const PortInfo& b) {
+		int numA = atoi(a.portName.substr(3).c_str());
+		int numB = atoi(b.portName.substr(3).c_str());
+		return numA < numB;
+		});
+
+	return portInfos;
+}
+
+// 获取设备友好名称
+std::string SerialTransport::GetDeviceFriendlyName(const std::string& portName)
+{
+	// 使用SetupAPI枚举串口设备，查找对应的友好名称
+	HDEVINFO hDevInfo = SetupDiGetClassDevs(&GUID_DEVCLASS_PORTS, NULL, NULL, DIGCF_PRESENT);
+
+	if (hDevInfo != INVALID_HANDLE_VALUE)
+	{
+		SP_DEVINFO_DATA devInfoData;
+		devInfoData.cbSize = sizeof(SP_DEVINFO_DATA);
+
+		for (DWORD i = 0; SetupDiEnumDeviceInfo(hDevInfo, i, &devInfoData); i++)
+		{
+			HKEY hKey = SetupDiOpenDevRegKey(hDevInfo, &devInfoData, DICS_FLAG_GLOBAL, 0, DIREG_DEV, KEY_READ);
+			if (hKey != INVALID_HANDLE_VALUE)
+			{
+				char currentPortName[256];
+				DWORD size = sizeof(currentPortName);
+				DWORD type = 0;
+
+				if (RegQueryValueExA(hKey, "PortName", NULL, &type, (LPBYTE)currentPortName, &size) == ERROR_SUCCESS)
+				{
+					if (strcmp(currentPortName, portName.c_str()) == 0)
+					{
+						// 查找FriendlyName
+						char friendlyName[256] = {0};
+						size = sizeof(friendlyName);
+						if (RegQueryValueExA(hKey, "FriendlyName", NULL, &type, (LPBYTE)friendlyName, &size) == ERROR_SUCCESS)
+						{
+							RegCloseKey(hKey);
+							SetupDiDestroyDeviceInfoList(hDevInfo);
+
+							// 如果友好名称包含端口名，则返回它，否则返回"设备名 (端口名)"
+							if (strstr(friendlyName, "COM") == nullptr)
+							{
+								return std::string(friendlyName) + " (" + portName + ")";
+							}
+							return std::string(friendlyName);
+						}
+					}
+				}
+
+				RegCloseKey(hKey);
+			}
+		}
+
+		SetupDiDestroyDeviceInfoList(hDevInfo);
+	}
+
+	// 如果找不到友好名称，返回默认格式
+	return "串口设备 (" + portName + ")";
+}
+
+// 检测串口状态
+PortStatus SerialTransport::CheckSerialPortStatus(const std::string& portName)
+{
+	std::string portPath = "\\\\.\\" + portName;
+
+	// 尝试打开句柄检测端口是否可用
+	HANDLE hSerial = CreateFileA(
+		portPath.c_str(),
+		GENERIC_READ | GENERIC_WRITE,
+		0,
+		NULL,
+		OPEN_EXISTING,
+		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+		NULL
+	);
+
+	if (hSerial == INVALID_HANDLE_VALUE)
+	{
+		DWORD error = GetLastError();
+		if (error == ERROR_FILE_NOT_FOUND || error == ERROR_ACCESS_DENIED)
+		{
+			return PortStatus::Offline;
+		}
+		return PortStatus::Error;
+	}
+
+	// 尝试获取端口状态
+	DCB dcb = {0};
+	dcb.DCBlength = sizeof(DCB);
+
+	if (!::GetCommState(hSerial, &dcb))
+	{
+		CloseHandle(hSerial);
+		return PortStatus::Error;
+	}
+
+	// 设置超时（快速测试）
+	COMMTIMEOUTS timeouts = {0};
+	timeouts.ReadIntervalTimeout = 1000;
+	timeouts.ReadTotalTimeoutConstant = 1000;
+	::SetCommTimeouts(hSerial, &timeouts);
+
+	CloseHandle(hSerial);
+	return PortStatus::Available;
+}
+
 bool SerialTransport::IsSerialPortAvailable(const std::string& portName)
 {
 	std::string portPath = "\\\\.\\" + portName;

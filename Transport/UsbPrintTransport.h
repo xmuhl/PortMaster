@@ -82,6 +82,7 @@ public:
 
 	// 静态辅助方法
 	static std::vector<std::string> EnumerateUsbPorts();
+	static std::vector<PortInfo> EnumerateUsbPortsWithInfo();
 	static bool IsUsbPortAvailable(const std::string& portName);
 	static std::string GetDeviceStatusString(UsbDeviceStatus status);
 

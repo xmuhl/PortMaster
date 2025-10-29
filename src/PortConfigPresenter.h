@@ -7,6 +7,9 @@
 #include <string>
 #include <functional>
 
+// 前向声明
+class NetworkPrinterConfigDialog;
+
 // 端口类型枚举
 enum class PortTypeIndex
 {
@@ -81,6 +84,9 @@ public:
 	// 事件回调注册
 	void SetPortTypeChangedCallback(std::function<void()> callback);  // 端口类型变更回调
 	void SetPortChangedCallback(std::function<void()> callback);      // 端口号变更回调
+
+	// 网络打印机配置
+	void OnNetworkPrinterConfigSelected();                             // 处理网络打印机配置选项选择
 
 private:
 	PortConfigControlRefs m_controls;                        // 控件引用集合

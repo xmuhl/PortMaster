@@ -285,6 +285,7 @@ private:
 
 	// 控件事件处理
 	afx_msg void OnCbnSelchangeComboPortType();
+	afx_msg void OnCbnSelchangeComboPort();
 	afx_msg void OnBnClickedCheckHex();
 	afx_msg void OnBnClickedRadioReliable();
 	afx_msg void OnBnClickedRadioDirect();

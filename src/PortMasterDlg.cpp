@@ -350,6 +350,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_COPY_ALL, &CPortMasterDlg::OnBnClickedButtonCopyAll)
 	ON_BN_CLICKED(IDC_BUTTON_SAVE_ALL, &CPortMasterDlg::OnBnClickedButtonSaveAll)
 	ON_CBN_SELCHANGE(IDC_COMBO_PORT_TYPE, &CPortMasterDlg::OnCbnSelchangeComboPortType)
+	ON_CBN_SELCHANGE(IDC_COMBO_PORT, &CPortMasterDlg::OnCbnSelchangeComboPort)
 	ON_BN_CLICKED(IDC_CHECK_HEX, &CPortMasterDlg::OnBnClickedCheckHex)
 	ON_BN_CLICKED(IDC_RADIO_RELIABLE, &CPortMasterDlg::OnBnClickedRadioReliable)
 	ON_BN_CLICKED(IDC_RADIO_DIRECT, &CPortMasterDlg::OnBnClickedRadioDirect)
@@ -1234,6 +1235,33 @@ void CPortMasterDlg::OnCbnSelchangeComboPortType()
 	if (m_portConfigPresenter)
 	{
 		m_portConfigPresenter->OnPortTypeChanged();
+	}
+}
+
+void CPortMasterDlg::OnCbnSelchangeComboPort()
+{
+	// 【端口识别优化】检查是否选择了网络打印机配置选项
+	if (m_portConfigPresenter)
+	{
+		// 获取当前选择的端口
+		CString portText;
+		m_comboPort.GetWindowText(portText);
+
+		// 检查是否为网络打印机配置选项
+		if (portText == _T("[配置网络打印机...]"))
+		{
+			// 调用PortConfigPresenter处理网络打印机配置
+			m_portConfigPresenter->OnNetworkPrinterConfigSelected();
+
+			// 重新更新端口列表（配置后可能需要刷新）
+			PortTypeIndex currentType = m_portConfigPresenter->GetSelectedPortType();
+			if (currentType == PortTypeIndex::NetworkPrint)
+			{
+				m_portConfigPresenter->UpdateNetworkPrintPortParameters();
+			}
+
+			return; // 避免触发端口改变回调
+		}
 	}
 }
 

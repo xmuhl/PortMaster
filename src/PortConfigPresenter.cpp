@@ -7,6 +7,8 @@
 #include "../Transport/SerialTransport.h"
 #include "../Transport/ParallelTransport.h"
 #include "../Transport/UsbPrintTransport.h"
+#include "NetworkPrinterConfigDialog.h"
+#include "../Common/CommonTypes.h"
 #include <cassert>
 
 // 构造函数
@@ -121,20 +123,41 @@ void PortConfigPresenter::UpdatePortParameters()
 // 更新串口参数
 void PortConfigPresenter::UpdateSerialPortParameters()
 {
-	// 枚举串口
-	std::vector<std::string> ports = EnumerateSerialPorts();
+	// 使用增强版枚举（获取设备描述）
+	auto portInfos = SerialTransport::EnumerateSerialPortsWithInfo();
+
+	// 转换为显示字符串列表
+	std::vector<std::string> portList;
+	for (const auto& info : portInfos)
+	{
+		// 格式：COM3 - CH340 (已连接)
+		std::string displayText = info.portName;
+		if (!info.displayName.empty())
+		{
+			displayText += " - " + info.displayName;
+		}
+		if (info.IsConnected())
+		{
+			displayText += " (已连接)";
+		}
+		else if (info.status == PortStatus::Available)
+		{
+			displayText += " (可用)";
+		}
+		portList.push_back(displayText);
+	}
 
 	// 如果没有找到串口，添加默认选项
-	if (ports.empty())
+	if (portList.empty())
 	{
-		ports.push_back("COM1");
-		ports.push_back("COM2");
-		ports.push_back("COM3");
-		ports.push_back("COM4");
+		portList.push_back("COM1 (默认)");
+		portList.push_back("COM2 (默认)");
+		portList.push_back("COM3 (默认)");
+		portList.push_back("COM4 (默认)");
 	}
 
 	// 填充端口列表
-	PopulateComboBox(m_controls.comboPort, ports);
+	PopulateComboBox(m_controls.comboPort, portList);
 
 	// 显示串口相关参数
 	ShowSerialParameters(true);
@@ -143,19 +166,40 @@ void PortConfigPresenter::UpdateSerialPortParameters()
 // 更新并口参数
 void PortConfigPresenter::UpdateParallelPortParameters()
 {
-	// 枚举并口
-	std::vector<std::string> ports = EnumerateParallelPorts();
+	// 使用增强版枚举（获取设备描述）
+	auto portInfos = ParallelTransport::EnumerateParallelPortsWithInfo();
+
+	// 转换为显示字符串列表
+	std::vector<std::string> portList;
+	for (const auto& info : portInfos)
+	{
+		// 格式：LPT1 - EPSON L3150 (已连接)
+		std::string displayText = info.portName;
+		if (!info.displayName.empty())
+		{
+			displayText += " - " + info.displayName;
+		}
+		if (info.IsConnected())
+		{
+			displayText += " (已连接)";
+		}
+		else if (info.status == PortStatus::Available)
+		{
+			displayText += " (可用)";
+		}
+		portList.push_back(displayText);
+	}
 
 	// 如果没有找到并口，添加默认选项
-	if (ports.empty())
+	if (portList.empty())
 	{
-		ports.push_back("LPT1");
-		ports.push_back("LPT2");
-		ports.push_back("LPT3");
+		portList.push_back("LPT1 (默认)");
+		portList.push_back("LPT2 (默认)");
+		portList.push_back("LPT3 (默认)");
 	}
 
 	// 填充端口列表
-	PopulateComboBox(m_controls.comboPort, ports);
+	PopulateComboBox(m_controls.comboPort, portList);
 
 	// 隐藏串口参数
 	ShowSerialParameters(false);
@@ -164,18 +208,35 @@ void PortConfigPresenter::UpdateParallelPortParameters()
 // 更新USB打印端口参数
 void PortConfigPresenter::UpdateUsbPrintPortParameters()
 {
-	// 枚举USB打印端口
-	std::vector<std::string> ports = EnumerateUsbPorts();
+	// 使用增强版枚举（获取设备描述）
+	auto portInfos = UsbPrintTransport::EnumerateUsbPortsWithInfo();
+
+	// 转换为显示字符串列表
+	std::vector<std::string> portList;
+	for (const auto& info : portInfos)
+	{
+		// 格式：USB001 - Canon iP7200 (就绪)
+		std::string displayText = info.portName;
+		if (!info.displayName.empty())
+		{
+			displayText += " - " + info.displayName;
+		}
+		if (!info.statusText.empty())
+		{
+			displayText += " (" + info.statusText + ")";
+		}
+		portList.push_back(displayText);
+	}
 
 	// 如果没有找到USB打印端口，添加默认选项
-	if (ports.empty())
+	if (portList.empty())
 	{
-		ports.push_back("USB001");
-		ports.push_back("USB002");
+		portList.push_back("USB001 (默认)");
+		portList.push_back("USB002 (默认)");
 	}
 
 	// 填充端口列表
-	PopulateComboBox(m_controls.comboPort, ports);
+	PopulateComboBox(m_controls.comboPort, portList);
 
 	// 隐藏串口参数
 	ShowSerialParameters(false);
@@ -186,15 +247,33 @@ void PortConfigPresenter::UpdateNetworkPrintPortParameters()
 {
 	// 添加网络打印地址选项
 	std::vector<std::string> addresses;
-	addresses.push_back("127.0.0.1:9100");
-	addresses.push_back("192.168.1.100:9100");
-	addresses.push_back("printer.local:9100");
+	addresses.push_back("127.0.0.1:9100 (未检测)");
+	addresses.push_back("192.168.1.100:9100 (未检测)");
+	addresses.push_back("printer.local:9100 (未检测)");
+	addresses.push_back("[配置网络打印机...]");
 
 	// 填充端口列表
 	PopulateComboBox(m_controls.comboPort, addresses);
 
 	// 隐藏串口参数
 	ShowSerialParameters(false);
+}
+
+// 处理网络打印机配置选项选择
+void PortConfigPresenter::OnNetworkPrinterConfigSelected()
+{
+	// 弹出网络打印机配置对话框
+	NetworkPrinterConfigDialog dialog;
+	if (dialog.DoModal() == IDOK) {
+		// 这里可以添加自定义网络打印机到配置中的逻辑
+		// 目前先显示一个消息框
+		// 实际应用中需要将新配置添加到端口列表中
+	}
+
+	// 重新选择之前的选项或默认选项
+	if (m_controls.comboPort && m_controls.comboPort->GetCount() > 0) {
+		m_controls.comboPort->SetCurSel(0);
+	}
 }
 
 // 更新回路测试参数

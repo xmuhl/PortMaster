@@ -22,7 +22,9 @@
       "Bash(src/DialogConfigBinder.h src/DialogConfigBinder.cpp )",
       "Bash(\"docs/PortMasterDlg模块拆分评估.md\")",
       "Bash(git remote:*)",
-      "Read(//mnt/c/Users/huangl/Desktop/**)"
+      "Read(//mnt/c/Users/huangl/Desktop/**)",
+      "Bash(./autobuild_x86_debug.bat)",
+      "Bash(findstr /S /C:\"IDC_COMBO_PORT\" srcPortMasterDlg.cpp)"
     ],
     "deny": [],
     "ask": []

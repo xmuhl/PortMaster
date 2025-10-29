@@ -82,8 +82,14 @@ public:
 
 	// 静态辅助方法
 	static std::vector<std::string> EnumerateParallelPorts();
+	static std::vector<PortInfo> EnumerateParallelPortsWithInfo();
 	static bool IsParallelPortAvailable(const std::string& portName);
 	static std::string GetPortStatusString(ParallelPortStatus status);
+
+private:
+	// 设备信息获取辅助方法
+	static std::string GetParallelDeviceInfo(const std::string& portName);
+	static PortStatus CheckParallelPortStatus(const std::string& portName);
 
 private:
 	// 内部状态

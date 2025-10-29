@@ -326,6 +326,40 @@ std::vector<std::string> UsbPrintTransport::EnumerateUsbPorts()
 	return ports;
 }
 
+// 增强版USB打印枚举（获取设备描述）
+std::vector<PortInfo> UsbPrintTransport::EnumerateUsbPortsWithInfo()
+{
+	std::vector<PortInfo> portInfos;
+
+	// 获取基本端口列表
+	auto ports = EnumerateUsbPorts();
+
+	for (const auto& port : ports)
+	{
+		PortInfo info;
+		info.portType = PortType::PORT_TYPE_USB_PRINT;
+		info.portName = port;
+		info.displayName = "USB打印机 (" + port + ")";
+		info.description = "USB打印设备：" + info.displayName;
+
+		// 检测端口状态
+		if (IsUsbPortAvailable(port))
+		{
+			info.status = PortStatus::Available;
+			info.statusText = "就绪";
+		}
+		else
+		{
+			info.status = PortStatus::Offline;
+			info.statusText = "离线";
+		}
+
+		portInfos.push_back(info);
+	}
+
+	return portInfos;
+}
+
 bool UsbPrintTransport::IsUsbPortAvailable(const std::string& portName)
 {
 	std::string devicePath = "\\\\.\\" + portName;

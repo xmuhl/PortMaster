@@ -61,7 +61,13 @@ public:
 
 	// 静态辅助方法
 	static std::vector<std::string> EnumerateSerialPorts();
+	static std::vector<PortInfo> EnumerateSerialPortsWithInfo();
 	static bool IsSerialPortAvailable(const std::string& portName);
+
+private:
+	// 设备信息获取辅助方法
+	static std::string GetDeviceFriendlyName(const std::string& portName);
+	static PortStatus CheckSerialPortStatus(const std::string& portName);
 
 private:
 	// 内部方法
