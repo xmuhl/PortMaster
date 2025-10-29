@@ -70,16 +70,34 @@ TransportError SerialTransport::Open(const TransportConfig& config)
 	if (portNameW.find(L"COM") == std::wstring::npos)
 	{
 		portNameW = L"COM" + portNameW;
-		OutputDebugStringA(("【串口】添加COM前缀: " + std::string(portNameW.begin(), portNameW.end()) + "\n").c_str());
+		// 使用WideCharToMultiByte进行正确转换，避免警告
+		{
+			int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			std::string narrowStr(sizeNeeded, 0);
+			WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, &narrowStr[0], sizeNeeded, nullptr, nullptr);
+			OutputDebugStringA(("【串口】添加COM前缀: " + narrowStr + "\n").c_str());
+		}
 	}
 	if (portNameW.find(L"\\\\.\\") == std::wstring::npos)
 	{
 		portNameW = L"\\\\.\\" + portNameW;
-		OutputDebugStringA(("【串口】添加\\\\.\\前缀: " + std::string(portNameW.begin(), portNameW.end()) + "\n").c_str());
+		// 使用WideCharToMultiByte进行正确转换，避免警告
+		{
+			int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, nullptr, 0, nullptr, nullptr);
+			std::string narrowStr(sizeNeeded, 0);
+			WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, &narrowStr[0], sizeNeeded, nullptr, nullptr);
+			OutputDebugStringA(("【串口】添加\\\\.\\前缀: " + narrowStr + "\n").c_str());
+		}
 	}
 
 	// 打开串口
-	OutputDebugStringA(("【串口】最终设备路径: " + std::string(portNameW.begin(), portNameW.end()) + "\n").c_str());
+	// 使用WideCharToMultiByte进行正确转换，避免警告
+	{
+		int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, nullptr, 0, nullptr, nullptr);
+		std::string narrowStr(sizeNeeded, 0);
+		WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, &narrowStr[0], sizeNeeded, nullptr, nullptr);
+		OutputDebugStringA(("【串口】最终设备路径: " + narrowStr + "\n").c_str());
+	}
 
 	m_hSerial = CreateFileW(
 		portNameW.c_str(),
@@ -100,7 +118,12 @@ TransportError SerialTransport::Open(const TransportConfig& config)
 		std::string msg1 = "【串口】打开串口失败！\n";
 		std::string msg2 = "【串口】错误码: " + std::to_string(lastError) + "\n";
 		std::string msg3 = "【串口】错误信息: " + error + "\n";
-		std::string msg4 = "【串口】设备路径: " + std::string(portNameW.begin(), portNameW.end()) + "\n";
+		// 使用WideCharToMultiByte进行正确转换，避免警告
+		int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, nullptr, 0, nullptr, nullptr);
+		std::string msg4(sizeNeeded + 20, 0);  // 预留空间
+		msg4 = "【串口】设备路径: ";
+		WideCharToMultiByte(CP_UTF8, 0, portNameW.c_str(), -1, &msg4[msg4.length()], sizeNeeded, nullptr, nullptr);
+		msg4 += "\n";
 
 		OutputDebugStringA(msg1.c_str());
 		OutputDebugStringA(msg2.c_str());
