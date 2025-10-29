@@ -50,6 +50,10 @@ public:
 	void UpdateSendSourceDisplay(const CString& source);
 	void UpdateStatusBarText(int controlId, const CString& text);
 
+	// 端口扫描状态更新
+	void UpdateScanStatus(const CString& status);  // 更新扫描状态
+	void UpdateScanProgress(int current, int total, const CString& status);  // 更新扫描进度
+
 	// UI控件直接操作封装
 	void SetStaticText(int controlId, const CString& text);
 	void SetButtonText(int controlId, const CString& text);

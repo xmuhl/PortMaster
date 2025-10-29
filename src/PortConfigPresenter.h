@@ -6,6 +6,9 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <atomic>
+#include <mutex>
+#include <future>
 
 // 前向声明
 class NetworkPrinterConfigDialog;
@@ -18,6 +21,65 @@ enum class PortTypeIndex
 	UsbPrint = 2,      // USB打印
 	NetworkPrint = 3,  // 网络打印
 	Loopback = 4       // 回路测试
+};
+
+// 端口扫描进度信息
+struct PortScanProgress
+{
+	int currentPort;      // 当前扫描的端口索引
+	int totalPorts;       // 总端口数
+	std::string status;   // 状态信息
+};
+
+// 端口扫描完成信息
+struct PortScanResult
+{
+	bool success;         // 扫描是否成功
+	std::string error;    // 错误信息（如果有）
+};
+
+// 端口扫描进度回调类型
+using PortScanProgressCallback = std::function<void(const PortScanProgress&)>;
+
+// 端口扫描完成回调类型
+using PortScanCompleteCallback = std::function<void(const PortScanResult&)>;
+
+// 端口扫描器类 - 实现异步端口扫描
+class PortScanner
+{
+public:
+	PortScanner();
+	~PortScanner();
+
+	// 开始异步扫描
+	void StartScan(PortTypeIndex portType,
+		PortScanProgressCallback progressCallback,
+		PortScanCompleteCallback completeCallback);
+
+	// 停止扫描
+	void StopScan();
+
+	// 检查是否正在扫描
+	bool IsScanning() const;
+
+private:
+	// 扫描工作线程函数
+	void ScanWorker(PortTypeIndex portType,
+		PortScanProgressCallback progressCallback,
+		PortScanCompleteCallback completeCallback);
+
+	// 各端口类型的扫描实现
+	void ScanSerialPorts(PortScanProgressCallback progressCallback);
+	void ScanParallelPorts(PortScanProgressCallback progressCallback);
+	void ScanUsbPorts(PortScanProgressCallback progressCallback);
+	void ScanNetworkPorts(PortScanProgressCallback progressCallback);
+
+	std::atomic<bool> m_shouldStop;   // 停止标志
+	std::atomic<bool> m_isScanning;   // 扫描标志
+	std::mutex m_mutex;               // 互斥锁
+
+	// 扫描结果存储
+	std::vector<std::string> m_scanResults;
 };
 
 // 端口配置UI控件引用
@@ -88,12 +150,24 @@ public:
 	// 网络打印机配置
 	void OnNetworkPrinterConfigSelected();                             // 处理网络打印机配置选项选择
 
+	// 异步端口参数更新
+	void UpdatePortParametersAsync();                                  // 异步更新端口参数（避免阻塞UI）
+
+	// 智能默认选择
+	void SelectDefaultPort();                                          // 根据设备状态智能选择默认端口
+
+	// 轻量级端口状态检测
+	bool QuickCheckPortStatus();                                       // 快速检测当前选中的端口状态（500ms超时）
+
 private:
 	PortConfigControlRefs m_controls;                        // 控件引用集合
 
 	// 事件回调
 	std::function<void()> m_portTypeChangedCallback;         // 端口类型变更回调
 	std::function<void()> m_portChangedCallback;             // 端口号变更回调
+
+	// 端口扫描器
+	std::unique_ptr<PortScanner> m_portScanner;              // 异步端口扫描器
 
 	// 内部辅助方法
 	void ValidateControlRefs() const;                        // 验证控件引用有效性

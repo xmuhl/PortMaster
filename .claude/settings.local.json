@@ -24,7 +24,8 @@
       "Bash(git remote:*)",
       "Read(//mnt/c/Users/huangl/Desktop/**)",
       "Bash(./autobuild_x86_debug.bat)",
-      "Bash(findstr /S /C:\"IDC_COMBO_PORT\" srcPortMasterDlg.cpp)"
+      "Bash(findstr /S /C:\"IDC_COMBO_PORT\" srcPortMasterDlg.cpp)",
+      "Bash(powershell.exe -Command \"./autobuild_x86_debug.bat\")"
     ],
     "deny": [],
     "ask": []

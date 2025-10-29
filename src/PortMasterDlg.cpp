@@ -365,6 +365,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
 	ON_MESSAGE(WM_USER + 15, &CPortMasterDlg::OnCleanupTransmissionTask)
 	ON_MESSAGE(WM_USER_UPDATE_RECEIVE_DISPLAY, &CPortMasterDlg::OnUpdateReceiveDisplay)
+	ON_MESSAGE(WM_UPDATE_PORT_LIST, &CPortMasterDlg::OnUpdatePortList)
 END_MESSAGE_MAP()
 
 // CPortMasterDlg 消息处理程序
@@ -1235,6 +1236,13 @@ void CPortMasterDlg::OnCbnSelchangeComboPortType()
 	if (m_portConfigPresenter)
 	{
 		m_portConfigPresenter->OnPortTypeChanged();
+		// 使用异步扫描避免UI阻塞
+		// 更新状态栏显示正在扫描
+		if (m_statusDisplayManager)
+		{
+			m_statusDisplayManager->UpdateScanStatus(_T("正在扫描端口..."));
+		}
+		m_portConfigPresenter->UpdatePortParametersAsync();
 	}
 }
 
@@ -2867,4 +2875,22 @@ void CPortMasterDlg::OnDropFiles(HDROP hDropInfo)
 	}
 
 	CDialogEx::OnDropFiles(hDropInfo);
+}
+
+// 端口扫描完成后的UI更新处理
+LRESULT CPortMasterDlg::OnUpdatePortList(WPARAM wParam, LPARAM lParam)
+{
+	// 更新状态栏为"扫描完成"
+	if (m_statusDisplayManager)
+	{
+		m_statusDisplayManager->UpdateScanStatus(_T("扫描完成"));
+	}
+
+	// 重新调用UpdatePortParameters，使用同步方法获取扫描结果并更新UI
+	if (m_portConfigPresenter)
+	{
+		m_portConfigPresenter->UpdatePortParameters();
+	}
+
+	return 0;
 }

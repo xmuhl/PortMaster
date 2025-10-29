@@ -39,6 +39,18 @@ void PortMasterDialogEvents::HandleConnect()
 {
 	m_dialog.WriteLog("OnBnClickedButtonConnect: 开始连接...");
 
+	// 【阶段十新增】轻量级端口状态检测
+	if (m_dialog.m_portConfigPresenter)
+	{
+		if (!m_dialog.m_portConfigPresenter->QuickCheckPortStatus())
+		{
+			m_dialog.WriteLog("OnBnClickedButtonConnect: 端口状态检测失败");
+			m_dialog.MessageBox(_T("端口状态检测失败，请检查端口配置是否正确。"), _T("端口检测"), MB_OK | MB_ICONWARNING);
+			return;
+		}
+		m_dialog.WriteLog("OnBnClickedButtonConnect: 端口状态检测通过");
+	}
+
 	// 【阶段A修复】从UI构建传输配置,替代硬编码初始化
 	m_dialog.BuildTransportConfigFromUI();
 

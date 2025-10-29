@@ -295,7 +295,7 @@ private:
 	// 文件拖拽处理
 	afx_msg void OnDropFiles(HDROP hDropInfo);
 
-	// 消息处理函数
+		// 消息处理函数
 	afx_msg LRESULT OnTransportDataReceivedMessage(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransportErrorMessage(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam);
@@ -305,6 +305,10 @@ private:
 	afx_msg LRESULT OnTransmissionError(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnUpdateReceiveDisplay(WPARAM wParam, LPARAM lParam);
+
+	// 端口扫描相关消息
+	#define WM_UPDATE_PORT_LIST (WM_USER + 100)
+	afx_msg LRESULT OnUpdatePortList(WPARAM wParam, LPARAM lParam);
 
 	friend class PortMasterDialogEvents;
 

@@ -428,3 +428,33 @@ CString StatusDisplayManager::FormatLogMessage(const CString& message) const
 
 	return formattedMessage;
 }
+
+// 更新扫描状态
+void StatusDisplayManager::UpdateScanStatus(const CString& status)
+{
+	if (!m_parentDialog)
+		return;
+
+	// 更新端口状态文本为扫描状态
+	m_parentDialog->SetDlgItemText(IDC_STATIC_PORT_STATUS, status);
+}
+
+// 更新扫描进度
+void StatusDisplayManager::UpdateScanProgress(int current, int total, const CString& status)
+{
+	if (!m_parentDialog)
+		return;
+
+	CString progressText;
+	if (total > 0)
+	{
+		int percent = (current * 100) / total;
+		progressText.Format(_T("%s (%d/%d, %d%%)"), status, current, total, percent);
+	}
+	else
+	{
+		progressText.Format(_T("%s"), status);
+	}
+
+	m_parentDialog->SetDlgItemText(IDC_STATIC_PORT_STATUS, progressText);
+}

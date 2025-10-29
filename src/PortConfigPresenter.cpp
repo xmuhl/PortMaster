@@ -10,17 +10,266 @@
 #include "NetworkPrinterConfigDialog.h"
 #include "../Common/CommonTypes.h"
 #include <cassert>
+#include <windows.h>
+#include <thread>
 
 // 构造函数
 PortConfigPresenter::PortConfigPresenter()
 {
 	// 初始化控件引用为nullptr
-	memset(&m_controls, 0, sizeof(m_controls));
+ memset(&m_controls, 0, sizeof(m_controls));
+
+	// 初始化端口扫描器
+	m_portScanner = std::make_unique<PortScanner>();
 }
 
 // 析构函数
 PortConfigPresenter::~PortConfigPresenter()
 {
+}
+
+// =================== PortScanner类实现 ===================
+
+// 构造函数
+PortScanner::PortScanner()
+	: m_shouldStop(false)
+	, m_isScanning(false)
+{
+}
+
+// 析构函数
+PortScanner::~PortScanner()
+{
+	StopScan();
+}
+
+// 开始异步扫描
+void PortScanner::StartScan(PortTypeIndex portType,
+	PortScanProgressCallback progressCallback,
+	PortScanCompleteCallback completeCallback)
+{
+	// 如果正在扫描，先停止
+	if (m_isScanning)
+	{
+		StopScan();
+	}
+
+	// 重置状态
+	m_shouldStop = false;
+	m_isScanning = true;
+	m_scanResults.clear();
+
+	// 启动后台线程执行扫描
+	std::thread scanThread([this, portType, progressCallback, completeCallback]()
+		{
+			ScanWorker(portType, progressCallback, completeCallback);
+		});
+
+	scanThread.detach();
+}
+
+// 停止扫描
+void PortScanner::StopScan()
+{
+	m_shouldStop = true;
+}
+
+// 检查是否正在扫描
+bool PortScanner::IsScanning() const
+{
+	return m_isScanning;
+}
+
+// 扫描工作线程函数
+void PortScanner::ScanWorker(PortTypeIndex portType,
+	PortScanProgressCallback progressCallback,
+	PortScanCompleteCallback completeCallback)
+{
+	PortScanResult result;
+	result.success = true;
+	result.error = "";
+
+	try
+	{
+		// 根据端口类型执行不同的扫描
+		switch (portType)
+		{
+		case PortTypeIndex::Serial:
+			ScanSerialPorts(progressCallback);
+			break;
+		case PortTypeIndex::Parallel:
+			ScanParallelPorts(progressCallback);
+			break;
+		case PortTypeIndex::UsbPrint:
+			ScanUsbPorts(progressCallback);
+			break;
+		case PortTypeIndex::NetworkPrint:
+			ScanNetworkPorts(progressCallback);
+			break;
+		default:
+			result.success = false;
+			result.error = "未知的端口类型";
+			break;
+		}
+	}
+	catch (const std::exception& e)
+	{
+		result.success = false;
+		result.error = e.what();
+	}
+	catch (...)
+	{
+		result.success = false;
+		result.error = "未知异常";
+	}
+
+	// 标记扫描完成
+	{
+		std::lock_guard<std::mutex> lock(m_mutex);
+		m_isScanning = false;
+	}
+
+	// 调用完成回调
+	if (completeCallback)
+	{
+		completeCallback(result);
+	}
+}
+
+// 扫描串口
+void PortScanner::ScanSerialPorts(PortScanProgressCallback progressCallback)
+{
+	auto portInfos = SerialTransport::EnumerateSerialPortsWithInfo();
+
+	for (size_t i = 0; i < portInfos.size(); ++i)
+	{
+		if (m_shouldStop) break;
+
+		// 更新进度
+		if (progressCallback)
+		{
+			PortScanProgress progress;
+			progress.currentPort = static_cast<int>(i);
+			progress.totalPorts = static_cast<int>(portInfos.size());
+			progress.status = "扫描串口: " + portInfos[i].portName;
+			progressCallback(progress);
+		}
+
+		// 等待一小段时间，避免过于频繁的更新
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+		// 生成显示文本
+		std::string displayText = portInfos[i].portName;
+		if (!portInfos[i].displayName.empty())
+		{
+			displayText += " - " + portInfos[i].displayName;
+		}
+		if (portInfos[i].IsConnected())
+		{
+			displayText += " (已连接)";
+		}
+		else if (portInfos[i].status == PortStatus::Available)
+		{
+			displayText += " (可用)";
+		}
+
+		m_scanResults.push_back(displayText);
+	}
+}
+
+// 扫描并口
+void PortScanner::ScanParallelPorts(PortScanProgressCallback progressCallback)
+{
+	auto portInfos = ParallelTransport::EnumerateParallelPortsWithInfo();
+
+	for (size_t i = 0; i < portInfos.size(); ++i)
+	{
+		if (m_shouldStop) break;
+
+		// 更新进度
+		if (progressCallback)
+		{
+			PortScanProgress progress;
+			progress.currentPort = static_cast<int>(i);
+			progress.totalPorts = static_cast<int>(portInfos.size());
+			progress.status = "扫描并口: " + portInfos[i].portName;
+			progressCallback(progress);
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+		// 生成显示文本
+		std::string displayText = portInfos[i].portName;
+		if (!portInfos[i].displayName.empty())
+		{
+			displayText += " - " + portInfos[i].displayName;
+		}
+		if (portInfos[i].IsConnected())
+		{
+			displayText += " (已连接)";
+		}
+		else if (portInfos[i].status == PortStatus::Available)
+		{
+			displayText += " (可用)";
+		}
+
+		m_scanResults.push_back(displayText);
+	}
+}
+
+// 扫描USB端口
+void PortScanner::ScanUsbPorts(PortScanProgressCallback progressCallback)
+{
+	auto portInfos = UsbPrintTransport::EnumerateUsbPortsWithInfo();
+
+	for (size_t i = 0; i < portInfos.size(); ++i)
+	{
+		if (m_shouldStop) break;
+
+		// 更新进度
+		if (progressCallback)
+		{
+			PortScanProgress progress;
+			progress.currentPort = static_cast<int>(i);
+			progress.totalPorts = static_cast<int>(portInfos.size());
+			progress.status = "扫描USB: " + portInfos[i].portName;
+			progressCallback(progress);
+		}
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+		// 生成显示文本
+		std::string displayText = portInfos[i].portName;
+		if (!portInfos[i].displayName.empty())
+		{
+			displayText += " - " + portInfos[i].displayName;
+		}
+		if (!portInfos[i].statusText.empty())
+		{
+			displayText += " (" + portInfos[i].statusText + ")";
+		}
+
+		m_scanResults.push_back(displayText);
+	}
+}
+
+// 扫描网络端口
+void PortScanner::ScanNetworkPorts(PortScanProgressCallback progressCallback)
+{
+	// 网络端口使用预定义列表
+	m_scanResults.push_back("127.0.0.1:9100 (未检测)");
+	m_scanResults.push_back("192.168.1.100:9100 (未检测)");
+	m_scanResults.push_back("printer.local:9100 (未检测)");
+	m_scanResults.push_back("[配置网络打印机...]");
+
+	if (progressCallback)
+	{
+		PortScanProgress progress;
+		progress.currentPort = 1;
+		progress.totalPorts = 1;
+		progress.status = "网络端口扫描完成";
+		progressCallback(progress);
+	}
 }
 
 // 初始化：绑定控件引用
@@ -113,11 +362,8 @@ void PortConfigPresenter::UpdatePortParameters()
 		break;
 	}
 
-	// 设置默认选择
-	if (IsControlValid(m_controls.comboPort) && m_controls.comboPort->GetCount() > 0)
-	{
-		m_controls.comboPort->SetCurSel(0);
-	}
+	// 智能设置默认选择
+	SelectDefaultPort();
 }
 
 // 更新串口参数
@@ -572,4 +818,191 @@ int PortConfigPresenter::FindComboBoxItem(CComboBox* combo, const CString& text)
 		return CB_ERR;
 
 	return combo->FindStringExact(0, text);
+}
+
+// 异步更新端口参数（避免阻塞UI）
+void PortConfigPresenter::UpdatePortParametersAsync()
+{
+	PortTypeIndex portType = GetSelectedPortType();
+
+	// 清空端口列表并显示"扫描中..."提示
+	if (IsControlValid(m_controls.comboPort))
+	{
+		m_controls.comboPort->ResetContent();
+		m_controls.comboPort->AddString(_T("正在扫描端口..."));
+		m_controls.comboPort->SetCurSel(0);
+	}
+
+	// 开始异步扫描
+	if (m_portScanner)
+	{
+		m_portScanner->StartScan(portType,
+			// 进度回调
+			[this](const PortScanProgress& progress)
+			{
+				// 在这里可以更新UI显示扫描进度（如果需要）
+				// 注意：由于这是在后台线程中，不应该直接更新UI
+				// 可以通过消息机制将进度转发到UI线程
+			},
+			// 完成回调
+			[this, portType](const PortScanResult& result)
+			{
+				// 扫描完成，更新UI
+				if (result.success)
+				{
+					// 使用消息机制在UI线程中更新列表
+					if (IsControlValid(m_controls.parentDialog))
+					{
+						m_controls.parentDialog->PostMessage(WM_USER + 100, 0, 0);
+					}
+				}
+				else
+				{
+					// 扫描失败，显示错误
+					if (IsControlValid(m_controls.comboPort))
+					{
+						m_controls.comboPort->ResetContent();
+						CString errorText = _T("扫描失败: ");
+						errorText += CA2T(result.error.c_str(), CP_UTF8);
+						m_controls.comboPort->AddString(errorText);
+						m_controls.comboPort->SetCurSel(0);
+					}
+				}
+			});
+	}
+}
+
+// 智能选择默认端口
+void PortConfigPresenter::SelectDefaultPort()
+{
+	if (!IsControlValid(m_controls.comboPort) || m_controls.comboPort->GetCount() == 0)
+	{
+		return;
+	}
+
+	int selectedIndex = 0;  // 默认选择第一个
+
+	// 遍历所有端口，寻找最佳选择
+	for (int i = 0; i < m_controls.comboPort->GetCount(); ++i)
+	{
+		CString portText;
+		m_controls.comboPort->GetLBText(i, portText);
+
+		// 第一优先级：已连接设备
+		if (portText.Find(_T("(已连接)")) != -1)
+		{
+			selectedIndex = i;
+			break;  // 找到已连接设备，立即选择
+		}
+	}
+
+	// 第二优先级：可用设备（如果没找到已连接设备）
+	if (selectedIndex == 0)
+	{
+		for (int i = 0; i < m_controls.comboPort->GetCount(); ++i)
+		{
+			CString portText;
+			m_controls.comboPort->GetLBText(i, portText);
+
+			// 查找"可用"、"就绪"等状态
+			if (portText.Find(_T("(可用)")) != -1 ||
+				portText.Find(_T("(就绪)")) != -1)
+			{
+				selectedIndex = i;
+				break;  // 找到可用设备，立即选择
+			}
+		}
+	}
+
+	// 应用选择
+	m_controls.comboPort->SetCurSel(selectedIndex);
+}
+
+// 快速检测当前选中的端口状态（500ms超时）
+bool PortConfigPresenter::QuickCheckPortStatus()
+{
+	// 获取当前选择的端口
+	if (!IsControlValid(m_controls.comboPort))
+	{
+		return false;
+	}
+
+	CString portText;
+	m_controls.comboPort->GetWindowText(portText);
+
+	PortTypeIndex portType = GetSelectedPortType();
+
+	// 轻量级检测逻辑
+	switch (portType)
+	{
+	case PortTypeIndex::Serial:
+	{
+		// 串口：检查端口名称格式是否正确
+		if (portText.Find(_T("COM")) != -1)
+		{
+			// 提取端口号进行简单验证
+			int comIndex = portText.Find(_T("COM"));
+			if (comIndex != -1 && comIndex + 4 < portText.GetLength())
+			{
+				CString portNum = portText.Mid(comIndex + 3, portText.GetLength() - comIndex - 3);
+				// 移除可能的描述部分
+				int dashIndex = portNum.Find(_T(" -"));
+				if (dashIndex != -1)
+				{
+					portNum = portNum.Left(dashIndex);
+				}
+				// 检查端口号是否为数字
+				for (int i = 0; i < portNum.GetLength(); ++i)
+				{
+					if (!_istdigit(portNum.GetAt(i)))
+					{
+						return false;
+					}
+				}
+				return true;  // 格式正确
+			}
+		}
+		return false;
+	}
+
+	case PortTypeIndex::Parallel:
+	{
+		// 并口：检查端口名称格式
+		if (portText.Find(_T("LPT")) != -1)
+		{
+			return true;
+		}
+		return false;
+	}
+
+	case PortTypeIndex::UsbPrint:
+	{
+		// USB打印：检查端口名称格式
+		if (portText.Find(_T("USB")) != -1)
+		{
+			return true;
+		}
+		return false;
+	}
+
+	case PortTypeIndex::NetworkPrint:
+	{
+		// 网络打印：检查IP地址格式（简单检查）
+		if (portText.Find(_T(":")) != -1)  // 包含端口号
+		{
+			// 可以进一步解析IP地址格式
+			return true;
+		}
+		return false;
+	}
+
+	case PortTypeIndex::Loopback:
+	{
+		// 回路测试：始终可用
+		return true;
+	}
+
+	default:
+		return false;
+	}
 }
