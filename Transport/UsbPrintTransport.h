@@ -76,6 +76,13 @@ public:
 	std::string GetDeviceInfo() const;
 	bool IsDeviceConnected() const;
 
+	// 【端口访问控制增强】使用PortDetector进行精确枚举
+	/**
+	 * @brief 枚举所有可用的USB打印设备
+	 * @return 设备信息列表
+	 */
+	static std::vector<DeviceInfo> EnumerateUsbDevices();
+
 	// 设备控制方法
 	TransportError ResetDevice();
 	std::string GetDeviceDescriptor() const;

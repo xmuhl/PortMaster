@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "UsbPrintTransport.h"
+#include "../Common/PortDetector.h"
 #include <algorithm>
 #include <sstream>
 
@@ -872,4 +873,10 @@ std::string UsbPrintTransport::GetDeviceDescriptor() const
 	}
 
 	return "";
+}
+
+// 【端口访问控制增强】使用PortDetector精确枚举USB设备
+std::vector<DeviceInfo> UsbPrintTransport::EnumerateUsbDevices()
+{
+	return PortDetector::EnumerateUsbPrintDevices();
 }

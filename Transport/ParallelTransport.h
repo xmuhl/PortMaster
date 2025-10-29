@@ -77,6 +77,13 @@ public:
 	bool IsPortBusy() const;
 	bool IsPortReady() const;
 	bool IsPortOnline() const;
+
+	// 【端口访问控制增强】使用PortDetector进行精确枚举
+	/**
+	 * @brief 枚举所有可用的并口设备
+	 * @return 设备信息列表
+	 */
+	static std::vector<DeviceInfo> EnumerateParallelDevices();
 	TransportError ResetPort();
 	TransportError ConfigurePort(const ParallelPortConfig& config);
 

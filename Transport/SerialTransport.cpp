@@ -3,6 +3,7 @@
 #include "pch.h"
 #include "SerialTransport.h"
 #include "../Common/CommonTypes.h"
+#include "../Common/PortDetector.h"
 #include <sstream>
 #include <algorithm>
 #include <SetupAPI.h>
@@ -54,6 +55,9 @@ TransportError SerialTransport::Open(const TransportConfig& config)
 	}
 
 	m_config = *serialConfig;
+
+	// 【端口访问控制增强】设备预检测
+	PortDetector::QuickCheckDevice(m_config.portName, PortType::PORT_TYPE_SERIAL);
 
 	// 构建串口名称
 	std::string portNameA = m_config.portName;

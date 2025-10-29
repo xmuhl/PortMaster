@@ -123,6 +123,34 @@ struct PortInfo
  bool IsAvailable() const { return (int)status & (int)PortStatus::Available; }
 };
 
+// 设备详细信息结构（增强版）
+struct DeviceInfo
+{
+ PortType portType;                    // 端口类型
+ std::string portName;                 // 端口名：COM1, LPT1, USB001
+ std::string friendlyName;             // 友好名称：CH340 (COM3)
+ std::string description;              // 详细描述：USB-Serial CH340 on COM3
+ std::string hardwareId;               // 硬件ID：USB\VID_1a86&PID_7523&MI_00
+ std::string deviceInstanceId;         // 设备实例ID：USB\VID_1a86&PID_7523&MI_00\7&2E541988&0&0000
+ std::string manufacturer;             // 制造商：Microsoft, Apple, CH340
+ std::string serialNumber;             // 序列号（如果有）
+ std::string driverVersion;            // 驱动版本
+ PortStatus status;                    // 端口状态
+ bool isConnected;                     // 设备是否实际连接
+ bool isConfigured;                    // 设备是否已配置驱动
+ bool isDisabled;                      // 设备是否被禁用
+ std::map<std::string, std::string> properties; // 其他属性（速度、型号等）
+
+ // 辅助方法
+ bool IsConnected() const { return isConnected; }
+ bool IsAvailable() const { return isConfigured && !isDisabled; }
+ bool HasError() const { return (int)status & (int)PortStatus::Error; }
+};
+
+// 设备检测回调函数类型
+using DeviceDetectionCallback = std::function<void(const DeviceInfo& device, bool added)>;
+using DeviceStatusChangedCallback = std::function<void(const std::string& portName, PortStatus newStatus)>;
+
 // 网络协议类型
 enum class NetworkProtocol
 {

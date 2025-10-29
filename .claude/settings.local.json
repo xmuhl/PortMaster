@@ -26,7 +26,8 @@
       "Bash(./autobuild_x86_debug.bat)",
       "Bash(findstr /S /C:\"IDC_COMBO_PORT\" srcPortMasterDlg.cpp)",
       "Bash(powershell.exe -Command \"./autobuild_x86_debug.bat\")",
-      "Bash(powershell.exe -Command \"Get-Date -Format ''yyyyMMdd-HHmmss''\")"
+      "Bash(powershell.exe -Command \"Get-Date -Format ''yyyyMMdd-HHmmss''\")",
+      "Bash(git tag \"$tag\")"
     ],
     "deny": [],
     "ask": []

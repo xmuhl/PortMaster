@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "ParallelTransport.h"
+#include "../Common/PortDetector.h"
 #include <algorithm>
 #include <sstream>
 #include <chrono>
@@ -1133,4 +1134,10 @@ std::string ParallelErrorConverter::GetParallelErrorString(ParallelPortError err
 	default:
 		return "未知错误";
 	}
+}
+
+// 【端口访问控制增强】使用PortDetector精确枚举并口设备
+std::vector<DeviceInfo> ParallelTransport::EnumerateParallelDevices()
+{
+	return PortDetector::EnumerateParallelPorts();
 }
