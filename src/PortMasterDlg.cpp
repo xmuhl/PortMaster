@@ -1251,28 +1251,51 @@ void CPortMasterDlg::OnBnClickedCheckHex()
 
 void CPortMasterDlg::UpdateSendDisplayFromCache()
 {
-	// 使用DataPresentationService准备显示数据
-	if (m_sendCacheValid && !m_sendDataCache.empty())
+	// 仅在发送缓存有效且非空时更新显示
+	if (!m_sendCacheValid || m_sendDataCache.empty())
 	{
-		bool hexMode = m_uiController->IsHexDisplayEnabled();
-		DataPresentationService::DisplayUpdate update =
-			DataPresentationService::PrepareDisplay(m_sendDataCache, hexMode);
-
-		// 转换为CString并设置到编辑框
-		CString displayText(update.content.c_str(), static_cast<int>(update.content.length()));
-		if (m_uiController)
-		{
-			m_uiController->SetSendDataText(displayText);
-		}
-	}
-	else
-	{
-		// 缓存无效或为空，清空显示
 		if (m_uiController)
 		{
 			m_uiController->SetSendDataText(_T(""));
 		}
+		return;
 	}
+
+	// 获取UI控制器和显示模式
+	if (!m_uiController) return;
+	bool hexMode = m_uiController->IsHexDisplayEnabled();
+
+	CString displayText;
+
+	if (hexMode)
+	{
+		// 十六进制模式：直接使用DataPresentationService进行转换
+		DataPresentationService::DisplayUpdate update =
+			DataPresentationService::PrepareDisplay(m_sendDataCache, true);
+		displayText = CString(update.content.c_str());
+	}
+	else
+	{
+		// 文本模式：智能检测编码并转换为UI友好的格式
+		std::string rawData(m_sendDataCache.begin(), m_sendDataCache.end());
+
+		// 1. 尝试判断是否为有效的UTF-8编码
+		if (StringUtils::IsValidUtf8(rawData))
+		{
+			// 如果是UTF-8，直接转换为宽字符
+			std::wstring wideStr = StringUtils::WideEncodeUtf8(rawData);
+			displayText = CString(wideStr.c_str());
+		}
+		else
+		{
+			// 2. 如果不是UTF-8，假定为系统默认ANSI编码（如GBK）并转换
+			std::wstring wideStr = StringUtils::SafeMultiByteToWideChar(rawData, CP_ACP);
+			displayText = CString(wideStr.c_str());
+		}
+	}
+
+	// 更新UI显示
+	m_uiController->SetSendDataText(displayText);
 }
 void CPortMasterDlg::TriggerAsyncDisplayUpdate()
 {
@@ -1299,12 +1322,33 @@ void CPortMasterDlg::TriggerAsyncDisplayUpdate()
 
             // 2. 格式化数据
             bool hexMode = m_uiController->IsHexDisplayEnabled();
-            DataPresentationService::DisplayUpdate update = DataPresentationService::PrepareDisplay(data, hexMode);
+            CString* displayText = new CString();
 
-            // 3. 在堆上创建 CString
-            CString* displayText = new CString(update.content.c_str());
+            if (hexMode)
+            {
+                // 十六进制模式：直接使用DataPresentationService进行转换
+                DataPresentationService::DisplayUpdate update = DataPresentationService::PrepareDisplay(data, true);
+                *displayText = CString(update.content.c_str());
+            }
+            else
+            {
+                // 文本模式：智能检测编码并转换为UI友好的格式
+                std::string rawData(data.begin(), data.end());
+                if (StringUtils::IsValidUtf8(rawData))
+                {
+                    // 如果是UTF-8，直接转换为宽字符
+                    std::wstring wideStr = StringUtils::WideEncodeUtf8(rawData);
+                    *displayText = CString(wideStr.c_str());
+                }
+                else
+                {
+                    // 如果不是UTF-8，假定为系统默认ANSI编码（如GBK）并转换
+                    std::wstring wideStr = StringUtils::SafeMultiByteToWideChar(rawData, CP_ACP);
+                    *displayText = CString(wideStr.c_str());
+                }
+            }
 
-            // 4. 通过 PostMessage 将结果安全地发送到UI线程
+            // 3. 通过 PostMessage 将结果安全地发送到UI线程
             if (IsWindow(GetSafeHwnd()))
             {
                 PostMessage(WM_USER_UPDATE_RECEIVE_DISPLAY, 0, (LPARAM)displayText);

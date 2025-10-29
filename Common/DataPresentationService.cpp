@@ -130,6 +130,112 @@ std::vector<uint8_t> DataPresentationService::HexToBytes(const std::string& hex)
 
 std::string DataPresentationService::BytesToText(const std::vector<uint8_t>& data)
 {
+	if (data.empty()) return "";
+
+	// ✅ 修复：智能编码检测和转换
+	// 1. 首先尝试UTF-8解码
+	bool isValidUtf8 = IsValidUtf8(data.data(), data.size());
+
+	// 2. 如果不是UTF-8，尝试系统本地编码（通常是GBK/GB2312）
+	if (!isValidUtf8)
+	{
+		try
+		{
+			// 将本地编码转换为UTF-8用于显示
+			std::string localEncodedData(data.begin(), data.end());
+
+			// 尝试使用CP_ACP（系统默认编码，通常是GBK）
+			int wideCharCount = MultiByteToWideChar(CP_ACP, 0, localEncodedData.c_str(),
+				static_cast<int>(localEncodedData.length()), nullptr, 0);
+
+			if (wideCharCount > 0)
+			{
+				// 分配缓冲区并转换
+				std::wstring wideText(wideCharCount, L'\0');
+				int actualConverted = MultiByteToWideChar(CP_ACP, 0, localEncodedData.c_str(),
+					static_cast<int>(localEncodedData.length()), &wideText[0], wideCharCount);
+
+				if (actualConverted > 0)
+				{
+					// 验证转换结果是否包含有效字符（不是全问号）
+					bool hasValidChars = false;
+					for (int j = 0; j < actualConverted; ++j)
+					{
+						if (wideText[j] != L'?' && wideText[j] != 0)
+						{
+							hasValidChars = true;
+							break;
+						}
+					}
+
+					if (hasValidChars)
+					{
+						// 转换回UTF-8
+						int utf8ByteCount = WideCharToMultiByte(CP_UTF8, 0, wideText.c_str(),
+							actualConverted, nullptr, 0, nullptr, nullptr);
+
+						if (utf8ByteCount > 0)
+						{
+							std::string utf8Result(utf8ByteCount, '\0');
+							WideCharToMultiByte(CP_UTF8, 0, wideText.c_str(), actualConverted,
+								&utf8Result[0], utf8ByteCount, nullptr, nullptr);
+							return utf8Result;
+						}
+					}
+				}
+			}
+
+			// 如果CP_ACP失败，尝试使用CP_GB2312（简体中文）
+			wideCharCount = MultiByteToWideChar(936, 0, localEncodedData.c_str(),  // 936 = GB2312
+				static_cast<int>(localEncodedData.length()), nullptr, 0);
+
+			if (wideCharCount > 0)
+			{
+				std::wstring wideText(wideCharCount, L'\0');
+				int actualConverted = MultiByteToWideChar(936, 0, localEncodedData.c_str(),
+					static_cast<int>(localEncodedData.length()), &wideText[0], wideCharCount);
+
+				if (actualConverted > 0)
+				{
+					// 验证转换结果是否包含有效字符（不是全问号）
+					bool hasValidChars = false;
+					for (int j = 0; j < actualConverted; ++j)
+					{
+						if (wideText[j] != L'?' && wideText[j] != 0)
+						{
+							hasValidChars = true;
+							break;
+						}
+					}
+
+					if (hasValidChars)
+					{
+						int utf8ByteCount = WideCharToMultiByte(CP_UTF8, 0, wideText.c_str(),
+							actualConverted, nullptr, 0, nullptr, nullptr);
+
+						if (utf8ByteCount > 0)
+						{
+							std::string utf8Result(utf8ByteCount, '\0');
+							WideCharToMultiByte(CP_UTF8, 0, wideText.c_str(), actualConverted,
+								&utf8Result[0], utf8ByteCount, nullptr, nullptr);
+							return utf8Result;
+						}
+					}
+				}
+			}
+		}
+		catch (...)
+		{
+			// 转换失败，继续尝试其他方法
+		}
+	}
+	else
+	{
+		// 确认是有效的UTF-8，直接返回
+		return std::string(data.begin(), data.end());
+	}
+
+	// 3. 如果所有编码转换都失败，返回原始字节（可能显示为乱码，但保持数据完整性）
 	return std::string(data.begin(), data.end());
 }
 
@@ -252,6 +358,87 @@ DataPresentationService::DisplayUpdate DataPresentationService::PrepareDisplay(
 	}
 
 	return update;
+}
+
+// ==================== 编码检测 ====================
+
+bool DataPresentationService::IsValidUtf8(const uint8_t* data, size_t length)
+{
+	if (length == 0) return true;
+
+	size_t i = 0;
+	while (i < length)
+	{
+		uint8_t byte = data[i];
+
+		// 1字节字符 (0xxxxxxx)
+		if ((byte & 0x80) == 0x00)
+		{
+			i++;
+			continue;
+		}
+
+		// 2字节字符 (110xxxxx 10xxxxxx)
+		if ((byte & 0xE0) == 0xC0)
+		{
+			if (i + 1 >= length) return false;
+			if ((data[i + 1] & 0xC0) != 0x80) return false;
+			// 额外检查：确保字节值在合理范围内
+			if ((byte & 0xFC) == 0xC0) return false; // 过编码检查
+			i += 2;
+			continue;
+		}
+
+		// 3字节字符 (1110xxxx 10xxxxxx 10xxxxxx)
+		if ((byte & 0xF0) == 0xE0)
+		{
+			if (i + 2 >= length) return false;
+			if ((data[i + 1] & 0xC0) != 0x80) return false;
+			if ((data[i + 2] & 0xC0) != 0x80) return false;
+
+			// 额外检查：确保字节值在合理范围内
+			if (byte == 0xE0 && (data[i + 1] & 0xE0) == 0x80) return false; // 过编码检查
+			if (byte == 0xED && (data[i + 1] & 0xE0) == 0xA0) return false; // UTF-16代理项检查
+
+			i += 3;
+			continue;
+		}
+
+		// 4字节字符 (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
+		if ((byte & 0xF8) == 0xF0)
+		{
+			if (i + 3 >= length) return false;
+			if ((data[i + 1] & 0xC0) != 0x80) return false;
+			if ((data[i + 2] & 0xC0) != 0x80) return false;
+			if ((data[i + 3] & 0xC0) != 0x80) return false;
+
+			// 额外检查：确保字节值在合理范围内
+			if (byte == 0xF0 && (data[i + 1] & 0xF0) == 0x80) return false; // 过编码检查
+			if (byte > 0xF4) return false; // Unicode范围检查
+
+			i += 4;
+			continue;
+		}
+
+		// 无效的UTF-8起始字节
+		return false;
+	}
+
+	// 额外检查：如果包含太多连续的连续字节，可能是错误编码
+	size_t continuationBytes = 0;
+	for (size_t j = 0; j < length; ++j)
+	{
+		if ((data[j] & 0xC0) == 0x80)
+		{
+			continuationBytes++;
+			if (continuationBytes > length / 2)
+			{
+				return false; // 太多连续字节，可能是错误编码
+			}
+		}
+	}
+
+	return true;
 }
 
 // ==================== 辅助工具 ====================

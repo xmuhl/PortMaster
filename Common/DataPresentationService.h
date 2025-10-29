@@ -98,6 +98,21 @@ public:
 	 */
 	static bool IsBinaryData(const uint8_t* data, size_t length, double threshold = 0.3);
 
+	// ========== 编码检测 ==========
+
+	/**
+	 * @brief 检测字节数据是否为有效的UTF-8编码
+	 * @param data 字节数据指针
+	 * @param length 数据长度
+	 * @return 如果是有效的UTF-8编码返回true，否则返回false
+	 *
+	 * 说明：
+	 * - 检查UTF-8编码的字节序列是否符合规范
+	 * - 支持1-4字节的UTF-8字符
+	 * - 用于智能编码检测，决定是否需要进行编码转换
+	 */
+	static bool IsValidUtf8(const uint8_t* data, size_t length);
+
 	// ========== 混合显示（Hex + ASCII）==========
 
 	/**

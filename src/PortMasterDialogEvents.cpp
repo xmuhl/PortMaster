@@ -405,31 +405,21 @@ void PortMasterDialogEvents::CopyReceiveDataToClipboard()
 			}
 			else
 			{
-				try
+				// 文本模式：智能检测编码并转换为UI友好的格式
+				std::string rawData(cachedData.begin(), cachedData.end());
+				std::wstring wideStr;
+
+				if (StringUtils::IsValidUtf8(rawData))
 				{
-					// 使用StringUtils替代MFC宏，确保大数据量转换安全
-					std::string utf8Data(cachedData.begin(), cachedData.end());
-					std::wstring utf8Text = StringUtils::WideEncodeUtf8(utf8Data);
-					copyData = CString(utf8Text.c_str());
+					// 如果是UTF-8，直接转换为宽字符
+					wideStr = StringUtils::WideEncodeUtf8(rawData);
 				}
-				catch (...)
+				else
 				{
-					for (uint8_t byte : cachedData)
-					{
-						if (byte >= 32 && byte <= 126)
-						{
-							copyData += (TCHAR)byte;
-						}
-						else if (byte == 0)
-						{
-							copyData += _T("[NUL]");
-						}
-						else
-						{
-							copyData += _T(".");
-						}
-					}
+					// 如果不是UTF-8，假定为系统默认ANSI编码（如GBK）并转换
+					wideStr = StringUtils::SafeMultiByteToWideChar(rawData, CP_ACP);
 				}
+				copyData = CString(wideStr.c_str());
 			}
 		}
 	}
@@ -641,7 +631,11 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 		return;
 	}
 
-	// 二进制数据检测：检查是否包含大量不可打印字符
+	// ✅ 修复：统一使用二进制方式加载文件，确保字节级保真度
+	// 无论文件是文本还是二进制，都直接缓存原始字节数据，不进行任何编码转换
+	// 编码转换仅在UI显示时由UpdateSendDisplayFromCache处理
+
+	// 检测是否为二进制数据（仅用于日志提示，不影响数据完整性）
 	const size_t SAMPLE_SIZE = min(static_cast<size_t>(bytesRead), static_cast<size_t>(4096));
 	size_t nonPrintableCount = 0;
 	size_t nullByteCount = 0;
@@ -659,118 +653,8 @@ void PortMasterDialogEvents::LoadDataFromSelectedFile(const CString& filePath)
 	}
 	bool isBinaryFile = (nullByteCount > 0) || ((nonPrintableCount * 100 / SAMPLE_SIZE) > 20);
 
-	// 当数据较大时启用预览模式，只显示前32KB内容
-	size_t displaySize = isLargeFile ? PREVIEW_SIZE : static_cast<size_t>(bytesRead);
-
-	if (isBinaryFile)
-	{
-		// 二进制文件：直接缓存完整原始字节数据
-		// 【分类3.5修复】传入实际读取的字节数，而非原始文件长度（大文件仅预览）
-		m_dialog.UpdateSendCacheFromBytes(reinterpret_cast<const BYTE*>(fileBuffer.get()), (size_t)bytesRead);
-		m_dialog.UpdateSendDisplayFromCache();
-	}
-	else
-	{
-		// 文本文件：使用UTF-8编码解析（项目统一编码标准）
-		try
-		{
-			// 使用安全的字符串转换方法，避免内存分配失败和编码错误
-			std::string fileContent(fileBuffer.get(), displaySize);
-
-			// 检查字符串长度是否安全
-			if (!StringUtils::IsStringLengthSafe(fileContent))
-			{
-				m_dialog.MessageBox(_T("文件内容过大，无法加载"), _T("错误"), MB_OK | MB_ICONERROR);
-				m_dialog.WriteLog("OnBnClickedButtonLoadFile: 文件内容超过安全长度限制");
-				return;
-			}
-
-			// 使用UTF-8编码转换为宽字符串
-			std::wstring wideContent = StringUtils::SafeMultiByteToWideChar(fileContent, CP_UTF8);
-
-			// 如果UTF-8转换失败，尝试使用系统本地编码（兼容性考虑）
-			if (wideContent.empty() && !fileContent.empty())
-			{
-				m_dialog.WriteLog("OnBnClickedButtonLoadFile: UTF-8转换失败，尝试系统本地编码");
-				wideContent = StringUtils::SafeMultiByteToWideChar(fileContent, CP_ACP);
-			}
-
-			// 转换失败则使用回退方案：直接字符拷贝
-			CString previewContent;
-			if (!wideContent.empty())
-			{
-				previewContent = wideContent.c_str();
-			}
-			else
-			{
-				m_dialog.WriteLog("OnBnClickedButtonLoadFile: 编码转换失败，使用ASCII回退方案");
-				for (size_t i = 0; i < displaySize; ++i)
-				{
-					previewContent += static_cast<TCHAR>(fileBuffer[i]);
-				}
-			}
-
-			m_dialog.UpdateSendCache(previewContent);
-			if (m_dialog.m_checkHex.GetCheck() == BST_CHECKED)
-			{
-				// 使用StringUtils替代MFC宏，避免缓冲区限制
-				std::string utf8Str = StringUtils::Utf8EncodeWide(std::wstring(previewContent));
-				std::string hexResult = DataPresentationService::BytesToHex(
-					reinterpret_cast<const uint8_t*>(utf8Str.c_str()),
-					utf8Str.length());
-				m_dialog.m_editSendData.SetWindowText(CString(hexResult.c_str(), static_cast<int>(hexResult.length())));
-			}
-			else
-			{
-				m_dialog.m_editSendData.SetWindowText(previewContent);
-			}
-
-			// 大文件需要缓存完整内容
-			if (isLargeFile)
-			{
-				// 【分类3.5修复】使用实际读取的字节数而非文件长度
-				std::string fullFileContent(fileBuffer.get(), bytesRead);
-
-				// 检查完整文件长度是否安全
-				if (!StringUtils::IsStringLengthSafe(fullFileContent))
-				{
-					m_dialog.WriteLog("OnBnClickedButtonLoadFile: 完整文件内容超过安全长度限制，仅缓存预览部分");
-				}
-				else
-				{
-					// 使用UTF-8编码转换完整内容
-					std::wstring fullWideContent = StringUtils::SafeMultiByteToWideChar(fullFileContent, CP_UTF8);
-
-					// UTF-8转换失败则尝试系统本地编码
-					if (fullWideContent.empty() && !fullFileContent.empty())
-					{
-						fullWideContent = StringUtils::SafeMultiByteToWideChar(fullFileContent, CP_ACP);
-					}
-
-					if (!fullWideContent.empty())
-					{
-						m_dialog.UpdateSendCache(fullWideContent.c_str());
-						m_dialog.WriteLog("OnBnClickedButtonLoadFile: 大文件完整内容已缓存");
-					}
-				}
-			}
-		}
-		catch (const std::exception& e)
-		{
-			// 异常保护：确保程序不会因编码转换失败而崩溃
-			CString errorMsg;
-			errorMsg.Format(_T("文件编码转换失败: %s"), CString(e.what()));
-			m_dialog.MessageBox(errorMsg, _T("错误"), MB_OK | MB_ICONERROR);
-			m_dialog.WriteLog("OnBnClickedButtonLoadFile: 编码转换异常 - " + std::string(e.what()));
-			return;
-		}
-		catch (...)
-		{
-			m_dialog.MessageBox(_T("文件编码转换时发生未知错误"), _T("错误"), MB_OK | MB_ICONERROR);
-			m_dialog.WriteLog("OnBnClickedButtonLoadFile: 编码转换未知异常");
-			return;
-		}
-	}
+	m_dialog.UpdateSendCacheFromBytes(reinterpret_cast<const BYTE*>(fileBuffer.get()), (size_t)bytesRead);
+	m_dialog.UpdateSendDisplayFromCache();
 
 	if (m_dialog.m_uiController)
 	{
