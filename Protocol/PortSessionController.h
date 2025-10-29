@@ -68,8 +68,19 @@ public:
 	 * - 根据config.portType自动选择Transport实现类
 	 * - 如果useReliableMode为true，自动创建ReliableChannel
 	 * - 内部会调用ConfigureReliableLogging()设置日志级别
+	 * - 如需获取详细错误信息，请使用GetLastError()方法
 	 */
 	bool Connect(const TransportConfig& config, bool useReliableMode);
+
+	/**
+	 * @brief 获取最后一次操作的详细错误信息
+	 * @return 详细错误信息字符串，如果无错误则返回空字符串
+	 *
+	 * 说明：
+	 * - 在Connect()返回false后调用，获取具体失败原因
+	 * - 包含错误码、错误描述和诊断建议
+	 */
+	std::string GetLastError() const;
 
 	/**
 	 * @brief 断开传输连接
@@ -203,9 +214,16 @@ private:
 	/**
 	 * @brief 创建指定类型的Transport实例
 	 * @param config 传输配置
-	 * @return Transport实例，失败返回nullptr
+	 * @return Transport实例和错误信息，成功时错误信息为空
 	 */
-	std::shared_ptr<ITransport> CreateTransportByType(const TransportConfig& config);
+	std::pair<std::shared_ptr<ITransport>, std::string> CreateTransportByType(const TransportConfig& config);
+
+	/**
+	 * @brief 将TransportError转换为可读字符串
+	 * @param error 传输错误枚举值
+	 * @return 错误描述字符串
+	 */
+	std::string GetTransportErrorString(TransportError error) const;
 
 	/**
 	 * @brief 接收线程主函数
@@ -253,4 +271,7 @@ private:
 
 	// 配置
 	ReliableConfig m_reliableConfig;                  // 可靠传输配置
+
+	// 错误信息
+	mutable std::string m_lastError;                  // 最后一次错误信息
 };

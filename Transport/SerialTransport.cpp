@@ -56,17 +56,27 @@ TransportError SerialTransport::Open(const TransportConfig& config)
 	m_config = *serialConfig;
 
 	// 构建串口名称
-	std::wstring portNameW = std::wstring(m_config.portName.begin(), m_config.portName.end());
+	std::string portNameA = m_config.portName;
+	std::wstring portNameW = std::wstring(portNameA.begin(), portNameA.end());
+
+	// 【调试信息】记录原始端口名称
+	std::string msg = "【串口】尝试打开串口: " + portNameA + "\n";
+	OutputDebugStringA(msg.c_str());
+
 	if (portNameW.find(L"COM") == std::wstring::npos)
 	{
 		portNameW = L"COM" + portNameW;
+		OutputDebugStringA(("【串口】添加COM前缀: " + std::string(portNameW.begin(), portNameW.end()) + "\n").c_str());
 	}
 	if (portNameW.find(L"\\\\.\\") == std::wstring::npos)
 	{
 		portNameW = L"\\\\.\\" + portNameW;
+		OutputDebugStringA(("【串口】添加\\\\.\\前缀: " + std::string(portNameW.begin(), portNameW.end()) + "\n").c_str());
 	}
 
 	// 打开串口
+	OutputDebugStringA(("【串口】最终设备路径: " + std::string(portNameW.begin(), portNameW.end()) + "\n").c_str());
+
 	m_hSerial = CreateFileW(
 		portNameW.c_str(),
 		GENERIC_READ | GENERIC_WRITE,
@@ -79,10 +89,43 @@ TransportError SerialTransport::Open(const TransportConfig& config)
 
 	if (m_hSerial == INVALID_HANDLE_VALUE)
 	{
+		// 【增强】获取详细错误信息
+		DWORD lastError = ::GetLastError();
 		std::string error = CommonUtils::GetLastErrorString();
+
+		std::string msg1 = "【串口】打开串口失败！\n";
+		std::string msg2 = "【串口】错误码: " + std::to_string(lastError) + "\n";
+		std::string msg3 = "【串口】错误信息: " + error + "\n";
+		std::string msg4 = "【串口】设备路径: " + std::string(portNameW.begin(), portNameW.end()) + "\n";
+
+		OutputDebugStringA(msg1.c_str());
+		OutputDebugStringA(msg2.c_str());
+		OutputDebugStringA(msg3.c_str());
+		OutputDebugStringA(msg4.c_str());
+
+		// 【错误诊断】根据错误码提供具体建议
+		if (lastError == ERROR_FILE_NOT_FOUND)
+		{
+			std::string msg = "【串口】诊断: 串口不存在，请检查：1)端口名称是否正确 2)设备是否正确连接 3)驱动程序是否安装\n";
+			OutputDebugStringA(msg.c_str());
+		}
+		else if (lastError == ERROR_ACCESS_DENIED)
+		{
+			std::string msg = "【串口】诊断: 访问被拒绝，可能原因：1)端口正被其他程序使用 2)权限不足 3)设备已被锁定\n";
+			OutputDebugStringA(msg.c_str());
+		}
+		else if (lastError == ERROR_SHARING_VIOLATION)
+		{
+			std::string msg = "【串口】诊断: 共享冲突，串口正被其他进程占用\n";
+			OutputDebugStringA(msg.c_str());
+		}
+
 		ReportError(TransportError::OpenFailed, "Failed to open serial port: " + error);
 		return TransportError::OpenFailed;
 	}
+
+	// 【调试信息】记录成功
+	OutputDebugStringA(("【串口】串口打开成功！句柄: 0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hSerial)) + "\n").c_str());
 
 	// 设置串口参数
 	if (!SetCommState(m_config))

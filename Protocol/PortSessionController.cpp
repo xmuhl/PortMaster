@@ -14,6 +14,7 @@
 PortSessionController::PortSessionController()
 	: m_isConnected(false)
 	, m_useReliableMode(false)
+	, m_lastError("")
 {
 	// 初始化默认可靠传输配置
 	m_reliableConfig.version = RELIABLE_PROTOCOL_VERSION;
@@ -33,6 +34,9 @@ PortSessionController::~PortSessionController()
 
 bool PortSessionController::Connect(const TransportConfig& config, bool useReliableMode)
 {
+	// 清空之前的错误信息
+	m_lastError = "";
+
 	// 先断开已有连接
 	if (m_isConnected)
 	{
@@ -40,12 +44,15 @@ bool PortSessionController::Connect(const TransportConfig& config, bool useRelia
 	}
 
 	// 创建Transport
-	m_transport = CreateTransportByType(config);
-	if (!m_transport || !m_transport->IsOpen())
+	auto transportResult = CreateTransportByType(config);
+	if (!transportResult.first)
 	{
-		OnError("创建或打开传输通道失败");
+		// 创建或打开传输通道失败
+		m_lastError = transportResult.second;
+		OnError("创建或打开传输通道失败: " + m_lastError);
 		return false;
 	}
+	m_transport = transportResult.first;
 
 	// 如果启用可靠模式,创建ReliableChannel
 	m_useReliableMode = useReliableMode;
@@ -54,7 +61,8 @@ bool PortSessionController::Connect(const TransportConfig& config, bool useRelia
 		m_reliableChannel = std::make_unique<ReliableChannel>();
 		if (!m_reliableChannel->Initialize(m_transport, m_reliableConfig))
 		{
-			OnError("可靠传输通道初始化失败");
+			m_lastError = "可靠传输通道初始化失败";
+			OnError(m_lastError);
 			m_reliableChannel.reset();
 			m_transport->Close();
 			m_transport.reset();
@@ -64,7 +72,8 @@ bool PortSessionController::Connect(const TransportConfig& config, bool useRelia
 		// 连接ReliableChannel
 		if (!m_reliableChannel->Connect())
 		{
-			OnError("可靠传输通道连接失败");
+			m_lastError = "可靠传输通道连接失败";
+			OnError(m_lastError);
 			m_reliableChannel->Shutdown();
 			m_reliableChannel.reset();
 			m_transport->Close();
@@ -97,6 +106,11 @@ void PortSessionController::Disconnect()
 	}
 
 	m_isConnected = false;
+}
+
+std::string PortSessionController::GetLastError() const
+{
+	return m_lastError;
 }
 
 bool PortSessionController::IsConnected() const
@@ -192,9 +206,10 @@ std::string PortSessionController::GetTransportTypeName() const
 
 // ==================== 内部方法 ====================
 
-std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const TransportConfig& config)
+std::pair<std::shared_ptr<ITransport>, std::string> PortSessionController::CreateTransportByType(const TransportConfig& config)
 {
 	std::shared_ptr<ITransport> transport = nullptr;
+	std::string errorMessage = "";
 
 	switch (config.portType)
 	{
@@ -212,9 +227,14 @@ std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const T
 		serialConfig.readTimeout = config.readTimeout;
 		serialConfig.writeTimeout = config.writeTimeout;
 
-		if (serialTransport->Open(serialConfig) == TransportError::Success)
+		TransportError error = serialTransport->Open(serialConfig);
+		if (error == TransportError::Success)
 		{
 			transport = serialTransport;
+		}
+		else
+		{
+			errorMessage = "串口打开失败: " + GetTransportErrorString(error) + " (端口: " + config.portName + ")";
 		}
 		break;
 	}
@@ -228,9 +248,14 @@ std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const T
 		parallelConfig.readTimeout = config.readTimeout;
 		parallelConfig.writeTimeout = config.writeTimeout;
 
-		if (parallelTransport->Open(parallelConfig) == TransportError::Success)
+		TransportError error = parallelTransport->Open(parallelConfig);
+		if (error == TransportError::Success)
 		{
 			transport = parallelTransport;
+		}
+		else
+		{
+			errorMessage = "并口打开失败: " + GetTransportErrorString(error) + " (端口: " + config.portName + ")";
 		}
 		break;
 	}
@@ -244,9 +269,14 @@ std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const T
 		usbConfig.readTimeout = config.readTimeout;
 		usbConfig.writeTimeout = config.writeTimeout;
 
-		if (usbTransport->Open(usbConfig) == TransportError::Success)
+		TransportError error = usbTransport->Open(usbConfig);
+		if (error == TransportError::Success)
 		{
 			transport = usbTransport;
+		}
+		else
+		{
+			errorMessage = "USB端口打开失败: " + GetTransportErrorString(error) + " (端口: " + config.portName + ")";
 		}
 		break;
 	}
@@ -273,9 +303,14 @@ std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const T
 		networkConfig.sendTimeout = config.writeTimeout;
 		networkConfig.receiveTimeout = config.readTimeout;
 
-		if (networkTransport->Open(networkConfig) == TransportError::Success)
+		TransportError error = networkTransport->Open(networkConfig);
+		if (error == TransportError::Success)
 		{
 			transport = networkTransport;
+		}
+		else
+		{
+			errorMessage = "网络端口打开失败: " + GetTransportErrorString(error) + " (地址: " + config.portName + ")";
 		}
 		break;
 	}
@@ -284,19 +319,24 @@ std::shared_ptr<ITransport> PortSessionController::CreateTransportByType(const T
 	{
 		// 创建回路测试传输对象
 		auto loopbackTransport = std::make_shared<LoopbackTransport>();
-		if (loopbackTransport->Open(config) == TransportError::Success)
+		TransportError error = loopbackTransport->Open(config);
+		if (error == TransportError::Success)
 		{
 			transport = loopbackTransport;
+		}
+		else
+		{
+			errorMessage = "回路测试端口打开失败: " + GetTransportErrorString(error);
 		}
 		break;
 	}
 
 	default:
-		OnError("不支持的端口类型");
+		errorMessage = "不支持的端口类型: " + std::to_string(static_cast<int>(config.portType));
 		break;
 	}
 
-	return transport;
+	return std::make_pair(transport, errorMessage);
 }
 
 void PortSessionController::ReceiveThreadProc()
@@ -353,5 +393,40 @@ void PortSessionController::OnError(const std::string& error)
 	if (m_errorCallback)
 	{
 		m_errorCallback(error);
+	}
+}
+
+std::string PortSessionController::GetTransportErrorString(TransportError error) const
+{
+	switch (error)
+	{
+	case TransportError::Success:
+		return "成功";
+	case TransportError::OpenFailed:
+		return "打开失败";
+	case TransportError::AlreadyOpen:
+		return "端口已打开";
+	case TransportError::NotOpen:
+		return "端口未打开";
+	case TransportError::WriteFailed:
+		return "写入失败";
+	case TransportError::ReadFailed:
+		return "读取失败";
+	case TransportError::Timeout:
+		return "超时";
+	case TransportError::Busy:
+		return "端口忙碌";
+	case TransportError::InvalidConfig:
+		return "配置无效";
+	case TransportError::InvalidParameter:
+		return "参数无效";
+	case TransportError::ConfigFailed:
+		return "配置失败";
+	case TransportError::ConnectionClosed:
+		return "连接已关闭";
+	case TransportError::AccessDenied:
+		return "访问被拒绝";
+	default:
+		return "未知错误 (错误代码: " + std::to_string(static_cast<int>(error)) + ")";
 	}
 }

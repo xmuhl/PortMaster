@@ -71,8 +71,17 @@ void PortMasterDialogEvents::HandleConnect()
 
 	if (!m_dialog.m_sessionController || !m_dialog.m_sessionController->Connect(selectedConfig, useReliableMode))
 	{
+		// 获取详细错误信息
+		std::string errorDetails = m_dialog.m_sessionController ? m_dialog.m_sessionController->GetLastError() : "会话控制器未初始化";
+
 		m_dialog.WriteLog("OnBnClickedButtonConnect: 连接失败");
-		m_dialog.MessageBox(_T("连接失败"), _T("错误"), MB_OK | MB_ICONERROR);
+		m_dialog.WriteLog("OnBnClickedButtonConnect: 详细错误 - " + errorDetails);
+
+		// 显示详细错误信息给用户
+		CString errorMsg;
+		errorMsg.Format(_T("连接失败！\n\n详细错误信息：\n%s\n\n请检查：\n1. 端口名称是否正确\n2. 设备是否正确连接\n3. 驱动程序是否正常安装\n4. 端口是否被其他程序占用"), CString(errorDetails.c_str()));
+
+		m_dialog.MessageBox(errorMsg, _T("连接错误"), MB_OK | MB_ICONERROR);
 		return;
 	}
 

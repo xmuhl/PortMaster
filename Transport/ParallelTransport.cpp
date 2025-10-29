@@ -647,6 +647,15 @@ TransportError ParallelTransport::OpenPortHandle()
 {
 	std::string devicePath = "\\\\.\\" + m_config.deviceName;
 
+	// 【调试信息】记录尝试打开的设备路径
+	std::string msg1 = "【并口】尝试打开设备路径: " + devicePath + "\n";
+	std::string msg2 = "【并口】设备名称: " + m_config.deviceName + "\n";
+	std::string msg3 = "【并口】端口名称: " + m_config.portName + "\n";
+
+	OutputDebugStringA(msg1.c_str());
+	OutputDebugStringA(msg2.c_str());
+	OutputDebugStringA(msg3.c_str());
+
 	m_hPort = CreateFileA(
 		devicePath.c_str(),
 		m_config.accessMode,
@@ -660,21 +669,49 @@ TransportError ParallelTransport::OpenPortHandle()
 	if (m_hPort == INVALID_HANDLE_VALUE)
 	{
 		DWORD error = ::GetLastError();
+		std::string errorMsg = GetSystemErrorMessage(error);
 
+		// 【调试信息】记录打开失败
+		std::string msg1 = "【并口】打开设备失败！错误码: " + std::to_string(error) + "\n";
+		std::string msg2 = "【并口】错误信息: " + errorMsg + "\n";
+		std::string msg3 = "【并口】设备路径: " + devicePath + "\n";
+		std::string msg4 = "【并口】访问模式: 0x" + std::to_string(m_config.accessMode) + ", 共享模式: 0x" + std::to_string(m_config.shareMode) + "\n";
+
+		OutputDebugStringA(msg1.c_str());
+		OutputDebugStringA(msg2.c_str());
+		OutputDebugStringA(msg3.c_str());
+		OutputDebugStringA(msg4.c_str());
+
+		// 【错误诊断】根据错误码提供具体诊断信息
 		if (error == ERROR_FILE_NOT_FOUND)
 		{
+			std::string msg = "【并口】诊断: 设备不存在，请检查：1)端口名称是否正确 2)并口设备是否正确连接 3)驱动程序是否安装\n";
+			OutputDebugStringA(msg.c_str());
 			return TransportError::OpenFailed;
 		}
 		else if (error == ERROR_ACCESS_DENIED)
 		{
+			std::string msg = "【并口】诊断: 访问被拒绝，可能原因：1)设备正被其他程序使用 2)权限不足 3)设备已被锁定\n";
+			OutputDebugStringA(msg.c_str());
+			return TransportError::Busy;
+		}
+		else if (error == ERROR_SHARING_VIOLATION)
+		{
+			std::string msg = "【并口】诊断: 共享冲突，设备正被其他进程使用\n";
+			OutputDebugStringA(msg.c_str());
 			return TransportError::Busy;
 		}
 		else
 		{
+			std::string msg = "【并口】诊断: 其他错误，请检查设备连接和配置\n";
+			OutputDebugStringA(msg.c_str());
 			return this->GetLastError();
 		}
 	}
 
+	// 【调试信息】记录打开成功
+	std::string msg = "【并口】设备打开成功！句柄值: 0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hPort)) + "\n";
+	OutputDebugStringA(msg.c_str());
 	return TransportError::Success;
 }
 

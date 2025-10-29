@@ -696,12 +696,59 @@ void NetworkPrintTransport::CloseSocket()
 // 连接到主机
 TransportError NetworkPrintTransport::ConnectToHost()
 {
+	// 【调试信息】记录连接开始
+	std::string msg1 = "【网口】开始连接到服务器...\n";
+	std::string msg2 = "【网口】IP地址: " + m_resolvedIP + "\n";
+	std::string msg3 = "【网口】端口号: " + std::to_string(m_config.port) + "\n";
+	std::string msg4 = "【网口】超时设置: " + std::to_string(m_config.connectTimeout) + "ms\n";
+
+	OutputDebugStringA(msg1.c_str());
+	OutputDebugStringA(msg2.c_str());
+	OutputDebugStringA(msg3.c_str());
+	OutputDebugStringA(msg4.c_str());
+
+	// 尝试连接
 	int result = connect(m_socket, reinterpret_cast<struct sockaddr*>(&m_serverAddr), sizeof(m_serverAddr));
 	if (result == SOCKET_ERROR)
 	{
+		int socketError = WSAGetLastError();
+		std::string errorMsg = GetSocketErrorMessage(socketError);
+
+		// 【调试信息】记录连接失败
+		std::string msg5 = "【网口】连接失败！错误码: " + std::to_string(socketError) + "\n";
+		std::string msg6 = "【网口】错误信息: " + errorMsg + "\n";
+
+		OutputDebugStringA(msg5.c_str());
+		OutputDebugStringA(msg6.c_str());
+
+		// 【错误诊断】根据错误码提供具体建议
+		if (socketError == WSAECONNREFUSED)
+		{
+			std::string msg = "【网口】诊断: 连接被拒绝，可能原因：1)目标主机未运行打印服务 2)端口号不正确 3)防火墙阻止连接\n";
+			OutputDebugStringA(msg.c_str());
+		}
+		else if (socketError == WSAETIMEDOUT)
+		{
+			std::string msg = "【网口】诊断: 连接超时，可能原因：1)网络连接不稳定 2)目标主机不可达 3)路由器配置问题\n";
+			OutputDebugStringA(msg.c_str());
+		}
+		else if (socketError == WSAEHOSTUNREACH)
+		{
+			std::string msg = "【网口】诊断: 主机不可达，可能原因：1)IP地址不正确 2)网络路由问题 3)目标主机离线\n";
+			OutputDebugStringA(msg.c_str());
+		}
+		else if (socketError == WSAENETUNREACH)
+		{
+			std::string msg = "【网口】诊断: 网络不可达，可能原因：1)网络配置问题 2)网关设置错误 3)网络电缆未连接\n";
+			OutputDebugStringA(msg.c_str());
+		}
+
 		return GetSocketError();
 	}
 
+	// 【调试信息】记录连接成功
+	std::string msg = "【网口】连接成功！socket: " + std::to_string(m_socket) + "\n";
+	OutputDebugStringA(msg.c_str());
 	return TransportError::Success;
 }
 
@@ -1391,12 +1438,30 @@ bool NetworkPrintTransport::ValidateConfig(const NetworkPrintConfig& config) con
 // 解析主机地址
 TransportError NetworkPrintTransport::ResolveHostAddress()
 {
+	// 【调试信息】记录主机解析开始
+	std::string msg1 = "【网口】开始解析主机地址: " + m_config.hostname + "\n";
+	std::string msg2 = "【网口】目标端口: " + std::to_string(m_config.port) + "\n";
+
+	OutputDebugStringA(msg1.c_str());
+	OutputDebugStringA(msg2.c_str());
+
 	if (!ResolveHostname(m_config.hostname, m_resolvedIP))
 	{
+		// 【调试信息】记录解析失败
+		std::string msg1 = "【网口】主机解析失败！主机名: " + m_config.hostname + "\n";
+		std::string msg2 = "【网口】请检查：1)网络连接是否正常 2)主机名或IP地址是否正确 3)DNS解析是否正常\n";
+
+		OutputDebugStringA(msg1.c_str());
+		OutputDebugStringA(msg2.c_str());
 		return TransportError::OpenFailed;
 	}
 
-	memset(&m_serverAddr, 0, sizeof(m_serverAddr));
+	// 【调试信息】记录解析成功
+	std::string msg = "【网口】主机解析成功: " + m_config.hostname + " -> " + m_resolvedIP + "\n";
+	OutputDebugStringA(msg.c_str());
+
+	// 设置服务器地址结构
+ memset(&m_serverAddr, 0, sizeof(m_serverAddr));
 	m_serverAddr.sin_family = AF_INET;
 	m_serverAddr.sin_port = htons(m_config.port);
 	inet_pton(AF_INET, m_resolvedIP.c_str(), &m_serverAddr.sin_addr);
