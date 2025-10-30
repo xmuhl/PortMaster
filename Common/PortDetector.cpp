@@ -2,6 +2,7 @@
 
 #include "pch.h"
 #include "PortDetector.h"
+#include "Logger.h"
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
@@ -27,10 +28,16 @@ std::vector<DeviceInfo> PortDetector::EnumerateAllDevices()
 	// 清理缓存
 	s_cachedDevices.clear();
 
+	Logger::LogDebug("[PortDetector] 开始枚举所有设备");
+
 	// 枚举各种类型设备
 	auto serialDevices = EnumerateSerialPorts();
 	auto parallelDevices = EnumerateParallelPorts();
 	auto usbDevices = EnumerateUsbPrintDevices();
+
+	Logger::LogDebug("[PortDetector] 设备枚举完成 - 串口:" + std::to_string(serialDevices.size()) +
+		" 并口:" + std::to_string(parallelDevices.size()) +
+		" USB:" + std::to_string(usbDevices.size()));
 
 	// 合并结果
 	s_cachedDevices.insert(s_cachedDevices.end(), serialDevices.begin(), serialDevices.end());
@@ -190,6 +197,8 @@ std::vector<DeviceInfo> PortDetector::EnumerateUsbPrintDevices()
 
 	std::vector<DeviceInfo> devices;
 
+	Logger::LogDebug("[PortDetector] 开始枚举USB打印设备");
+
 	// 使用SetupDi枚举USB打印设备
 	HDEVINFO deviceInfoSet = SetupDiGetClassDevs(
 		&GUID_CLASS_I82930_BULK,
@@ -200,8 +209,14 @@ std::vector<DeviceInfo> PortDetector::EnumerateUsbPrintDevices()
 
 	if (deviceInfoSet != INVALID_HANDLE_VALUE)
 	{
+		Logger::LogDebug("[PortDetector] 成功创建USB设备信息集");
 		EnumerateDevicesInternal(deviceInfoSet, &GUID_CLASS_I82930_BULK, nullptr, devices, PortType::PORT_TYPE_USB_PRINT);
 		SetupDiDestroyDeviceInfoList(deviceInfoSet);
+		Logger::LogDebug("[PortDetector] USB设备枚举完成，找到 " + std::to_string(devices.size()) + " 个设备");
+	}
+	else
+	{
+		Logger::LogError("[PortDetector] 无法创建USB设备信息集");
 	}
 
 	return devices;
@@ -335,6 +350,10 @@ bool PortDetector::InitializeEnvironment()
 		return true;
 	}
 
+	// 初始化日志系统
+	Logger::Initialize("PortMaster_debug.log");
+	Logger::LogDebug("[PortDetector] 环境初始化");
+
 	// 初始化其他资源（如果有）
 	s_initialized = true;
 	return true;
@@ -415,7 +434,7 @@ bool PortDetector::EnumerateDevicesInternal(
 								std::vector<char> utf8Buffer(sizeNeeded);
 								WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, utf8Buffer.data(), sizeNeeded, nullptr, nullptr);
 								device.devicePath = utf8Buffer.data();
-								OutputDebugStringA(("【PortDetector】获取设备路径: " + device.devicePath + "\n").c_str());
+								Logger::LogDebug("[PortDetector] 获取设备路径: " + device.devicePath);
 							}
 						}
 
@@ -455,8 +474,22 @@ bool PortDetector::EnumerateDevicesInternal(
 		// 如果仍未找到端口名，尝试从设备描述或设备路径中提取
 		if (device.portName.empty())
 		{
-			device.portName = ExtractPortNameFromPath(device.description, portType);
+			// 对于USB设备，优先使用devicePath进行端口提取
+			if (portType == PortType::PORT_TYPE_USB_PRINT && !device.devicePath.empty())
+			{
+				Logger::LogDebug("[PortDetector] 从设备路径提取USB端口号");
+				device.portName = ExtractPortNameFromPath(device.devicePath, portType);
+			}
+			else
+			{
+				device.portName = ExtractPortNameFromPath(device.description, portType);
+			}
 		}
+
+		Logger::LogDebug("[PortDetector] 设备信息 - 端口名:" + device.portName +
+			" 友好名:" + device.friendlyName +
+			" 硬件ID:" + device.hardwareId +
+			" 设备路径:" + device.devicePath);
 
 		// 过滤空端口名
 		if (device.portName.empty())
@@ -600,6 +633,7 @@ std::string PortDetector::ExtractPortNameFromPath(const std::string& devicePath,
 	case PortType::PORT_TYPE_USB_PRINT:
 	{
 		// 【关键修复】从注册表获取真实的USB端口号
+		Logger::LogDebug("[PortDetector] USB端口提取，设备路径: " + devicePath);
 		int portNumber = GetUsbPortNumberFromRegistry(devicePath);
 
 		if (portNumber > 0)
@@ -607,9 +641,11 @@ std::string PortDetector::ExtractPortNameFromPath(const std::string& devicePath,
 			// 格式化为USB001、USB002等
 			char buffer[16];
 			sprintf_s(buffer, "USB%03d", portNumber);
-			OutputDebugStringA(("【PortDetector】USB端口号: " + std::string(buffer) + "\n").c_str());
+			Logger::LogDebug("[PortDetector] USB端口号: " + std::string(buffer));
 			return buffer;
 		}
+
+		Logger::LogDebug("[PortDetector] 注册表查询失败，使用回退方案");
 
 		// 回退方案：如果注册表查询失败，尝试从友好名称中提取
 		size_t pos = devicePath.find("USB");
@@ -622,11 +658,12 @@ std::string PortDetector::ExtractPortNameFromPath(const std::string& devicePath,
 			}
 			if (endPos > pos + 3)
 			{
+				Logger::LogDebug("[PortDetector] 从设备路径提取端口号: " + devicePath.substr(pos, endPos - pos));
 				return devicePath.substr(pos, endPos - pos);
 			}
 		}
 
-		OutputDebugStringA("【PortDetector】警告：无法获取USB端口号\n");
+		Logger::LogError("[PortDetector] 警告：无法获取USB端口号");
 		return "";  // 无法获取端口号，返回空字符串
 	}
 	}
@@ -675,9 +712,11 @@ int PortDetector::GetUsbPortNumberFromRegistry(const std::string& devicePath)
 {
 	if (devicePath.empty())
 	{
-		OutputDebugStringA("【PortDetector】错误：设备路径为空\n");
+		Logger::LogError("[PortDetector] 错误：设备路径为空");
 		return -1;
 	}
+
+	Logger::LogDebug("[PortDetector] 开始查询注册表获取USB端口号");
 
 	// 1. 构造注册表路径
 	const char* guidStr = "{28d78fad-5a12-11d1-ae5b-0000f803a8c2}";
@@ -696,7 +735,7 @@ int PortDetector::GetUsbPortNumberFromRegistry(const std::string& devicePath)
 	regPath += "\\" + transformedPath;
 	regPath += "\\#\\Device Parameters";
 
-	OutputDebugStringA(("【PortDetector】查询注册表路径: " + regPath + "\n").c_str());
+	Logger::LogDebug("[PortDetector] 查询注册表路径: " + regPath);
 
 	// 3. 打开注册表键
 	HKEY hKey = NULL;
@@ -704,7 +743,7 @@ int PortDetector::GetUsbPortNumberFromRegistry(const std::string& devicePath)
 
 	if (result != ERROR_SUCCESS)
 	{
-		OutputDebugStringA(("【PortDetector】无法打开注册表键: " + regPath + "\n").c_str());
+		Logger::LogError("[PortDetector] 无法打开注册表键: " + regPath);
 		return -1;
 	}
 
@@ -720,10 +759,10 @@ int PortDetector::GetUsbPortNumberFromRegistry(const std::string& devicePath)
 
 	if (result != ERROR_SUCCESS)
 	{
-		OutputDebugStringA("【PortDetector】无法读取Port Number\n");
+		Logger::LogError("[PortDetector] 无法读取Port Number");
 		return -1;
 	}
 
-	OutputDebugStringA(("【PortDetector】成功读取Port Number: " + std::to_string(portNumber) + "\n").c_str());
+	Logger::LogDebug("[PortDetector] 成功读取Port Number: " + std::to_string(portNumber));
 	return static_cast<int>(portNumber);
 }

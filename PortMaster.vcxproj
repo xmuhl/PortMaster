@@ -161,6 +161,7 @@
     <ClCompile Include="src\TransmissionTask.cpp" />
     <ClCompile Include="Common\ConfigStore.cpp" />
     <ClCompile Include="Common\PortDetector.cpp" />
+    <ClCompile Include="Common\Logger.cpp" />
     <ClCompile Include="Common\DataPresentationService.cpp" />
     <ClCompile Include="Common\ProgressReportingStrategy.cpp" />
     <ClCompile Include="Common\ReceiveCacheService.cpp" />
