@@ -187,6 +187,18 @@ private:
 	static bool InitializeEnvironment();
 
 	/**
+	 * @brief 从设备路径获取USB端口号（通过注册表查询）
+	 * @param devicePath 实际设备路径
+	 * @return 端口号，失败返回 -1
+	 *
+	 * 说明：
+	 * - 查询注册表HKLM\SYSTEM\CurrentControlSet\Control\DeviceClasses获取Port Number
+	 * - 转换设备路径格式以匹配注册表键名
+	 * - 支持Windows 7及以上系统
+	 */
+	static int GetUsbPortNumberFromRegistry(const std::string& devicePath);
+
+	/**
 	 * @brief 清理Windows设备检测环境
 	 *
 	 * 说明：

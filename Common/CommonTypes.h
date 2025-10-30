@@ -132,6 +132,7 @@ struct DeviceInfo
  std::string description;              // 详细描述：USB-Serial CH340 on COM3
  std::string hardwareId;               // 硬件ID：USB\VID_1a86&PID_7523&MI_00
  std::string deviceInstanceId;         // 设备实例ID：USB\VID_1a86&PID_7523&MI_00\7&2E541988&0&0000
+ std::string devicePath;               // 实际设备路径：\\?\USB#VID_1a86&PID_7523#MI_00#7&2e541988&0&0000#{28d78fad-5a12-11d1-ae5b-0000f803a8c2}
  std::string manufacturer;             // 制造商：Microsoft, Apple, CH340
  std::string serialNumber;             // 序列号（如果有）
  std::string driverVersion;            // 驱动版本

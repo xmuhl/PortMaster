@@ -379,6 +379,59 @@ bool PortDetector::EnumerateDevicesInternal(
 		// 【简化实现】跳过复杂的设备实例ID获取
 		// 实际项目中可以使用CM_Get_Device_ID获取
 
+		// 对于需要设备接口路径的设备（如USB），获取详细路径
+		if (deviceInterfaceGuid != nullptr)
+		{
+			// 枚举设备接口
+			SP_DEVICE_INTERFACE_DATA interfaceData;
+			interfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
+
+			DWORD interfaceIndex = 0;
+			while (SetupDiEnumDeviceInterfaces(deviceInfoSet, &deviceInfoData, deviceInterfaceGuid, interfaceIndex, &interfaceData))
+			{
+				interfaceIndex++;
+
+				// 获取设备接口详细信息的缓冲区大小
+				DWORD detailSize = 0;
+				SP_DEVICE_INTERFACE_DETAIL_DATA* pDetailData = nullptr;
+
+				if (!SetupDiGetDeviceInterfaceDetail(deviceInfoSet, &interfaceData, nullptr, 0, &detailSize, nullptr))
+				{
+					DWORD error = GetLastError();
+					if (error == ERROR_INSUFFICIENT_BUFFER && detailSize > 0)
+					{
+						// 分配缓冲区
+						pDetailData = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA*>(new BYTE[detailSize]);
+						pDetailData->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+
+						// 获取详细信息
+						if (SetupDiGetDeviceInterfaceDetail(deviceInfoSet, &interfaceData, pDetailData, detailSize, nullptr, nullptr))
+						{
+							// 将WCHAR设备路径转换为UTF-8字符串
+							LPCWSTR wideStr = pDetailData->DevicePath;
+							int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, nullptr, 0, nullptr, nullptr);
+							if (sizeNeeded > 0)
+							{
+								std::vector<char> utf8Buffer(sizeNeeded);
+								WideCharToMultiByte(CP_UTF8, 0, wideStr, -1, utf8Buffer.data(), sizeNeeded, nullptr, nullptr);
+								device.devicePath = utf8Buffer.data();
+								OutputDebugStringA(("【PortDetector】获取设备路径: " + device.devicePath + "\n").c_str());
+							}
+						}
+
+						// 释放缓冲区
+						delete[] pDetailData;
+					}
+				}
+
+				// 成功获取路径后退出循环（每个设备接口只取第一个）
+				if (!device.devicePath.empty())
+				{
+					break;
+				}
+			}
+		}
+
 		// 提取端口名称
 		if (!device.friendlyName.empty())
 		{
@@ -399,7 +452,7 @@ bool PortDetector::EnumerateDevicesInternal(
 			}
 		}
 
-		// 如果仍未找到端口名，尝试从设备描述中提取
+		// 如果仍未找到端口名，尝试从设备描述或设备路径中提取
 		if (device.portName.empty())
 		{
 			device.portName = ExtractPortNameFromPath(device.description, portType);
@@ -546,12 +599,35 @@ std::string PortDetector::ExtractPortNameFromPath(const std::string& devicePath,
 
 	case PortType::PORT_TYPE_USB_PRINT:
 	{
-		// 对于USB设备，生成虚拟端口名如USB001
-		// 使用设备实例ID的哈希值生成唯一编号
-		std::hash<std::string> hasher;
-		size_t hash = hasher(devicePath);
-		int portNum = static_cast<int>(hash % 999) + 1;
-		return "USB" + std::to_string(portNum);
+		// 【关键修复】从注册表获取真实的USB端口号
+		int portNumber = GetUsbPortNumberFromRegistry(devicePath);
+
+		if (portNumber > 0)
+		{
+			// 格式化为USB001、USB002等
+			char buffer[16];
+			sprintf_s(buffer, "USB%03d", portNumber);
+			OutputDebugStringA(("【PortDetector】USB端口号: " + std::string(buffer) + "\n").c_str());
+			return buffer;
+		}
+
+		// 回退方案：如果注册表查询失败，尝试从友好名称中提取
+		size_t pos = devicePath.find("USB");
+		if (pos != std::string::npos)
+		{
+			size_t endPos = pos + 3;
+			while (endPos < devicePath.size() && isdigit(devicePath[endPos]))
+			{
+				endPos++;
+			}
+			if (endPos > pos + 3)
+			{
+				return devicePath.substr(pos, endPos - pos);
+			}
+		}
+
+		OutputDebugStringA("【PortDetector】警告：无法获取USB端口号\n");
+		return "";  // 无法获取端口号，返回空字符串
 	}
 	}
 
@@ -591,4 +667,63 @@ HANDLE PortDetector::TryOpenDeviceHandle(
 	);
 
 	return hDevice;
+}
+
+// ==================== USB端口号查询方法 ====================
+
+int PortDetector::GetUsbPortNumberFromRegistry(const std::string& devicePath)
+{
+	if (devicePath.empty())
+	{
+		OutputDebugStringA("【PortDetector】错误：设备路径为空\n");
+		return -1;
+	}
+
+	// 1. 构造注册表路径
+	const char* guidStr = "{28d78fad-5a12-11d1-ae5b-0000f803a8c2}";
+	std::string regPath = "SYSTEM\\CurrentControlSet\\Control\\DeviceClasses\\";
+	regPath += guidStr;
+
+	// 2. 转换设备路径格式 (\\?\ -> ##?#)
+	std::string transformedPath = devicePath;
+	size_t pos = 0;
+	while ((pos = transformedPath.find("\\\\?\\", pos)) != std::string::npos)
+	{
+		transformedPath.replace(pos, 4, "##?#");
+		pos += 4;
+	}
+
+	regPath += "\\" + transformedPath;
+	regPath += "\\#\\Device Parameters";
+
+	OutputDebugStringA(("【PortDetector】查询注册表路径: " + regPath + "\n").c_str());
+
+	// 3. 打开注册表键
+	HKEY hKey = NULL;
+	LONG result = RegOpenKeyExA(HKEY_LOCAL_MACHINE, regPath.c_str(), 0, KEY_READ, &hKey);
+
+	if (result != ERROR_SUCCESS)
+	{
+		OutputDebugStringA(("【PortDetector】无法打开注册表键: " + regPath + "\n").c_str());
+		return -1;
+	}
+
+	// 4. 读取Port Number
+	DWORD portNumber = 0;
+	DWORD dataSize = sizeof(DWORD);
+	DWORD dataType = REG_DWORD;
+
+	result = RegQueryValueExA(hKey, "Port Number", NULL, &dataType,
+		(LPBYTE)&portNumber, &dataSize);
+
+	RegCloseKey(hKey);
+
+	if (result != ERROR_SUCCESS)
+	{
+		OutputDebugStringA("【PortDetector】无法读取Port Number\n");
+		return -1;
+	}
+
+	OutputDebugStringA(("【PortDetector】成功读取Port Number: " + std::to_string(portNumber) + "\n").c_str());
+	return static_cast<int>(portNumber);
 }
