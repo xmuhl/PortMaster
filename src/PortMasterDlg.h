@@ -22,6 +22,8 @@
 #include <fstream>
 #include <chrono>
 #include <future>
+#include <deque>
+#include <mutex>
 
 // CPortMasterDlg 对话框
 class CPortMasterDlg : public CDialogEx
@@ -108,6 +110,11 @@ private:
 
 	// 【阶段1迁移】接收窗口更新节流机制已迁移到DialogUiController
 	ULONGLONG m_lastUiLogTick;        // 最近一次输出轻量级UI日志的时间戳
+
+	// 【线程安全修复】日志缓存机制 - 解决窗口句柄无效时的后台线程UI访问问题
+	std::deque<CString> m_pendingLogMessages;  // 待处理的日志消息队列
+	std::mutex m_pendingLogMutex;              // 日志队列的线程安全锁
+	std::atomic<bool> m_windowReady;           // 窗口是否就绪标志
 
 	// 【重构】智能进度报告管理
 	SmartProgressManager* m_smartProgressManager;  // 智能进度管理器指针
@@ -265,6 +272,11 @@ private:
 
 	// 【阶段二修复】程序关闭时传输资源清理（幂等设计）
 	void ShutdownActiveTransmission();
+
+	// 【线程安全修复】日志缓存处理方法
+	void ProcessPendingLogMessages();  // 处理待处理的日志消息
+	void CacheLogMessage(const CString& message);  // 缓存日志消息
+	void SetWindowReady(bool ready = true);  // 设置窗口就绪状态
 
 	// 重写虚函数用于资源清理和窗口关闭处理
 	virtual void PostNcDestroy();

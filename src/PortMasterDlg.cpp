@@ -524,8 +524,8 @@ BOOL CPortMasterDlg::OnInitDialog()
 		// 初始化PortConfigPresenter（包含端口类型初始化）
 		m_portConfigPresenter->Initialize(portControlRefs);
 
-		// 设置默认选择回路测试
-		m_portConfigPresenter->SetSelectedPortType(PortTypeIndex::Loopback);
+		// 设置默认选择USB打印
+		m_portConfigPresenter->SetSelectedPortType(PortTypeIndex::UsbPrint);
 	}
 	catch (const std::exception& e)
 	{
