@@ -22,6 +22,8 @@
 // 【UI优化】定时器ID常量定义
 #define TIMER_ID_CONNECTION_STATUS  1  // 连接状态恢复定时器
 #define TIMER_ID_THROTTLED_DISPLAY   2  // 接收显示节流定时器
+#define WM_USER_UPDATE_RECEIVE_DISPLAY (WM_USER + 20)
+#define WM_USER_LOG_UPDATE (WM_USER + 21)
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -104,14 +106,42 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 			}
 		}
 
-		// 如果不符合条件，直接返回（不写入日志）
-		if (!shouldLog) {
-			// 即使不写入日志文件，仍然更新状态栏显示重要信息
-			if (m_statusDisplayManager) {
-				std::wstring displayMessageW = StringUtils::WideEncodeUtf8(message);
+		auto dispatchStatusMessage = [this](const std::wstring& displayMessageW)
+		{
+			if (!m_statusDisplayManager)
+			{
+				return;
+			}
+
+			HWND hwnd = GetSafeHwnd();
+			bool hasWindow = ::IsWindow(hwnd);
+			DWORD uiThreadId = 0;
+			if (hasWindow)
+			{
+				uiThreadId = ::GetWindowThreadProcessId(hwnd, nullptr);
+			}
+
+			DWORD currentThreadId = ::GetCurrentThreadId();
+			if (!hasWindow || currentThreadId == uiThreadId)
+			{
 				CString displayMessage(displayMessageW.c_str());
 				m_statusDisplayManager->LogMessage(displayMessage);
 			}
+			else
+			{
+				CString* displayMessage = new CString(displayMessageW.c_str());
+				if (!PostMessage(WM_USER_LOG_UPDATE, 0, reinterpret_cast<LPARAM>(displayMessage)))
+				{
+					delete displayMessage;
+				}
+			}
+		};
+
+		std::wstring displayMessageW = StringUtils::WideEncodeUtf8(message);
+
+		// 如果不符合条件，直接返回（不写入日志）
+		if (!shouldLog) {
+			dispatchStatusMessage(displayMessageW);
 			return;
 		}
 
@@ -137,13 +167,7 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 		}
 
 		// 【阶段B修复】正确处理UTF-8到Unicode编码转换，解决状态栏乱码问题
-		if (m_statusDisplayManager)
-		{
-			// 使用StringUtils替代MFC宏，避免长日志信息截断风险
-			std::wstring displayMessageW = StringUtils::WideEncodeUtf8(message);
-			CString displayMessage(displayMessageW.c_str());
-			m_statusDisplayManager->LogMessage(displayMessage);
-		}
+		dispatchStatusMessage(displayMessageW);
 	}
 	catch (...)
 	{
@@ -333,8 +357,6 @@ void CPortMasterDlg::DoDataExchange(CDataExchange* pDX)
 	DDX_Control(pDX, IDC_STATIC_SEND_SOURCE, m_staticSendSource);
 }
 
-#define WM_USER_UPDATE_RECEIVE_DISPLAY (WM_USER + 20)
-
 BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_WM_SYSCOMMAND()
 	ON_WM_PAINT()
@@ -365,6 +387,7 @@ BEGIN_MESSAGE_MAP(CPortMasterDlg, CDialogEx)
 	ON_MESSAGE(WM_USER + 14, &CPortMasterDlg::OnTransmissionError)
 	ON_MESSAGE(WM_USER + 15, &CPortMasterDlg::OnCleanupTransmissionTask)
 	ON_MESSAGE(WM_USER_UPDATE_RECEIVE_DISPLAY, &CPortMasterDlg::OnUpdateReceiveDisplay)
+	ON_MESSAGE(WM_USER_LOG_UPDATE, &CPortMasterDlg::OnLogMessageUpdate)
 	ON_MESSAGE(WM_UPDATE_PORT_LIST, &CPortMasterDlg::OnUpdatePortList)
 END_MESSAGE_MAP()
 
@@ -1044,14 +1067,16 @@ void CPortMasterDlg::PerformDataTransmission()
 
 void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress)
 {
-	// 【第二轮修复】检查窗口句柄有效性，避免PostMessage到已销毁窗口导致宕机
-	if (!IsWindow(GetSafeHwnd()))
-	{
-		return;
-	}
+	// 【第九轮修复】添加全局异常保护，防止进度回调崩溃
+	try {
+		// 【第二轮修复】检查窗口句柄有效性，避免PostMessage到已销毁窗口导致宕机
+		if (!IsWindow(GetSafeHwnd()))
+		{
+			return;
+		}
 
-	// 【重构】使用智能进度报告策略
-	if (m_smartProgressManager)
+		// 【重构】使用智能进度报告策略
+		if (m_smartProgressManager)
 	{
 		// 通过智能进度管理器处理发送方进度
 		// 智能管理器会根据当前策略决定是否更新进度条
@@ -1103,6 +1128,18 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 			int progressPercent = progress.progressPercent;
 			PostMessage(WM_USER + 11, 0, static_cast<LPARAM>(progressPercent));
 		}
+	}
+	}
+	catch (const std::exception& e) {
+		// 【第九轮修复】捕获C++标准异常，防止进度回调崩溃
+		// 记录日志但不阻塞UI
+		std::string errorMsg = "OnTransmissionProgress异常: ";
+		errorMsg += e.what();
+		this->WriteLog(errorMsg);
+	}
+	catch (...) {
+		// 【第九轮修复】捕获所有其他异常
+		this->WriteLog("OnTransmissionProgress发生未知异常");
 	}
 }
 
@@ -2577,6 +2614,20 @@ LRESULT CPortMasterDlg::OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam)
 			m_uiController->SetStaticText(IDC_STATIC_SPEED, *statusText);
 		}
 		delete statusText;
+	}
+	return 0;
+}
+
+LRESULT CPortMasterDlg::OnLogMessageUpdate(WPARAM wParam, LPARAM lParam)
+{
+	CString* logMessage = reinterpret_cast<CString*>(lParam);
+	if (logMessage)
+	{
+		if (m_statusDisplayManager)
+		{
+			m_statusDisplayManager->LogMessage(*logMessage);
+		}
+		delete logMessage;
 	}
 	return 0;
 }

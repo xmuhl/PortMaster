@@ -343,10 +343,20 @@ void TransmissionTask::ExecuteTransmission()
 
 void TransmissionTask::UpdateProgress(size_t transmitted, size_t total, const std::string& status)
 {
-	if (m_progressCallback)
-	{
-		TransmissionProgress progress(transmitted, total, status);
-		m_progressCallback(progress);
+	// 【第九轮修复】添加异常保护，防止进度回调崩溃
+	try {
+		if (m_progressCallback)
+		{
+			TransmissionProgress progress(transmitted, total, status);
+			m_progressCallback(progress);
+		}
+	}
+	catch (const std::exception&) {
+		// 【第九轮修复】忽略进度回调中的异常，避免程序崩溃
+		// 可选：记录日志（但要避免递归调用）
+	}
+	catch (...) {
+		// 【第九轮修复】捕获所有其他异常
 	}
 }
 

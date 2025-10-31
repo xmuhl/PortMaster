@@ -301,6 +301,7 @@ private:
 	afx_msg LRESULT OnTransmissionProgressRange(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionProgressUpdate(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionStatusUpdate(WPARAM wParam, LPARAM lParam);
+	afx_msg LRESULT OnLogMessageUpdate(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionComplete(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnTransmissionError(WPARAM wParam, LPARAM lParam);
 	afx_msg LRESULT OnCleanupTransmissionTask(WPARAM wParam, LPARAM lParam);
