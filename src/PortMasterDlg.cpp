@@ -113,27 +113,42 @@ void CPortMasterDlg::WriteLog(const std::string& message)
 				return;
 			}
 
+			DWORD currentThreadId = ::GetCurrentThreadId();
 			HWND hwnd = GetSafeHwnd();
 			bool hasWindow = ::IsWindow(hwnd);
 			DWORD uiThreadId = 0;
+
 			if (hasWindow)
 			{
 				uiThreadId = ::GetWindowThreadProcessId(hwnd, nullptr);
 			}
 
-			DWORD currentThreadId = ::GetCurrentThreadId();
-			if (!hasWindow || currentThreadId == uiThreadId)
+			CString displayMessage(displayMessageW.c_str());
+
+			// 【线程安全修复】严格的线程分离策略
+			if (currentThreadId == uiThreadId && hasWindow && m_windowReady.load())
 			{
-				CString displayMessage(displayMessageW.c_str());
+				// 仅在UI线程且窗口有效且就绪时直接操作UI控件
 				m_statusDisplayManager->LogMessage(displayMessage);
+
+				// 处理可能积压的日志消息
+				ProcessPendingLogMessages();
+			}
+			else if (hasWindow && m_windowReady.load())
+			{
+				// 窗口有效但非UI线程，通过PostMessage发送
+				CString* messageCopy = new CString(displayMessage);
+				if (!PostMessage(WM_USER_LOG_UPDATE, 0, reinterpret_cast<LPARAM>(messageCopy)))
+				{
+					delete messageCopy;
+					// PostMessage失败，缓存消息
+					CacheLogMessage(displayMessage);
+				}
 			}
 			else
 			{
-				CString* displayMessage = new CString(displayMessageW.c_str());
-				if (!PostMessage(WM_USER_LOG_UPDATE, 0, reinterpret_cast<LPARAM>(displayMessage)))
-				{
-					delete displayMessage;
-				}
+				// 窗口无效或未就绪，缓存消息待后续处理
+				CacheLogMessage(displayMessage);
 			}
 		};
 
@@ -206,7 +221,9 @@ CPortMasterDlg::CPortMasterDlg(CWnd* pParent /*=nullptr*/)
 	m_sendCacheValid(false),
 	m_receiveCacheValid(false),
 	m_useTempCacheFile(false),
-	m_totalReceivedBytes(0)
+	m_totalReceivedBytes(0),
+	// 【线程安全修复】初始化日志缓存机制
+	m_windowReady(false)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 
@@ -581,6 +598,9 @@ BOOL CPortMasterDlg::OnInitDialog()
 	// 初始化ReceiveCacheService（临时缓存文件功能已迁移到服务层）
 	// ReceiveCacheService已在构造函数初始化部分完成
 
+	// 【线程安全修复】设置窗口就绪状态，启用日志处理
+	SetWindowReady(true);
+
 	return TRUE; // 除非将焦点设置到控件，否则返回 TRUE
 }
 
@@ -768,6 +788,9 @@ void CPortMasterDlg::OnCancel()
 // 【阶段二修复】重载OnClose方法，在销毁前执行清理
 void CPortMasterDlg::OnClose()
 {
+	// 【线程安全修复】重置窗口就绪状态，阻止新的UI操作
+	SetWindowReady(false);
+
 	// 窗口句柄仍然有效时执行清理，避免PostMessage到无效窗口
 	ShutdownActiveTransmission();
 
@@ -1078,6 +1101,16 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 		// 【重构】使用智能进度报告策略
 		if (m_smartProgressManager)
 	{
+		// 【第十轮修复】检测智能进度报告回调，避免递归调用导致崩溃
+		// 当progress来自SmartProgressManager的回调时，statusText为"智能进度报告"
+		// 此时必须跳过SmartProgressManager处理，否则会形成无限递归
+		if (progress.statusText == "智能进度报告")
+		{
+			// 直接跳过SmartProgressManager处理，避免无限递归调用链
+			this->WriteLog("检测到智能进度报告回调，跳过SmartProgressManager处理以避免递归");
+			return;
+		}
+
 		// 通过智能进度管理器处理发送方进度
 		// 智能管理器会根据当前策略决定是否更新进度条
 		m_smartProgressManager->HandleSenderProgress(progress);
@@ -3000,4 +3033,55 @@ LRESULT CPortMasterDlg::OnUpdatePortList(WPARAM wParam, LPARAM lParam)
 	}
 
 	return 0;
+}
+
+// 【线程安全修复】处理待处理的日志消息
+void CPortMasterDlg::ProcessPendingLogMessages()
+{
+	if (!m_statusDisplayManager || !m_windowReady.load())
+	{
+		return;
+	}
+
+	// 线程安全地获取并清空待处理消息队列
+	std::deque<CString> messagesToProcess;
+	{
+		std::lock_guard<std::mutex> lock(m_pendingLogMutex);
+		messagesToProcess.swap(m_pendingLogMessages);
+	}
+
+	// 处理所有待处理的消息
+	for (const auto& message : messagesToProcess)
+	{
+		m_statusDisplayManager->LogMessage(message);
+	}
+}
+
+// 【线程安全修复】缓存日志消息
+void CPortMasterDlg::CacheLogMessage(const CString& message)
+{
+	// 限制缓存队列大小，避免内存溢出
+	const size_t MAX_PENDING_MESSAGES = 1000;
+
+	std::lock_guard<std::mutex> lock(m_pendingLogMutex);
+
+	// 如果队列过大，移除最老的消息
+	while (m_pendingLogMessages.size() >= MAX_PENDING_MESSAGES)
+	{
+		m_pendingLogMessages.pop_front();
+	}
+
+	m_pendingLogMessages.push_back(message);
+}
+
+// 【线程安全修复】设置窗口就绪状态
+void CPortMasterDlg::SetWindowReady(bool ready)
+{
+	m_windowReady.store(ready);
+
+	// 当窗口就绪时，处理积压的日志消息
+	if (ready && m_statusDisplayManager)
+	{
+		ProcessPendingLogMessages();
+	}
 }
