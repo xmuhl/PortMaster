@@ -46,6 +46,7 @@ enum class PortType;
 struct TransportConfig
 {
 	std::string portName;        // 端口名称
+	std::string devicePath;      // 实际设备路径（用于USB等需要实际路径的设备）
 	DWORD readTimeout = 2000;     // 读超时(ms)
 	DWORD writeTimeout = 2000;    // 写超时(ms)
 	DWORD bufferSize = 4096;      // 缓冲区大小

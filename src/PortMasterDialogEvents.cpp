@@ -54,6 +54,10 @@ void PortMasterDialogEvents::HandleConnect()
 	// 【阶段A修复】从UI构建传输配置,替代硬编码初始化
 	m_dialog.BuildTransportConfigFromUI();
 
+	// 【关键修复】确保使用更新后的配置
+	m_dialog.WriteLog("OnBnClickedButtonConnect: BuildTransportConfigFromUI完成，当前portName=" + m_dialog.m_transportConfig.portName);
+	m_dialog.WriteLog("OnBnClickedButtonConnect: 当前devicePath=" + (m_dialog.m_transportConfig.devicePath.empty() ? "空" : m_dialog.m_transportConfig.devicePath));
+
 	bool useReliableMode = (m_dialog.m_uiController && m_dialog.m_uiController->IsReliableModeSelected());
 	m_dialog.WriteLog(std::string("OnBnClickedButtonConnect: 使用") + (useReliableMode ? "可靠" : "直通") + "模式");
 

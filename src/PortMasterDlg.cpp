@@ -1919,7 +1919,25 @@ void CPortMasterDlg::BuildTransportConfigFromUI()
 	}
 
 	PortTypeIndex portTypeIndex = m_portConfigPresenter->GetSelectedPortType();
-	WriteLog("BuildTransportConfigFromUI: UI选择的端口类型索引 = " + std::to_string(static_cast<int>(portTypeIndex)));
+
+	// 【调试日志】详细记录端口类型信息 - 立即记录
+	int portTypeIndexInt = static_cast<int>(portTypeIndex);
+	WriteLog("BuildTransportConfigFromUI: Got port type index = " + std::to_string(portTypeIndexInt));
+
+	std::string portTypeName;
+	switch (portTypeIndex)
+	{
+		case PortTypeIndex::Serial: portTypeName = "串口"; break;
+		case PortTypeIndex::Parallel: portTypeName = "并口"; break;
+		case PortTypeIndex::UsbPrint: portTypeName = "USB打印"; break;
+		case PortTypeIndex::NetworkPrint: portTypeName = "网络打印"; break;
+		case PortTypeIndex::Loopback: portTypeName = "回路测试"; break;
+		default: portTypeName = "未知"; break;
+	}
+
+	WriteLog("BuildTransportConfigFromUI: UI选择的端口类型 = " + portTypeName + " (索引=" + std::to_string(portTypeIndexInt) + ")");
+	WriteLog("BuildTransportConfigFromUI: 当前选择的端口 = " + m_portConfigPresenter->GetSelectedPort());
+	WriteLog("BuildTransportConfigFromUI: About to enter switch statement");
 
 	// 3. 根据端口类型填充TransportConfig
 	switch (portTypeIndex)
@@ -1948,9 +1966,22 @@ void CPortMasterDlg::BuildTransportConfigFromUI()
 	}
 	case PortTypeIndex::UsbPrint:
 	{
+		// 【关键日志】确认进入了USB分支
+		WriteLog("=== USB BRANCH ENTERED === BuildTransportConfigFromUI: USB PRINT BRANCH");
+
 		m_transportConfig.portType = PortType::PORT_TYPE_USB_PRINT;
 		m_transportConfig.portName = m_portConfigPresenter->GetSelectedPort();
-		WriteLog("BuildTransportConfigFromUI: USB打印配置 - 端口=" + m_transportConfig.portName);
+		// 【关键修复】为USB端口传递devicePath
+		m_transportConfig.devicePath = m_portConfigPresenter->GetSelectedDevicePath();
+
+		// 【调试日志】详细记录配置信息
+		std::string selectedPort = m_portConfigPresenter->GetSelectedPort();
+		std::string selectedDevicePath = m_portConfigPresenter->GetSelectedDevicePath();
+		WriteLog("BuildTransportConfigFromUI: USB打印配置");
+		WriteLog("  GetSelectedPort()返回: " + selectedPort);
+		WriteLog("  GetSelectedDevicePath()返回: " + (selectedDevicePath.empty() ? "空" : selectedDevicePath));
+		WriteLog("  最终设置的portName: " + m_transportConfig.portName);
+		WriteLog("  最终设置的devicePath: " + (m_transportConfig.devicePath.empty() ? "空" : m_transportConfig.devicePath));
 		break;
 	}
 	case PortTypeIndex::NetworkPrint:

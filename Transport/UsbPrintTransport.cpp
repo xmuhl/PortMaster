@@ -3,6 +3,7 @@
 #include "pch.h"
 #include "UsbPrintTransport.h"
 #include "../Common/PortDetector.h"
+#include "../Common/Logger.h"
 #include <algorithm>
 #include <sstream>
 
@@ -63,12 +64,31 @@ TransportError UsbPrintTransport::Open(const TransportConfig& baseConfig)
 		return TransportError::AlreadyOpen;
 	}
 
+	// 【调试日志】记录接收到的配置信息
+	Logger::LogDebug("[UsbPrintTransport] Open - 接收到的baseConfig:");
+	Logger::LogDebug("  portName: " + baseConfig.portName);
+	Logger::LogDebug("  devicePath: " + (baseConfig.devicePath.empty() ? "空" : baseConfig.devicePath));
+	Logger::LogDebug("  readTimeout: " + std::to_string(baseConfig.readTimeout));
+	Logger::LogDebug("  writeTimeout: " + std::to_string(baseConfig.writeTimeout));
+
 	// 转换配置类型
 	const UsbPrintConfig* config = dynamic_cast<const UsbPrintConfig*>(&baseConfig);
 	if (!config)
 	{
+		Logger::LogDebug("[UsbPrintTransport] Open - 使用默认配置转换");
 		UsbPrintConfig defaultConfig;
 		defaultConfig.portName = baseConfig.portName;
+		// 【关键修复】优先使用devicePath，如果有的话
+		if (!baseConfig.devicePath.empty())
+		{
+			defaultConfig.deviceName = baseConfig.devicePath;
+			defaultConfig.portName = baseConfig.portName; // 保持UI显示用的portName
+			Logger::LogDebug("[UsbPrintTransport] Open - 设置deviceName为devicePath: " + baseConfig.devicePath);
+		}
+		else
+		{
+			Logger::LogDebug("[UsbPrintTransport] Open - devicePath为空，将使用portName: " + baseConfig.portName);
+		}
 		defaultConfig.readTimeout = baseConfig.readTimeout;
 		defaultConfig.writeTimeout = baseConfig.writeTimeout;
 		defaultConfig.bufferSize = baseConfig.bufferSize;
@@ -85,10 +105,27 @@ TransportError UsbPrintTransport::Open(const TransportConfig& baseConfig)
 		return TransportError::InvalidConfig;
 	}
 
-	m_config.deviceName = NormalizePortName(m_config.portName);
-	m_config.portName = m_config.deviceName;
+	// 【关键修复】智能处理deviceName和portName，避免覆盖正确的devicePath
+	if (!m_config.deviceName.empty() && (m_config.deviceName.find("\\\\?\\") == 0))
+	{
+		// deviceName已包含完整的设备路径，不要覆盖它
+		Logger::LogDebug("[UsbPrintTransport] Open - 保持设备路径不变: " + m_config.deviceName + " (端口名: " + m_config.portName + ")");
+
+		// 仅规范化portName用于显示，保持deviceName不变
+		m_config.portName = NormalizePortName(m_config.portName);
+	}
+	else
+	{
+		// deviceName为空或不包含完整路径，需要从portName生成
+		Logger::LogDebug("[UsbPrintTransport] Open - deviceName为空，从portName生成: " + m_config.portName);
+		m_config.deviceName = NormalizePortName(m_config.portName);
+		m_config.portName = m_config.deviceName;
+	}
 
 	SetState(TransportState::Opening);
+
+	// 【日志增强】记录尝试打开的设备路径
+	Logger::LogDebug("[UsbPrintTransport] Open - 尝试打开设备: " + m_config.deviceName);
 
 	TransportError result = OpenDeviceHandle();
 	if (result != TransportError::Success)
@@ -380,7 +417,7 @@ bool UsbPrintTransport::IsUsbPortAvailable(const std::string& portName)
 	if (hDevice != INVALID_HANDLE_VALUE)
 	{
 		// 【调试信息】记录检测成功的设备
-		OutputDebugStringA(("【USB端口检测】设备可用: " + portName + " (路径: " + devicePath + ")\n").c_str());
+		Logger::LogDebug(("【USB端口检测】设备可用: " + portName + " (路径: " + devicePath + ")\n"));
 
 		// 尝试获取设备状态（可选）
 		DWORD bytesReturned = 0;
@@ -396,7 +433,7 @@ bool UsbPrintTransport::IsUsbPortAvailable(const std::string& portName)
 
 		if (statusResult)
 		{
-			OutputDebugStringA(("【USB端口检测】设备状态查询成功，状态字节: 0x" + std::to_string(statusBuffer[0]) + "\n").c_str());
+			Logger::LogDebug(("【USB端口检测】设备状态查询成功，状态字节: 0x" + std::to_string(statusBuffer[0]) + "\n"));
 		}
 
 		CloseHandle(hDevice);
@@ -406,16 +443,16 @@ bool UsbPrintTransport::IsUsbPortAvailable(const std::string& portName)
 	// 【调试信息】记录检测失败的设备及原因
 	DWORD lastError = ::GetLastError();
 	std::string msg1 = "【USB端口检测】设备不可用: " + portName + "\n";
-	OutputDebugStringA(msg1.c_str());
+	Logger::LogDebug(msg1);
 
 	std::string msg2 = "【USB端口检测】失败原因 - 错误码: " + std::to_string(lastError) + ", 路径: " + devicePath + "\n";
-	OutputDebugStringA(msg2.c_str());
+	Logger::LogDebug(msg2);
 
 	// 方法2: 如果方法1失败，尝试只读模式（某些设备可能只允许读取）
 	if (lastError == ERROR_ACCESS_DENIED || lastError == ERROR_SHARING_VIOLATION)
 	{
 		std::string msg = "【USB端口检测】尝试只读模式检测...\n";
-		OutputDebugStringA(msg.c_str());
+		Logger::LogDebug(msg);
 
 		HANDLE hDeviceRead = CreateFileA(
 			devicePath.c_str(),
@@ -429,7 +466,7 @@ bool UsbPrintTransport::IsUsbPortAvailable(const std::string& portName)
 
 		if (hDeviceRead != INVALID_HANDLE_VALUE)
 		{
-			OutputDebugStringA(("【USB端口检测】设备在只读模式下可用: " + portName + "\n").c_str());
+			Logger::LogDebug(("【USB端口检测】设备在只读模式下可用: " + portName + "\n"));
 			CloseHandle(hDeviceRead);
 			return true;
 		}
@@ -495,17 +532,30 @@ void UsbPrintTransport::UpdateStats(uint64_t bytesSent, uint64_t bytesReceived)
 
 TransportError UsbPrintTransport::OpenDeviceHandle()
 {
-	std::string devicePath = "\\\\.\\" + m_config.deviceName;
+	// 【关键修复】智能构建设备路径
+	std::string devicePath;
+	if (!m_config.deviceName.empty() && m_config.deviceName.find("\\\\?\\") == 0)
+	{
+		// deviceName已经是完整的设备路径，直接使用
+		devicePath = m_config.deviceName;
+		Logger::LogDebug("[USB端口] 使用完整设备路径: " + devicePath);
+	}
+	else
+	{
+		// deviceName是端口名，需要添加\\.\前缀
+		devicePath = "\\\\.\\" + m_config.deviceName;
+		Logger::LogDebug("[USB端口] 构建设备路径: " + devicePath);
+	}
 
 	// 【调试信息】记录尝试打开的设备路径
-	OutputDebugStringA(("【USB端口】尝试打开设备路径: " + devicePath + "\n").c_str());
-	OutputDebugStringA(("【USB端口】设备名称: " + m_config.deviceName + "\n").c_str());
-	OutputDebugStringA(("【USB端口】端口名称: " + m_config.portName + "\n").c_str());
+	Logger::LogDebug("[USB端口] 尝试打开设备路径: " + devicePath);
+	Logger::LogDebug("[USB端口] 设备名称: " + m_config.deviceName);
+	Logger::LogDebug("[USB端口] 端口名称: " + m_config.portName);
 
 	m_hDevice = CreateFileA(
 		devicePath.c_str(),
 		m_config.accessMode,
-		m_config.shareMode,
+		FILE_SHARE_READ | FILE_SHARE_WRITE, // 【关键修复】允许共享访问，避免设备被独占导致打开失败
 		nullptr,
 		m_config.creationDisposition,
 		m_config.flagsAndAttributes,
@@ -517,34 +567,34 @@ TransportError UsbPrintTransport::OpenDeviceHandle()
 		// 【调试信息】记录打开失败，获取详细错误信息
 		DWORD lastError = ::GetLastError();
 		std::string errorMsg = GetSystemErrorMessage(lastError);
-		OutputDebugStringA(("【USB端口】打开设备失败！错误码: " + std::to_string(lastError) + "\n").c_str());
-		OutputDebugStringA(("【USB端口】错误信息: " + errorMsg + "\n").c_str());
-		OutputDebugStringA(("【USB端口】设备路径: " + devicePath + "\n").c_str());
-		OutputDebugStringA(("【USB端口】访问模式: 0x" + std::to_string(m_config.accessMode) + ", 共享模式: 0x" + std::to_string(m_config.shareMode) + "\n").c_str());
+		Logger::LogDebug(("【USB端口】打开设备失败！错误码: " + std::to_string(lastError) + "\n"));
+		Logger::LogDebug(("【USB端口】错误信息: " + errorMsg + "\n"));
+		Logger::LogDebug(("【USB端口】设备路径: " + devicePath + "\n"));
+		Logger::LogDebug(("【USB端口】访问模式: 0x" + std::to_string(m_config.accessMode) + ", 共享模式: 0x" + std::to_string(m_config.shareMode) + "\n"));
 
 		// 【错误诊断】根据错误码提供具体诊断信息
 		if (lastError == ERROR_FILE_NOT_FOUND)
 		{
-			OutputDebugStringA("【USB端口】诊断: 设备不存在，请检查设备是否正确连接\n");
+			Logger::LogDebug("【USB端口】诊断: 设备不存在，请检查设备是否正确连接\n");
 		}
 		else if (lastError == ERROR_ACCESS_DENIED)
 		{
-			OutputDebugStringA("【USB端口】诊断: 访问被拒绝，可能原因：1)设备正被其他程序使用 2)权限不足 3)设备已被锁定\n");
+			Logger::LogDebug("【USB端口】诊断: 访问被拒绝，可能原因：1)设备正被其他程序使用 2)权限不足 3)设备已被锁定\n");
 		}
 		else if (lastError == ERROR_SHARING_VIOLATION)
 		{
-			OutputDebugStringA("【USB端口】诊断: 共享冲突，设备正被其他进程使用\n");
+			Logger::LogDebug("【USB端口】诊断: 共享冲突，设备正被其他进程使用\n");
 		}
 		else if (lastError == ERROR_INVALID_NAME)
 		{
-			OutputDebugStringA("【USB端口】诊断: 设备名称无效，请检查端口名称格式\n");
+			Logger::LogDebug("【USB端口】诊断: 设备名称无效，请检查端口名称格式\n");
 		}
 
 		return this->GetLastError();
 	}
 
 	// 【调试信息】记录打开成功
-	OutputDebugStringA(("【USB端口】设备打开成功！句柄值: 0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hDevice)) + "\n").c_str());
+	Logger::LogDebug(("【USB端口】设备打开成功！句柄值: 0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hDevice)) + "\n"));
 	return TransportError::Success;
 }
 

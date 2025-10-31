@@ -265,7 +265,19 @@ std::pair<std::shared_ptr<ITransport>, std::string> PortSessionController::Creat
 		// 创建USB打印传输对象
 		auto usbTransport = std::make_shared<UsbPrintTransport>();
 		UsbPrintConfig usbConfig;
-		usbConfig.deviceName = config.portName;
+
+		// 【关键修复】优先使用devicePath，如果没有则使用portName
+		if (!config.devicePath.empty())
+		{
+			usbConfig.deviceName = config.devicePath;
+			usbConfig.portName = config.portName; // 保持UI显示用的portName
+		}
+		else
+		{
+			usbConfig.deviceName = config.portName;
+			usbConfig.portName = config.portName;
+		}
+
 		usbConfig.readTimeout = config.readTimeout;
 		usbConfig.writeTimeout = config.writeTimeout;
 

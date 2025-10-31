@@ -3,6 +3,7 @@
 
 #include "pch.h"
 #include "PortConfigPresenter.h"
+#include "../Common/Logger.h"
 #include "resource.h"
 #include "../Transport/SerialTransport.h"
 #include "../Transport/ParallelTransport.h"
@@ -454,22 +455,27 @@ void PortConfigPresenter::UpdateParallelPortParameters()
 // 更新USB打印端口参数
 void PortConfigPresenter::UpdateUsbPrintPortParameters()
 {
-	// 使用增强版枚举（获取设备描述）
-	auto portInfos = UsbPrintTransport::EnumerateUsbPortsWithInfo();
+	// 【关键修复】使用PortDetector获取完整的DeviceInfo（包含devicePath）
+	m_currentUsbDevices = PortDetector::EnumerateDevicesByType(PortType::PORT_TYPE_USB_PRINT);
 
 	// 转换为显示字符串列表
 	std::vector<std::string> portList;
-	for (const auto& info : portInfos)
+	for (const auto& deviceInfo : m_currentUsbDevices)
 	{
 		// 格式：USB001 - Canon iP7200 (就绪)
-		std::string displayText = info.portName;
-		if (!info.displayName.empty())
+		std::string displayText = deviceInfo.portName;
+		if (!deviceInfo.friendlyName.empty())
 		{
-			displayText += " - " + info.displayName;
+			displayText += " - " + deviceInfo.friendlyName;
 		}
-		if (!info.statusText.empty())
+		// 添加状态信息
+		if (deviceInfo.isConnected)
 		{
-			displayText += " (" + info.statusText + ")";
+			displayText += " (就绪)";
+		}
+		else
+		{
+			displayText += " (离线)";
 		}
 		portList.push_back(displayText);
 	}
@@ -581,7 +587,16 @@ std::vector<std::string> PortConfigPresenter::EnumerateParallelPorts()
 // 枚举USB端口
 std::vector<std::string> PortConfigPresenter::EnumerateUsbPorts()
 {
-	return UsbPrintTransport::EnumerateUsbPorts();
+	// 【关键修复】使用PortDetector确保端口列表一致性
+	auto deviceInfos = PortDetector::EnumerateDevicesByType(PortType::PORT_TYPE_USB_PRINT);
+
+	std::vector<std::string> portNames;
+	for (const auto& deviceInfo : deviceInfos)
+	{
+		portNames.push_back(deviceInfo.portName);
+	}
+
+	return portNames;
 }
 
 // 获取选择的端口名称
@@ -592,9 +607,153 @@ std::string PortConfigPresenter::GetSelectedPort() const
 
 	CString portText;
 	m_controls.comboPort->GetWindowText(portText);
-
 	CT2A utf8Port(portText, CP_UTF8);
-	return std::string(utf8Port);
+	std::string displayText(utf8Port);
+
+	// 【调试日志】记录GetSelectedPort的详细信息
+	Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 原始显示文本='" + displayText + "'");
+
+	// 【关键修复】对于USB端口，需要从显示文本中提取纯端口号
+	// 显示格式：USB002 - Canon iP7200 (就绪)
+	// 需要提取：USB002
+	PortTypeIndex portType = GetSelectedPortType();
+
+	// 记录端口类型
+	std::string portTypeName;
+	switch (portType)
+	{
+		case PortTypeIndex::Serial: portTypeName = "串口"; break;
+		case PortTypeIndex::Parallel: portTypeName = "并口"; break;
+		case PortTypeIndex::UsbPrint: portTypeName = "USB打印"; break;
+		case PortTypeIndex::NetworkPrint: portTypeName = "网络打印"; break;
+		case PortTypeIndex::Loopback: portTypeName = "回路测试"; break;
+		default: portTypeName = "未知"; break;
+	}
+	Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 端口类型=" + portTypeName + " (索引=" + std::to_string(static_cast<int>(portType)) + ")");
+
+	if (portType == PortTypeIndex::UsbPrint)
+	{
+		// 查找第一个空格、连字符或括号的位置
+		size_t endPos = displayText.find(' ');
+		Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 找到空格位置=" + std::to_string(endPos));
+
+		if (endPos == std::string::npos)
+		{
+			endPos = displayText.find('-');
+			Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 找到连字符位置=" + std::to_string(endPos));
+		}
+		if (endPos == std::string::npos)
+		{
+			endPos = displayText.find('(');
+			Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 找到括号位置=" + std::to_string(endPos));
+		}
+
+		// 提取端口号部分
+		if (endPos != std::string::npos && endPos > 0)
+		{
+			std::string portName = displayText.substr(0, endPos);
+			// 去除可能的尾部空格
+			while (!portName.empty() && portName.back() == ' ')
+			{
+				portName.pop_back();
+			}
+			Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 提取的端口号='" + portName + "'");
+			return portName;
+		}
+		else
+		{
+			Logger::LogDebug("[PortConfigPresenter] GetSelectedPort: 未找到分隔符，返回完整文本");
+		}
+	}
+
+	// 非USB端口或提取失败，返回完整文本
+	return displayText;
+}
+
+// 获取选择的设备路径（用于USB等设备）
+std::string PortConfigPresenter::GetSelectedDevicePath() const
+{
+	if (!IsControlValid(m_controls.comboPort))
+		return "";
+
+	// 只有USB端口类型才需要devicePath
+	PortTypeIndex portType = GetSelectedPortType();
+	if (portType != PortTypeIndex::UsbPrint)
+		return "";
+
+	// 获取当前选择的显示文本
+	CString portText;
+	m_controls.comboPort->GetWindowText(portText);
+	CT2A utf8Port(portText, CP_UTF8);
+	std::string selectedDisplayText(utf8Port);
+
+	// 【关键修复】从显示文本中提取纯端口号
+	// 显示格式：USB002 - Canon iP7200 (就绪)
+	// 需要提取：USB002
+	std::string selectedPort = selectedDisplayText;
+
+	// 查找第一个空格、连字符或括号的位置
+	size_t endPos = selectedDisplayText.find(' ');
+	if (endPos == std::string::npos)
+	{
+		endPos = selectedDisplayText.find('-');
+	}
+	if (endPos == std::string::npos)
+	{
+		endPos = selectedDisplayText.find('(');
+	}
+
+	// 提取端口号部分
+	if (endPos != std::string::npos && endPos > 0)
+	{
+		selectedPort = selectedDisplayText.substr(0, endPos);
+	}
+
+	// 去除可能的尾部空格
+	while (!selectedPort.empty() && selectedPort.back() == ' ')
+	{
+		selectedPort.pop_back();
+	}
+
+	// 【关键修复】如果m_currentUsbDevices为空，重新枚举USB设备（使用局部变量）
+	auto usbDevices = m_currentUsbDevices;
+	if (usbDevices.empty())
+	{
+		Logger::LogDebug("[PortConfigPresenter] GetSelectedDevicePath: m_currentUsbDevices为空，重新枚举USB设备...");
+		usbDevices = PortDetector::EnumerateDevicesByType(PortType::PORT_TYPE_USB_PRINT);
+	}
+
+	// 在USB设备列表中查找对应的devicePath
+	for (const auto& deviceInfo : usbDevices)
+	{
+		if (deviceInfo.portName == selectedPort)
+		{
+			Logger::LogDebug("[PortConfigPresenter] GetSelectedDevicePath: 找到端口 " + selectedPort + " 的devicePath: " + deviceInfo.devicePath);
+			return deviceInfo.devicePath;
+		}
+	}
+
+	// 如果未找到，输出调试信息
+	Logger::LogError("[PortConfigPresenter] GetSelectedDevicePath: 未找到端口 " + selectedPort + " 的devicePath");
+	for (const auto& deviceInfo : usbDevices)
+	{
+		Logger::LogDebug("[PortConfigPresenter] 可用端口: " + deviceInfo.portName + " -> " + deviceInfo.devicePath);
+	}
+
+	// 【修复】如果仍未找到，尝试直接从当前选择中解析设备路径
+	// 这是一个兜底机制，可能在某些边界情况下有用
+	Logger::LogDebug("[PortConfigPresenter] GetSelectedDevicePath: 尝试从PortDetector重新查询...");
+	auto freshDevices = PortDetector::EnumerateDevicesByType(PortType::PORT_TYPE_USB_PRINT);
+	for (const auto& deviceInfo : freshDevices)
+	{
+		if (deviceInfo.portName == selectedPort)
+		{
+			Logger::LogDebug("[PortConfigPresenter] GetSelectedDevicePath: 兜底查询成功，找到devicePath: " + deviceInfo.devicePath);
+			return deviceInfo.devicePath;
+		}
+	}
+
+	return "";  // 未找到对应的设备路径
 }
 
 // 获取选择的波特率

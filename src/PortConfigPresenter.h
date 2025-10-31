@@ -9,6 +9,8 @@
 #include <atomic>
 #include <mutex>
 #include <future>
+#include "../Common/CommonTypes.h"
+#include "../Common/PortDetector.h"
 
 // 前向声明
 class NetworkPrinterConfigDialog;
@@ -129,6 +131,7 @@ public:
 
 	// 当前配置获取
 	std::string GetSelectedPort() const;                     // 获取选择的端口名称
+	std::string GetSelectedDevicePath() const;               // 获取选择的设备路径（用于USB等设备）
 	int GetSelectedBaudRate() const;                         // 获取选择的波特率
 	int GetSelectedDataBits() const;                         // 获取选择的数据位
 	std::string GetSelectedParity() const;                   // 获取选择的校验位
@@ -168,6 +171,9 @@ private:
 
 	// 端口扫描器
 	std::unique_ptr<PortScanner> m_portScanner;              // 异步端口扫描器
+
+	// USB设备信息存储（用于获取devicePath）
+	std::vector<DeviceInfo> m_currentUsbDevices;              // 当前枚举的USB设备信息
 
 	// 内部辅助方法
 	void ValidateControlRefs() const;                        // 验证控件引用有效性
