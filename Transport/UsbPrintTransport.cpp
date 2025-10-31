@@ -607,6 +607,35 @@ void UsbPrintTransport::CloseDeviceHandle()
 	}
 }
 
+// 【第九轮修复】SEH保护的WriteFile包装函数
+// 说明：此函数仅使用SEH异常处理，不使用C++异常处理，避免编译器冲突
+// 返回值：TRUE=成功，FALSE=失败
+// lastError参数：输出Windows错误码，如果是SEH异常则设置为0xFFFFFFFF
+static BOOL WriteFileProtected(HANDLE hDevice, const void* data, DWORD size, DWORD* bytesWritten, DWORD* lastError)
+{
+	*bytesWritten = 0;
+	*lastError = 0;
+
+	__try
+	{
+		// 执行WriteFile调用，可能触发SEH异常
+		BOOL success = WriteFile(hDevice, data, size, bytesWritten, nullptr);
+
+		if (!success)
+		{
+			*lastError = ::GetLastError();
+		}
+
+		return success;
+	}
+	__except (EXCEPTION_EXECUTE_HANDLER)
+	{
+		// 捕获SEH异常，设置特殊错误码
+		*lastError = 0xFFFFFFFF;  // 特殊值表示发生了SEH异常
+		return FALSE;
+	}
+}
+
 TransportError UsbPrintTransport::WriteToDevice(const void* data, size_t size, size_t* written)
 {
 	// 【修复】增强参数验证和状态检查
@@ -629,67 +658,74 @@ TransportError UsbPrintTransport::WriteToDevice(const void* data, size_t size, s
 		return TransportError::Success;
 	}
 
-	// 【修复】添加异常处理，防止程序崩溃
-	try
+	// 【第九轮修复】二次检查设备句柄有效性（防止多线程环境下句柄被释放）
+	if (m_hDevice == INVALID_HANDLE_VALUE || m_hDevice == nullptr)
 	{
-		DWORD bytesWritten = 0;
+		Logger::LogDebug("WriteToDevice: 设备句柄在写入前变为无效\n");
+		return TransportError::NotOpen;
+	}
 
-		// 【修复】添加详细的调试日志
-		Logger::LogDebug("WriteToDevice: 准备写入数据，大小=" + std::to_string(size) +
-			"字节，设备句柄=0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hDevice)) + "\n");
+	// 【修复】添加详细的调试日志
+	Logger::LogDebug("WriteToDevice: 准备写入数据，大小=" + std::to_string(size) +
+		"字节，设备句柄=0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hDevice)) + "\n");
 
-		// 【修复】检查数据内容的前几个字节用于调试
-		if (size >= 4)
+	// 【修复】检查数据内容的前几个字节用于调试
+	if (size >= 4)
+	{
+		const uint8_t* byteData = static_cast<const uint8_t*>(data);
+		Logger::LogDebug("WriteToDevice: 数据前4字节=[" +
+			std::to_string(byteData[0]) + ", " +
+			std::to_string(byteData[1]) + ", " +
+			std::to_string(byteData[2]) + ", " +
+			std::to_string(byteData[3]) + "]\n");
+	}
+
+	// 【第九轮修复】调用受SEH保护的WriteFile包装函数
+	DWORD bytesWritten = 0;
+	DWORD lastError = 0;
+	BOOL success = WriteFileProtected(m_hDevice, data, static_cast<DWORD>(size), &bytesWritten, &lastError);
+
+	// 【修复】记录WriteFile调用结果
+	Logger::LogDebug("WriteToDevice: WriteFileProtected返回=" + std::string(success ? "成功" : "失败") +
+		"，实际写入=" + std::to_string(bytesWritten) + "字节\n");
+
+	if (written) *written = bytesWritten;
+
+	if (!success)
+	{
+		Logger::LogDebug("WriteToDevice: WriteFile失败，Windows错误码=" + std::to_string(lastError) + "\n");
+
+		// 【第九轮修复】处理设备断开连接的特殊错误码
+		if (lastError == ERROR_DEVICE_NOT_CONNECTED ||
+			lastError == ERROR_NO_SUCH_DEVICE ||
+			lastError == ERROR_GEN_FAILURE ||
+			lastError == ERROR_NOT_READY)
 		{
-			const uint8_t* byteData = static_cast<const uint8_t*>(data);
-			Logger::LogDebug("WriteToDevice: 数据前4字节=[" +
-				std::to_string(byteData[0]) + ", " +
-				std::to_string(byteData[1]) + ", " +
-				std::to_string(byteData[2]) + ", " +
-				std::to_string(byteData[3]) + "]\n");
+			Logger::LogDebug("WriteToDevice: 检测到设备已断开或不可用\n");
+			return TransportError::ConnectionClosed;
 		}
 
-		// 【关键修复】执行WriteFile调用，添加异常保护
-		BOOL success = WriteFile(m_hDevice, data, static_cast<DWORD>(size), &bytesWritten, nullptr);
-
-		// 【修复】记录WriteFile调用结果
-		Logger::LogDebug("WriteToDevice: WriteFile返回=" + std::string(success ? "成功" : "失败") +
-			"，实际写入=" + std::to_string(bytesWritten) + "字节\n");
-
-		if (written) *written = bytesWritten;
-
-		if (!success)
+		// 【第九轮修复】处理SEH异常（lastError == 0xFFFFFFFF表示发生了SEH异常）
+		if (lastError == 0xFFFFFFFF)
 		{
-			TransportError error = this->GetLastError();
-			DWORD winError = ::GetLastError();
-			Logger::LogDebug("WriteToDevice: WriteFile失败，Windows错误码=" + std::to_string(winError) +
-				"，传输错误=" + std::to_string(static_cast<int>(error)) + "\n");
-			return error;
+			Logger::LogDebug("WriteToDevice: 捕获到SEH异常，可能是设备句柄无效或驱动程序错误\n");
+			return TransportError::WriteFailed;
 		}
 
-		// 验证写入的字节数是否匹配
-		if (bytesWritten != static_cast<DWORD>(size))
-		{
-			Logger::LogDebug("WriteToDevice警告: 请求写入" + std::to_string(size) +
-				"字节，实际写入" + std::to_string(bytesWritten) + "字节\n");
-		}
+		TransportError error = this->GetLastError();
+		return error;
+	}
 
-		UpdateStats(bytesWritten, 0);
-		Logger::LogDebug("WriteToDevice: 数据写入成功完成\n");
-		return TransportError::Success;
-	}
-	catch (const std::exception& e)
+	// 验证写入的字节数是否匹配
+	if (bytesWritten != static_cast<DWORD>(size))
 	{
-		// 【修复】捕获标准异常
-		Logger::LogDebug("WriteToDevice异常: " + std::string(e.what()) + "\n");
-		return TransportError::WriteFailed;
+		Logger::LogDebug("WriteToDevice警告: 请求写入" + std::to_string(size) +
+			"字节，实际写入" + std::to_string(bytesWritten) + "字节\n");
 	}
-	catch (...)
-	{
-		// 【修复】捕获未知异常
-		Logger::LogDebug("WriteToDevice未知异常: 程序可能遇到严重错误\n");
-		return TransportError::WriteFailed;
-	}
+
+	UpdateStats(bytesWritten, 0);
+	Logger::LogDebug("WriteToDevice: 数据写入成功完成\n");
+	return TransportError::Success;
 }
 
 TransportError UsbPrintTransport::ReadFromDevice(void* buffer, size_t size, size_t* read, DWORD timeout)
