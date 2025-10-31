@@ -28,7 +28,10 @@
       "Bash(powershell.exe -Command \"./autobuild_x86_debug.bat\")",
       "Bash(powershell.exe -Command \"Get-Date -Format ''yyyyMMdd-HHmmss''\")",
       "Bash(git tag \"$tag\")",
-      "Bash(git tag -a \"fix-usb-port-20251030-110837\" -m \"修复USB端口访问问题：从注册表获取真实端口号替代随机生成\")"
+      "Bash(git tag -a \"fix-usb-port-20251030-110837\" -m \"修复USB端口访问问题：从注册表获取真实端口号替代随机生成\")",
+      "Bash(Start-Process -FilePath \"build\\Debug\\PortMaster.exe\" -WindowStyle Normal)",
+      "Bash(powershell.exe -Command \"Start-Sleep -Seconds 3; Get-Content ''build\\Debug\\PortMaster_debug.log'' -Tail 100\")",
+      "Bash(powershell.exe -Command \"Stop-Process -Name PortMaster -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1\")"
     ],
     "deny": [],
     "ask": []

@@ -609,15 +609,87 @@ void UsbPrintTransport::CloseDeviceHandle()
 
 TransportError UsbPrintTransport::WriteToDevice(const void* data, size_t size, size_t* written)
 {
-	DWORD bytesWritten = 0;
-	BOOL success = WriteFile(m_hDevice, data, static_cast<DWORD>(size), &bytesWritten, nullptr);
+	// 【修复】增强参数验证和状态检查
+	if (m_hDevice == INVALID_HANDLE_VALUE || m_hDevice == nullptr)
+	{
+		Logger::LogDebug("WriteToDevice错误: 设备句柄无效\n");
+		return TransportError::NotOpen;
+	}
 
-	if (written) *written = bytesWritten;
+	if (!data)
+	{
+		Logger::LogDebug("WriteToDevice错误: 数据指针为空\n");
+		return TransportError::InvalidParameter;
+	}
 
-	if (!success) return this->GetLastError();
+	if (size == 0)
+	{
+		Logger::LogDebug("WriteToDevice警告: 数据大小为0\n");
+		if (written) *written = 0;
+		return TransportError::Success;
+	}
 
-	UpdateStats(bytesWritten, 0);
-	return TransportError::Success;
+	// 【修复】添加异常处理，防止程序崩溃
+	try
+	{
+		DWORD bytesWritten = 0;
+
+		// 【修复】添加详细的调试日志
+		Logger::LogDebug("WriteToDevice: 准备写入数据，大小=" + std::to_string(size) +
+			"字节，设备句柄=0x" + std::to_string(reinterpret_cast<uintptr_t>(m_hDevice)) + "\n");
+
+		// 【修复】检查数据内容的前几个字节用于调试
+		if (size >= 4)
+		{
+			const uint8_t* byteData = static_cast<const uint8_t*>(data);
+			Logger::LogDebug("WriteToDevice: 数据前4字节=[" +
+				std::to_string(byteData[0]) + ", " +
+				std::to_string(byteData[1]) + ", " +
+				std::to_string(byteData[2]) + ", " +
+				std::to_string(byteData[3]) + "]\n");
+		}
+
+		// 【关键修复】执行WriteFile调用，添加异常保护
+		BOOL success = WriteFile(m_hDevice, data, static_cast<DWORD>(size), &bytesWritten, nullptr);
+
+		// 【修复】记录WriteFile调用结果
+		Logger::LogDebug("WriteToDevice: WriteFile返回=" + std::string(success ? "成功" : "失败") +
+			"，实际写入=" + std::to_string(bytesWritten) + "字节\n");
+
+		if (written) *written = bytesWritten;
+
+		if (!success)
+		{
+			TransportError error = this->GetLastError();
+			DWORD winError = ::GetLastError();
+			Logger::LogDebug("WriteToDevice: WriteFile失败，Windows错误码=" + std::to_string(winError) +
+				"，传输错误=" + std::to_string(static_cast<int>(error)) + "\n");
+			return error;
+		}
+
+		// 验证写入的字节数是否匹配
+		if (bytesWritten != static_cast<DWORD>(size))
+		{
+			Logger::LogDebug("WriteToDevice警告: 请求写入" + std::to_string(size) +
+				"字节，实际写入" + std::to_string(bytesWritten) + "字节\n");
+		}
+
+		UpdateStats(bytesWritten, 0);
+		Logger::LogDebug("WriteToDevice: 数据写入成功完成\n");
+		return TransportError::Success;
+	}
+	catch (const std::exception& e)
+	{
+		// 【修复】捕获标准异常
+		Logger::LogDebug("WriteToDevice异常: " + std::string(e.what()) + "\n");
+		return TransportError::WriteFailed;
+	}
+	catch (...)
+	{
+		// 【修复】捕获未知异常
+		Logger::LogDebug("WriteToDevice未知异常: 程序可能遇到严重错误\n");
+		return TransportError::WriteFailed;
+	}
 }
 
 TransportError UsbPrintTransport::ReadFromDevice(void* buffer, size_t size, size_t* read, DWORD timeout)
