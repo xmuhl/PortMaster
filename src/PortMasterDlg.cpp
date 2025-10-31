@@ -1146,44 +1146,69 @@ void CPortMasterDlg::OnTransmissionProgress(const TransmissionProgress& progress
 // 【修复线程自阻塞】重构传输完成回调 - 避免在传输线程中直接析构任务对象
 void CPortMasterDlg::OnTransmissionCompleted(const TransmissionResult& result)
 {
-	// 【调试】OnTransmissionCompleted 开始
-	this->WriteLog("=== OnTransmissionCompleted 开始 ===");
-	this->WriteLog("传输任务完成: 状态=" + std::to_string(static_cast<int>(result.finalState)) +
-		", 错误码=" + std::to_string(static_cast<int>(result.errorCode)) +
-		", 传输字节=" + std::to_string(result.bytesTransmitted) +
-		", 耗时=" + std::to_string(result.duration.count()) + "ms");
+	// 【第九轮修复】添加全局异常保护，防止完成回调崩溃
+	try {
+		// 【第二轮修复】检查窗口句柄有效性，避免PostMessage到已销毁窗口导致崩溃
+		if (!IsWindow(GetSafeHwnd()))
+		{
+			return;
+		}
 
-	// 【关键修复】不在传输线程中直接析构任务对象，改为PostMessage到UI线程
-	// 原因：当前回调在传输线程中执行，直接reset()会导致线程试图join自己，造成死锁
+		// 【调试】OnTransmissionCompleted 开始
+		this->WriteLog("=== OnTransmissionCompleted 开始 ===");
+		this->WriteLog("传输任务完成: 状态=" + std::to_string(static_cast<int>(result.finalState)) +
+			", 错误码=" + std::to_string(static_cast<int>(result.errorCode)) +
+			", 传输字节=" + std::to_string(result.bytesTransmitted) +
+			", 耗时=" + std::to_string(result.duration.count()) + "ms");
 
-	// 通过PostMessage通知UI线程处理传输结果
-	this->WriteLog("OnTransmissionCompleted: 准备发送 WM_USER + 13 消息");
-	PostMessage(WM_USER + 13, (WPARAM)result.errorCode, 0);
-	this->WriteLog("OnTransmissionCompleted: WM_USER + 13 消息已发送");
+		// 【关键修复】不在传输线程中直接析构任务对象，改为PostMessage到UI线程
+		// 原因：当前回调在传输线程中执行，直接reset()会导致线程试图join自己，造成死锁
 
-	// 【新增】通过PostMessage安全地清理传输任务对象（在UI线程中执行）
-	this->WriteLog("OnTransmissionCompleted: 准备发送 WM_USER + 15 消息");
-	PostMessage(WM_USER + 15, 0, 0);
-	this->WriteLog("OnTransmissionCompleted: WM_USER + 15 消息已发送");
+		// 通过PostMessage通知UI线程处理传输结果
+		this->WriteLog("OnTransmissionCompleted: 准备发送 WM_USER + 13 消息");
+		if (IsWindow(GetSafeHwnd()))
+		{
+			PostMessage(WM_USER + 13, (WPARAM)result.errorCode, 0);
+			this->WriteLog("OnTransmissionCompleted: WM_USER + 13 消息已发送");
+		}
 
-	// 根据结果状态显示相应信息
-	switch (result.finalState)
-	{
-	case TransmissionTaskState::Completed:
-		this->WriteLog("传输成功完成，总用时: " + std::to_string(result.duration.count()) + "ms");
-		break;
-	case TransmissionTaskState::Cancelled:
-		this->WriteLog("传输被用户取消");
-		break;
-	case TransmissionTaskState::Failed:
-		this->WriteLog("传输失败: " + result.errorMessage);
-		break;
-	default:
-		this->WriteLog("传输结束，状态未知");
-		break;
+		// 【新增】通过PostMessage安全地清理传输任务对象（在UI线程中执行）
+		this->WriteLog("OnTransmissionCompleted: 准备发送 WM_USER + 15 消息");
+		if (IsWindow(GetSafeHwnd()))
+		{
+			PostMessage(WM_USER + 15, 0, 0);
+			this->WriteLog("OnTransmissionCompleted: WM_USER + 15 消息已发送");
+		}
+
+		// 根据结果状态显示相应信息
+		switch (result.finalState)
+		{
+		case TransmissionTaskState::Completed:
+			this->WriteLog("传输成功完成，总用时: " + std::to_string(result.duration.count()) + "ms");
+			break;
+		case TransmissionTaskState::Cancelled:
+			this->WriteLog("传输被用户取消");
+			break;
+		case TransmissionTaskState::Failed:
+			this->WriteLog("传输失败: " + result.errorMessage);
+			break;
+		default:
+			this->WriteLog("传输结束，状态未知");
+			break;
+		}
+
+		this->WriteLog("=== OnTransmissionCompleted 结束 ===");
 	}
-
-	this->WriteLog("=== OnTransmissionCompleted 结束 ===");
+	catch (const std::exception& e) {
+		// 【第九轮修复】捕获C++标准异常，防止完成回调崩溃
+		std::string errorMsg = "OnTransmissionCompleted异常: ";
+		errorMsg += e.what();
+		this->WriteLog(errorMsg);
+	}
+	catch (...) {
+		// 【第九轮修复】捕获所有其他异常
+		this->WriteLog("OnTransmissionCompleted发生未知异常");
+	}
 }
 
 void CPortMasterDlg::OnTransmissionLog(const std::string& message)
